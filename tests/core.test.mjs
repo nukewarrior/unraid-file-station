@@ -185,30 +185,39 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.1\.9/);
+  assert.match(script, /@version\s+0\.1\.10/);
 });
 
 
-test('LOCATION 连续磁盘自动压缩，非连续及缓存池完整保留', () => {
+test('LOCATION 根据列宽显示完整磁盘名，超出时提供明确查看全部入口', () => {
   const { api } = createAPI();
-  assert.equal(api.summarizeLocations({ locations:['disk4','disk2','disk3','cache'] }), 'disk2–disk4, cache');
-  assert.equal(api.summarizeLocations({ locations:['disk10','disk2','disk1','disk9','disk20','disk22'] }),
-    'disk1–disk2, disk9–disk10, disk20, disk22');
-  assert.equal(api.summarizeLocations({ locations:['disk1','disk1','cache','cache'] }), 'disk1, cache');
-  assert.equal(api.summarizeLocations({ locations:[] }), '—');
-  assert.equal(api.summarizeLocations({ locations:['disk01','disk1','pool ssd'] }), 'disk1, disk01, pool ssd');
-  assert.equal(api.summarizeLocations({
-    locations: Array.from({length:50},(_,i)=>'disk'+(i+1))
-  }), 'disk1–disk50');
+  const names = ['disk1','disk2','disk3','cache'];
+  const measure = text => text.length * 10;
+  const full = api.fitLocationNames(names, 500, measure);
+  assert.deepEqual([...full.visible], names);
+  assert.equal(full.hidden, 0);
+  const partial = api.fitLocationNames(names, 180, measure);
+  assert.deepEqual([...partial.visible], ['disk1']);
+  assert.equal(partial.hidden, 3);
+  const tiny = api.fitLocationNames(names, 30, measure);
+  assert.equal(tiny.visible.length, 0);
+  assert.equal(tiny.hidden, 4);
+  assert.equal(api.fitLocationNames([], 50, measure).hidden, 0);
+  const many = Array.from({length:50}, (_,i) => 'disk'+(i+1));
+  const limited = api.fitLocationNames(many, 260, measure);
+  assert.equal(limited.visible.length + limited.hidden, 50);
+  assert.ok(limited.hidden > 0);
+  assert.doesNotMatch(script, /function summarizeLocations/);
 });
 
-test('LOCATION 行高不变，点击可显示完整设备列表，不再使用 +N', () => {
+test('LOCATION 保留原始独立磁盘名称，按钮点击可展开及复制完整位置', () => {
   const { api } = createAPI();
   const cell = api.renderLocationTags({locations:['disk1','disk2','disk3','cache']});
   assert.equal(cell.children.length, 1);
   const trigger = cell.children[0];
   assert.equal(trigger.tagName, 'button');
-  assert.equal(trigger.textContent, 'disk1–disk3, cache');
+  assert.equal(trigger.textContent, 'disk1, disk2, disk3, cache');
+  assert.deepEqual([...trigger._ufsNames], ['disk1','disk2','disk3','cache']);
   assert.equal(trigger.title, 'disk1, disk2, disk3, cache');
   assert.equal(trigger.attributes['aria-haspopup'], 'dialog');
   assert.equal(trigger.attributes['aria-expanded'], 'false');
@@ -220,17 +229,59 @@ test('LOCATION 行高不变，点击可显示完整设备列表，不再使用 +
   assert.deepEqual(empty.children.map(x=>x.textContent), ['—']);
   const raw = '<img src=x onerror=alert(1)>';
   const safe = api.renderLocationTags({locations:[raw]});
-  assert.equal(safe.children[0].textContent, raw); // textContent only, no innerHTML
+  assert.equal(safe.children[0].textContent, raw);
   assert.match(script, /names\.forEach\(\(name\) => items\.append\(element\('span', 'ufs-location-device', name\)\)\)/);
+  assert.match(script, /navigator\.clipboard\.writeText\(names\.join\(', '\)\)/);
   assert.match(script, /max-height:min\(300px,50vh\);overflow-y:auto/);
-  assert.doesNotMatch(script, /ufs-location-more|names\.slice\(0, 2\)/);
+  assert.match(script, /ufs-location-more-link/);
 });
 
-test('窄屏保留列表主要列，宽屏 6 列与网格显示规则不冲突', () => {
-  assert.match(script, /grid-template-columns:minmax\(210px,2\.6fr\) minmax\(72px,\.65fr\) minmax\(135px,1\.15fr\) minmax\(85px,\.7fr\) minmax\(105px,\.9fr\) minmax\(115px,1fr\)/);
-  assert.match(script, /@media\(max-width:1280px\) and \(min-width:981px\)/);
-  assert.match(script, /#ufs-app \.ufs-location-col\{display:flex/);
-  assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
+test('列表 6 列共用宽度变量，窄屏内部横向滚动，不再隐去 LOCATION', () => {
+  const { api } = createAPI();
+  const columns = [...api.COLUMNS].map(x => x.key);
+  assert.deepEqual(columns, ['name','size','mtime','owner','permissions','locations']);
+  assert.match(script, /grid-template-columns:var\(--ufs-columns\);width:max\(100%,var\(--ufs-table-min-width\)\)/);
+  assert.match(script, /#ufs-app \.ufs-list\{[^']*overflow:auto/);
+  assert.doesNotMatch(script, /@media\(max-width:1280px\) and \(min-width:981px\)/);
+  assert.match(script, /#ufs-app \.ufs-grid \.ufs-entry\{[^']*width:auto/);
+});
+
+test('列宽边界、安全读取历史值、默认宽度与列布局统一', () => {
+  const { api } = createAPI();
+  assert.equal(api.clampColumnWidth('size', 1), 65);
+  assert.equal(api.clampColumnWidth('size', 9999), 260);
+  assert.equal(api.clampColumnWidth('name', 70), 180);
+  assert.equal(api.clampColumnWidth('locations', 950), 900);
+  assert.equal(api.clampColumnWidth('bad', 100), null);
+  assert.equal(api.clampColumnWidth('size', 'xyz'), null);
+  assert.equal(Object.keys(api.readColumnWidths('{bad json')).length, 0);
+  assert.equal(Object.keys(api.readColumnWidths('[]')).length, 0);
+  const widths = api.readColumnWidths('{"size":126,"owner":80,"danger":50,"locations":9999}');
+  assert.equal(widths.size, 126);
+  assert.equal(widths.owner, 80);
+  assert.equal(widths.locations, 900);
+  assert.equal(widths.danger, undefined);
+  const defaults = api.columnLayout({});
+  assert.match(defaults.columns, /^minmax\(280px, 1fr\) 95px 155px 95px 120px 250px$/);
+  assert.equal(defaults.minWidth, 1069);
+  const custom = api.columnLayout({size:126, owner:80, locations:300});
+  assert.equal(custom.minWidth, 1069+31-15+50);
+  assert.match(custom.columns, /126px 155px 80px 120px 300px$/);
+  assert.match(script, /setPointerCapture\(event\.pointerId\)/);
+  assert.match(script, /grip\.addEventListener\('dblclick'/);
+  assert.match(script, /localStorage\.setItem\(STORE \+ 'columns'/);
+  assert.match(script, /localStorage\.removeItem\(STORE \+ 'columns'\)/);
+});
+
+test('深路径折叠中间目录但保留每层导航能力', () => {
+  const { api } = createAPI();
+  const paths = ['/mnt/user','/mnt/user/a','/mnt/user/a/b','/mnt/user/a/b/c','/mnt/user/a/b/c/d'];
+  const shortened = api.breadcrumbDisplayPaths(paths);
+  assert.deepEqual([...shortened.visible], ['/mnt/user',null,'/mnt/user/a/b/c','/mnt/user/a/b/c/d']);
+  assert.deepEqual([...shortened.hidden], ['/mnt/user/a','/mnt/user/a/b']);
+  assert.equal(api.breadcrumbDisplayPaths(paths.slice(0,3)).hidden.length, 0);
+  assert.match(script, /width:max-content;min-width:0;max-width:65%;height:28px/);
+  assert.match(script, /ufs-crumb-more/);
 });
 
 test('非 Unraid 页面不执行目录读取或插入 UI', () => {
@@ -316,7 +367,7 @@ test('统一导航栏保留内部滚动，工具栏不随选中出现新行', ()
   const { api } = createAPI();
   assert.match(api.renderBrowserBarMarkup(), /ufs-search[^"]*"[^>]*hidden/);
   assert.doesNotMatch(api.renderWorkspaceMarkup(), /ufs-selection-bar/);
-  assert.match(script, /#ufs-app \.ufs-navigation\{height:42px;min-height:42px;max-height:42px/);
+  assert.match(script, /#ufs-app \.ufs-navigation\{height:38px;min-height:38px;max-height:38px/);
   assert.match(script, /#ufs-app \[hidden\]\{display:none!important/);
   assert.match(script, /#ufs-app \.ufs-sidebar\{[^']*overflow:auto/);
   assert.match(script, /#ufs-app \.ufs-list\{[^']*overflow:auto/);
@@ -370,8 +421,8 @@ test('v0.1.5 地址框尺寸限制在右侧工具栏，保持白底且不突出'
   assert.match(api.renderBrowserBarMarkup(), /class="ufs-address"/);
   assert.doesNotMatch(api.renderBrowserBarMarkup(), /ufs-view-controls/);
   assert.match(api.renderFileActionsMarkup(), /ufs-view-controls/);
-  assert.match(script, /#ufs-app \.ufs-address\{display:flex;align-items:center;flex:1 1 auto;[^']*height:30px;min-height:30px;max-height:30px/);
-  assert.match(script, /background:var\(--ufs-bg\);box-shadow:none;line-height:28px/);
+  assert.match(script, /#ufs-app \.ufs-address\{display:inline-flex;align-items:center;flex:0 1 auto;[^']*height:28px;min-height:28px;max-height:28px/);
+  assert.match(script, /background:var\(--ufs-panel\);box-shadow:none;line-height:26px/);
   assert.match(script, /#ufs-app \.ufs-main\{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0;overflow:hidden/);
   assert.match(script, /#ufs-app \.ufs-content\{display:flex;flex:1;min-width:0;min-height:0;overflow:hidden/);
   assert.doesNotMatch(script, /#ufs-app \.ufs-toolbar\{height:44px/);
@@ -436,7 +487,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.1\.9/);
+  assert.match(script, /@version\s+0\.1\.10/);
 });
 
 
