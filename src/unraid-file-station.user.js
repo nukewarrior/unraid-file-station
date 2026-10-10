@@ -168,8 +168,8 @@
 
 
   // v0.2.1: create-folder is separately enabled; all other writes remain previews.
-  // IMPORTANT: no production writer is registered. This is a dry-run contract,
-  // not an authorization boundary or proof that a filesystem path is safe.
+  // The generic operation planner is a dry-run contract. Production writes
+  // are enabled only for mkdir in createNativeFolder(), not a security boundary.
   const FILE_WRITES_ENABLED = false;
   const CREATE_FOLDER_ENABLED = true;
   const NATIVE_CONTROL_URL = '/webGui/include/Control.php';
@@ -262,8 +262,8 @@
     });
   }
 
-  // Only the isolated VM demo may inject a mock executor. Production cannot
-  // call confirm(): v0.2.0 has no network writer, upload or filesystem mutation.
+  // Generic operation coordinator stays mock-only in v0.2.1.
+  // Production mkdir is handled separately by createNativeFolder().
   function createFileOperationCoordinator(mockExecutor) {
     let task = { status: 'idle', plan: null, result: null, error: '' };
     const snapshot = () => Object.freeze({ ...task });
@@ -1419,7 +1419,7 @@
     } else {
       actions.push(['刷新当前目录', refreshDirectory]);
     }
-    actions.push(['返回原生文件管理器（写入操作）', nativeMode]);
+    actions.push(['返回原生文件管理器（其他写入操作）', nativeMode]);
     actions.forEach(([label, action]) => {
       const button = element('button', '', label);
       button.type = 'button';
@@ -1633,9 +1633,9 @@
     menu.setAttribute('role', 'menu');
     const actions = [
       ['重置文件列表列宽', resetColumnWidths],
-      ['返回原生文件管理器（写入操作）', nativeMode],
+      ['返回原生文件管理器（其他写入操作）', nativeMode],
       [state.theme === 'unraid' ? '切换至 DSM 经典主题' : '切换至 Unraid 融合主题', toggleTheme],
-      ['关于 File Station v0.1.16', () => notify('File Station v0.1.16 · Unraid 7.2.2 · 只读预览')]
+      ['关于 File Station v0.2.1', () => notify('File Station v0.2.1 · Unraid 7.2.2 · 新建文件夹已开放')]
     ];
     actions.forEach(([label, fn]) => {
       const button = element('button', '', label);
