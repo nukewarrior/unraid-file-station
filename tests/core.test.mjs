@@ -290,3 +290,21 @@ test('底部统计仅汇总可知文件大小，不计算文件夹内容大小',
   assert.equal(api.selectionStatus([folder]), '已选择 1 个项目');
   assert.match(script, /selectionStatus\(chosen\)/);
 });
+
+
+test('v0.1.7 Shift 左键连选阻止默认文本选择，但正常左键与右键不阻止', () => {
+  const { api } = createAPI();
+  assert.equal(api.shouldSuppressTextSelection({ button:0, shiftKey:true }), true);
+  assert.equal(api.shouldSuppressTextSelection({ button:0, shiftKey:false }), false);
+  assert.equal(api.shouldSuppressTextSelection({ button:2, shiftKey:true }), false);
+  assert.equal(api.shouldSuppressTextSelection({ button:1, shiftKey:true }), false);
+  assert.match(script, /row\.addEventListener\('mousedown', \(event\) => \{[\s\S]*?if \(shouldSuppressTextSelection\(event\)\) event\.preventDefault\(\)/);
+  assert.match(script, /row\.addEventListener\('click', \(event\) => selectEntry\(event, entry, index, entries\)\)/);
+});
+
+test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被浏览器选中', () => {
+  assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
+  assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
+  assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
+  assert.match(script, /@version\s+0\.1\.7/);
+});
