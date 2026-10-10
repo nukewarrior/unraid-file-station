@@ -29,6 +29,20 @@ const contents = {
   ],
   '/mnt/user/docker': [['containers',true]]
 };
+function bulkRows(path,count) {
+  let html='<tbody>';
+  for (let i=0; i<count; i++) {
+    const name='file-'+String(i).padStart(5,'0')+'.txt';
+    const full=path+'/'+name;
+    html+='<tr>'+
+      '<td><i type="f" id="row_'+i+'" data="'+full+'"></i></td>'+
+      '<td>'+name+'</td><td></td><td>nobody</td><td>-rw-rw-rw-</td>'+
+      '<td data="2048">2048</td><td data="1791435600">date</td>'+
+      '<td><span id="device_'+i+'">disk2</span></td></tr>';
+  }
+  return html+'</tbody>';
+}
+
 const esc = text => String(text).replace(/[&<>"']/g, ch =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 
@@ -76,7 +90,9 @@ async function pageFor(t, options = {}) {
     if (path === '/mnt/user/downloads' && options.delayDownloads) {
       await new Promise(resolve=>setTimeout(resolve,options.delayDownloads));
     }
-    await route.fulfill({status:200,contentType:'text/html',body:responseFor(path)}).catch(()=>{});
+    const response=options.bulkCount && path==='/mnt/user/TimeMachine' ?
+      bulkRows(path,options.bulkCount) : responseFor(path);
+    await route.fulfill({status:200,contentType:'text/html',body:response}).catch(()=>{});
   });
   await page.goto(base + '/Shares/Browse?dir=%2Fmnt%2Fuser');
   return {page,errors};
@@ -184,5 +200,41 @@ test('浏览器历史恢复到另一已有标签的相同路径时仍正确刷�
   await page.locator('.ufs-tab.ufs-active .ufs-tab-name', {hasText:'TimeMachine'}).waitFor();
   await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).first().waitFor();
   assert.equal(await page.locator('.ufs-entry').filter({hasText:'new.ini'}).count(),0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+
+test('1200 文件列表只挂载可视行；滚动与 Shift 连选跨窗口保持绝对索引', async t => {
+  const {page,errors}=await pageFor(t,{bulkCount:1200});
+  await page.locator('.ufs-count', {hasText:'1200 个项目'}).waitFor();
+  const list=page.locator('.ufs-list');
+  assert.equal(await list.evaluate(el=>el.classList.contains('ufs-virtualized')),true);
+  assert.ok(await rows(page).count()<100);
+  await page.locator('.ufs-entry[data-ufs-index="0"]').click();
+  await list.evaluate(el=>{el.scrollTop=el.scrollHeight;});
+  await page.locator('.ufs-entry[data-ufs-index="1199"]').waitFor();
+  assert.ok(await rows(page).count()<100);
+  await page.locator('.ufs-entry[data-ufs-index="1199"]').click({modifiers:['Shift']});
+  await page.locator('.ufs-count', {hasText:'已选择 1200 个项目'}).waitFor();
+  const selectedMounted=await page.locator('.ufs-entry.ufs-selected').count();
+  assert.ok(selectedMounted>0 && selectedMounted<100);
+  await list.evaluate(el=>{el.scrollTop=0;});
+  await page.locator('.ufs-entry[data-ufs-index="0"].ufs-selected').waitFor();
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('1200 文件网格视图也虚拟化，调整窗口后仍能滚动到底部', async t => {
+  const {page,errors}=await pageFor(t,{bulkCount:1200});
+  await page.locator('.ufs-count',{hasText:'1200 个项目'}).waitFor();
+  await page.locator('.ufs-grid-button').click();
+  const list=page.locator('.ufs-list.ufs-grid.ufs-virtualized');
+  await list.waitFor();
+  assert.ok(await rows(page).count()<160);
+  await page.setViewportSize({width:960,height:760});
+  await list.evaluate(el=>{el.scrollTop=el.scrollHeight;});
+  await page.locator('.ufs-entry[data-ufs-index="1199"]').waitFor();
+  assert.ok(await rows(page).count()<160);
+  await page.locator('.ufs-list-button').click();
+  await page.locator('.ufs-entry[data-ufs-index="0"]').waitFor();
   assert.equal(errors.length,0,errors.join('\n'));
 });
