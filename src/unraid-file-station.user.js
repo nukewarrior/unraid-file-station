@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.1.9
+// @version      0.1.10
 // @description  DSM-inspired read-only file browser inside Unraid WebGUI 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -221,10 +221,11 @@
     // Scope this only to navigable rows; inputs / breadcrumbs stay selectable.
     '#ufs-app .ufs-tree-row,#ufs-app .ufs-tree-row *,#ufs-app .ufs-entry,#ufs-app .ufs-entry *{user-select:none;-webkit-user-select:none;cursor:default!important}',
     '#ufs-app .ufs-main{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0;overflow:hidden;background:var(--ufs-bg)}#ufs-app .ufs-content{display:flex;flex:1;min-width:0;min-height:0;overflow:hidden}#ufs-app .ufs-list{min-width:0;min-height:0;overflow:auto;flex:1;padding:0 8px;outline:0}',
-    '#ufs-app .ufs-head,#ufs-app .ufs-entry{display:grid;grid-template-columns:minmax(210px,2.6fr) minmax(72px,.65fr) minmax(135px,1.15fr) minmax(85px,.7fr) minmax(105px,.9fr) minmax(115px,1fr);align-items:center;gap:10px;padding:0 12px;border-bottom:1px solid var(--ufs-border)}#ufs-app .ufs-head{height:34px;min-height:34px;font-weight:600;color:var(--ufs-muted);font-size:12px;position:sticky;top:0;background:var(--ufs-bg);z-index:1}',
+    '#ufs-app .ufs-head,#ufs-app .ufs-entry{display:grid;grid-template-columns:var(--ufs-columns);width:max(100%,var(--ufs-table-min-width));align-items:center;gap:10px;padding:0 12px;border-bottom:1px solid var(--ufs-border)}#ufs-app .ufs-head{height:34px;min-height:34px;font-weight:600;color:var(--ufs-muted);font-size:12px;position:sticky;top:0;background:var(--ufs-bg);z-index:1}',
     '#ufs-app .ufs-entry{min-height:38px;height:38px;border-radius:3px;cursor:default}#ufs-app .ufs-entry:hover{background:var(--ufs-hover)}#ufs-app .ufs-entry.ufs-selected{background:var(--ufs-sel);outline:none}#ufs-app .ufs-entry.ufs-selected:hover{background:var(--ufs-selected-hover)}#ufs-app .ufs-entry>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
     '#ufs-app .ufs-file-name{display:flex;align-items:center;gap:9px;min-width:0}#ufs-app .ufs-file-name .ufs-filename{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}',
     '#ufs-app .ufs-sort-button{display:inline-flex;align-items:center;gap:5px;width:100%;height:30px;border:0;padding:0;background:transparent;text-align:left;color:inherit;white-space:nowrap}#ufs-app .ufs-sort-button .ufs-sort-mark{color:var(--ufs-accent);font-size:12px}',
+    '#ufs-app .ufs-head>span{position:relative}#ufs-app .ufs-column-grip{position:absolute;right:-6px;top:0;width:12px;height:100%;cursor:col-resize!important;touch-action:none;z-index:3;user-select:none;-webkit-user-select:none}#ufs-app .ufs-column-grip:hover,#ufs-app .ufs-column-grip:active{border-right:2px solid var(--ufs-accent)}#ufs-app .ufs-entry{width:max(100%,var(--ufs-table-min-width))}',
     '#ufs-app .ufs-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(125px,1fr));gap:10px;align-content:start;padding:14px}#ufs-app .ufs-grid .ufs-entry{display:flex;height:auto;flex-direction:column;text-align:center;gap:7px;border:1px solid var(--ufs-border);padding:16px 8px;min-width:0;min-height:107px}',
     '#ufs-app .ufs-grid .ufs-file-name{flex-direction:column;max-width:100%;gap:7px}#ufs-app .ufs-grid .ufs-file-name .ufs-svg{width:34px;height:34px}#ufs-app .ufs-grid .ufs-extra{display:none}',
     '#ufs-app .ufs-inspector{width:285px;flex:0 0 285px;min-width:220px;max-width:38%;border-left:1px solid var(--ufs-border);background:var(--ufs-panel);padding:14px;overflow:auto}#ufs-app .ufs-inspector[hidden]{display:none}#ufs-app .ufs-inspector h3{margin:0 0 12px;font-size:14px}#ufs-app .ufs-prop{display:flex;justify-content:space-between;gap:15px;margin:10px 0;word-break:break-word}#ufs-app .ufs-prop span:first-child{color:var(--ufs-muted);flex-shrink:0}',
@@ -244,10 +245,8 @@
     // Unraid styles can shift button baselines; stretch table-header cells then
     // center the sort button's contents explicitly inside the header's fixed height.
     '#ufs-app .ufs-head{align-items:stretch;padding-top:0;padding-bottom:0}#ufs-app .ufs-head>span{display:flex;align-items:center;min-width:0;height:100%;margin:0;padding:0;vertical-align:middle}#ufs-app .ufs-head .ufs-sort-button{display:inline-flex;align-items:center;justify-content:flex-start;width:100%;height:100%;min-height:0;margin:0;padding:0;line-height:1.3;vertical-align:middle}',
-    '@media(max-width:1280px) and (min-width:981px){#ufs-app .ufs-entry,#ufs-app .ufs-head{grid-template-columns:minmax(180px,1fr) 85px 155px 105px}#ufs-app .ufs-permission,#ufs-app .ufs-location-col{display:none!important}}',
     '#ufs-app .ufs-location-col{display:flex;align-items:center;min-width:0;overflow:hidden;white-space:nowrap}#ufs-app .ufs-location-trigger{display:block;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:1px solid transparent;border-radius:4px;background:var(--ufs-panel);padding:3px 7px;text-align:left;color:var(--ufs-text);font-size:11px;line-height:1.35;cursor:pointer!important}#ufs-app .ufs-location-trigger:hover{border-color:var(--ufs-border);background:var(--ufs-hover)}#ufs-app .ufs-location-popover{width:min(420px,calc(100vw - 20px));max-width:none;padding:0;overflow:hidden}#ufs-app .ufs-location-popover-header{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--ufs-border);font-weight:600}#ufs-app .ufs-menu .ufs-location-popover-close{display:inline-flex;align-items:center;justify-content:center;flex:0 0 28px;width:28px;height:28px;min-width:28px;padding:0;border:0;background:transparent;color:var(--ufs-muted);text-align:center}#ufs-app .ufs-location-popover-items{display:grid;grid-template-columns:repeat(auto-fill,minmax(85px,1fr));gap:6px;padding:12px;max-height:min(300px,50vh);overflow-y:auto;overscroll-behavior:contain}#ufs-app .ufs-location-device{padding:6px 8px;border-radius:4px;background:var(--ufs-panel);font-size:12px;overflow-wrap:anywhere}#ufs-app .ufs-owner{min-width:0;overflow:hidden;text-overflow:ellipsis}',
-    '@media(max-width:980px){#ufs-app .ufs-inspector{display:none}#ufs-app .ufs-entry,#ufs-app .ufs-head{grid-template-columns:minmax(140px,1fr) 85px 150px}#ufs-app .ufs-permission,#ufs-app .ufs-owner,#ufs-app .ufs-location-col{display:none!important}}',
-    '@media(max-width:720px){#ufs-app .ufs-sidebar{width:42px;flex-basis:42px;padding:4px}#ufs-app .ufs-resizer{display:none}#ufs-app .ufs-sidebar .ufs-tree-name,#ufs-app .ufs-tree-label,#ufs-app .ufs-tree-toggle,#ufs-app .ufs-sidebar .ufs-tree-spacer{display:none}#ufs-app .ufs-entry,#ufs-app .ufs-head{grid-template-columns:minmax(120px,1fr) 80px}#ufs-app .ufs-date{display:none}#ufs-app .ufs-search{width:90px}}',
+    '@media(max-width:720px){#ufs-app .ufs-sidebar{width:42px;flex-basis:42px;padding:4px}#ufs-app .ufs-resizer{display:none}#ufs-app .ufs-sidebar .ufs-tree-name,#ufs-app .ufs-tree-label,#ufs-app .ufs-tree-toggle,#ufs-app .ufs-sidebar .ufs-tree-spacer{display:none}#ufs-app .ufs-search{width:90px}}',
     '#ufs-app .ufs-top{height:46px;gap:9px;padding:0 12px}#ufs-app .ufs-brand{display:flex;align-items:center;gap:7px;flex-shrink:0;white-space:nowrap}#ufs-app .ufs-heading{font-size:15px}#ufs-app .ufs-brand-divider{height:19px;width:1px;background:var(--ufs-border);flex-shrink:0}#ufs-app .ufs-preview-chip{font-size:11px;color:var(--ufs-muted);white-space:nowrap}#ufs-app .ufs-app-actions{display:flex;align-items:center;gap:3px;flex-shrink:0}',
     '#ufs-app .ufs-top .ufs-tabs{display:flex;align-items:center;flex:1;min-width:0;height:100%;gap:4px;padding:0;background:transparent;border:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}#ufs-app .ufs-top .ufs-tabs::-webkit-scrollbar{display:none}#ufs-app .ufs-top .ufs-tab{flex-shrink:0;height:31px;min-width:85px;max-width:195px;padding:4px 8px}#ufs-app .ufs-top .ufs-tabs>.ufs-ico{flex:0 0 auto}',
     '#ufs-app .ufs-file-actions{display:flex;align-items:center;gap:5px;height:34px;min-height:34px;max-height:34px;flex-shrink:0;padding:0 10px;border-bottom:1px solid var(--ufs-border);background:var(--ufs-bg);overflow:hidden}#ufs-app .ufs-file-actions .ufs-section-label{font-size:12px;color:var(--ufs-muted);font-weight:500}#ufs-app .ufs-file-actions .ufs-view-controls{display:flex;align-items:center;gap:3px;margin-left:auto;flex-shrink:0}#ufs-app .ufs-file-actions .ufs-ico{height:28px;min-height:0;padding:3px 8px}',
@@ -256,13 +255,134 @@
     '@media(max-width:720px){#ufs-app .ufs-brand-divider{display:none}#ufs-app .ufs-top{padding:0 7px;gap:6px}#ufs-app .ufs-navigation{padding:0 6px;gap:3px}#ufs-app .ufs-search{width:90px}#ufs-app .ufs-view-controls .ufs-details-button{display:none}}',
   ].join('\n');
 
+
+  const COLUMNS = [
+    { key:'name', label:'名称', width:280, min:180, max:900 },
+    { key:'size', label:'大小', width:95, min:65, max:260 },
+    { key:'mtime', label:'修改日期', width:155, min:115, max:300 },
+    { key:'owner', label:'OWNER', width:95, min:65, max:250 },
+    { key:'permissions', label:'权限', width:120, min:90, max:270 },
+    { key:'locations', label:'LOCATION', width:250, min:120, max:900 }
+  ];
+  const COLUMN_GAP = 10, COLUMN_PADDING = 24;
+  function clampColumnWidth(key, value) {
+    const spec = COLUMNS.find((column) => column.key === key);
+    const n = Number(value);
+    return spec && Number.isFinite(n) ? Math.round(Math.max(spec.min, Math.min(spec.max, n))) : null;
+  }
+  function readColumnWidths(raw) {
+    let parsed;
+    try { parsed = typeof raw === 'string' ? JSON.parse(raw) : raw; }
+    catch (_) { return {}; }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const result = {};
+    for (const column of COLUMNS) {
+      if (Object.prototype.hasOwnProperty.call(parsed, column.key)) {
+        const width = clampColumnWidth(column.key, parsed[column.key]);
+        if (width !== null) result[column.key] = width;
+      }
+    }
+    return result;
+  }
+  function columnLayout(widths) {
+    const values = COLUMNS.map((column) =>
+      Object.prototype.hasOwnProperty.call(widths, column.key)
+        ? clampColumnWidth(column.key, widths[column.key]) || column.width : column.width);
+    const trackWidths = COLUMNS.map((column, index) =>
+      column.key === 'name' && !Object.prototype.hasOwnProperty.call(widths, 'name')
+        ? 'minmax(' + column.width + 'px, 1fr)' : values[index] + 'px');
+    return {
+      columns: trackWidths.join(' '),
+      minWidth: values.reduce((sum, width) => sum + width, 0) +
+        COLUMN_GAP * (COLUMNS.length - 1) + COLUMN_PADDING
+    };
+  }
+  function applyColumnLayout() {
+    if (!app) return;
+    const layout = columnLayout(state.columnWidths);
+    app.style.setProperty('--ufs-columns', layout.columns);
+    app.style.setProperty('--ufs-table-min-width', layout.minWidth + 'px');
+  }
+  function updateColumnWidth(key, value, persist = false) {
+    const width = clampColumnWidth(key, value);
+    if (width === null) return;
+    state.columnWidths[key] = width;
+    applyColumnLayout();
+    scheduleLocationDisplay();
+    if (persist) localStorage.setItem(STORE + 'columns', JSON.stringify(state.columnWidths));
+  }
+  function resetColumnWidths() {
+    state.columnWidths = {};
+    localStorage.removeItem(STORE + 'columns');
+    applyColumnLayout();
+    scheduleLocationDisplay();
+    notify('已恢复默认列宽');
+  }
+  function autoSizeColumn(key) {
+    const spec = COLUMNS.find((column) => column.key === key);
+    if (!spec) return;
+    const cellText = (entry) => {
+      if (key === 'name') return entry.name;
+      if (key === 'size') return formatSize(entry.size);
+      if (key === 'mtime') return formattedDate(entry.mtime);
+      if (key === 'owner') return entry.owner || '—';
+      if (key === 'permissions') return entry.permissions || '—';
+      return locationNames(entry).join(', ') || '—';
+    };
+    // Canvas measurement avoids guessing text width for multilingual file names.
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext && canvas.getContext('2d');
+    const list = $('.ufs-list', app);
+    if (ctx && list) ctx.font = getComputedStyle(list).font || '13px sans-serif';
+    const measure = (text) => ctx ? ctx.measureText(text).width : String(text).length * 8;
+    const maxText = Math.max(measure(spec.label), ...state.entries.map((entry) => measure(cellText(entry))));
+    updateColumnWidth(key, maxText + (key === 'name' ? 56 : 24), true);
+  }
+  function attachColumnResizer(cell, key) {
+    const grip = element('span', 'ufs-column-grip');
+    grip.setAttribute('role', 'separator');
+    grip.setAttribute('aria-label', '调整' + (COLUMNS.find(x => x.key === key)?.label || key) + '列宽');
+    grip.setAttribute('aria-orientation', 'vertical');
+    grip.title = '拖动调整列宽，双击适应内容';
+    let beginX = 0, beginWidth = 0, dragging = false;
+    grip.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      dragging = true;
+      beginX = event.clientX;
+      beginWidth = cell.getBoundingClientRect().width;
+      grip.setPointerCapture(event.pointerId);
+      event.stopPropagation();
+      event.preventDefault();
+    });
+    grip.addEventListener('pointermove', (event) => {
+      if (!dragging) return;
+      updateColumnWidth(key, beginWidth + event.clientX - beginX);
+    });
+    const finish = () => {
+      if (!dragging) return;
+      dragging = false;
+      localStorage.setItem(STORE + 'columns', JSON.stringify(state.columnWidths));
+    };
+    grip.addEventListener('pointerup', finish);
+    grip.addEventListener('pointercancel', finish);
+    grip.addEventListener('lostpointercapture', finish);
+    grip.addEventListener('dblclick', (event) => {
+      event.stopPropagation();
+      event.preventDefault();
+      autoSizeColumn(key);
+    });
+    grip.addEventListener('click', (event) => event.stopPropagation());
+    cell.append(grip);
+  }
+
   const state = {
     tabs: [], activeId: 0, nextId: 1, entries: [], tree: new Map(),
     expanded: new Set([PREFIX]), selection: new Set(), lastIndex: -1,
     view: localStorage.getItem(STORE + 'view') || 'list',
     theme: localStorage.getItem(STORE + 'theme') || 'unraid',
     inspector: false, filter: '', searchOpen: false, busy: false, requestId: 0,
-    sortKey: 'name', sortDirection: 1
+    sortKey: 'name', sortDirection: 1,
+    columnWidths: readColumnWidths(localStorage.getItem(STORE + 'columns'))
   };
   let app;
   let nativeElements = [];
@@ -573,6 +693,7 @@
           renderFiles();
         });
         cell.append(button);
+        attachColumnResizer(cell, key);
         head.append(cell);
       });
       list.append(head);
@@ -753,9 +874,10 @@
     const menu = element('div', 'ufs-menu');
     menu.setAttribute('role', 'menu');
     const actions = [
+      ['重置文件列表列宽', resetColumnWidths],
       ['返回原生文件管理器（写入操作）', nativeMode],
       [state.theme === 'unraid' ? '切换至 DSM 经典主题' : '切换至 Unraid 融合主题', toggleTheme],
-      ['关于 File Station v0.1.6', () => notify('File Station v0.1.6 · Unraid 7.2.2 · 只读预览')]
+      ['关于 File Station v0.1.10', () => notify('File Station v0.1.10 · Unraid 7.2.2 · 只读预览')]
     ];
     actions.forEach(([label, fn]) => {
       const button = element('button', '', label);
@@ -827,6 +949,7 @@
     app.id = 'ufs-app';
     app.className = state.theme === 'dsm' ? 'ufs-dsm' : '';
     app.setAttribute('aria-label', 'Unraid File Station');
+    applyColumnLayout();
     app.innerHTML = [
       renderHeaderMarkup(),
       renderWorkspaceMarkup(),
@@ -1058,7 +1181,7 @@
   }
   // Explicit opt-in hook for pure-function tests; never enabled on production WebGUI.
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
-    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, summarizeLocations, renderLocationTags, listDirectory, availableHeight, visibleEntries, selectedEntries, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
+    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, summarizeLocations, renderLocationTags, listDirectory, availableHeight, visibleEntries, selectedEntries, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();
