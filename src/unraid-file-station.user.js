@@ -930,40 +930,39 @@
     });
   }
   function createFileRow(entry, index, entries) {
-        const row = element('div', 'ufs-entry');
-        row.dataset.ufsFile = entry.path;
-        row.dataset.ufsIndex = String(index);
-        row.classList.toggle('ufs-selected', state.selection.has(entry.path));
-        row.tabIndex = 0;
-        row.title = entry.path;
-        const name = element('div', 'ufs-file-name');
-        name.append(fileIcon(entry));
-        name.append(element('span', 'ufs-filename', entry.name));
-        row.append(name,
-          element('span', 'ufs-extra', formatSize(entry.size)),
-          element('span', 'ufs-extra ufs-date', formattedDate(entry.mtime)),
-          element('span', 'ufs-extra ufs-owner', entry.owner || '—'),
-          element('span', 'ufs-extra ufs-permission', entry.permissions || '—'),
-          renderLocationTags(entry));
-        // Shift+click selects a file range. Suppress the browser's native Shift+mousedown
-        // text selection without cancelling the following click/keyboard selection logic.
-        row.addEventListener('mousedown', (event) => {
-          if (shouldSuppressTextSelection(event)) event.preventDefault();
-        });
-        row.addEventListener('click', (event) => selectEntry(event, entry, index, entries));
-        row.addEventListener('dblclick', () => openEntry(entry));
-        row.addEventListener('contextmenu', (event) => {
-          event.preventDefault();
-          if (!state.selection.has(entry.path)) {
-            state.selection.clear();
-            state.selection.add(entry.path);
-            state.lastIndex = index;
-            renderSelection();
-          }
-          showMenu(event.clientX, event.clientY, entry);
-        });
-        return row;
-
+    const row = element('div', 'ufs-entry');
+    row.dataset.ufsFile = entry.path;
+    row.dataset.ufsIndex = String(index);
+    row.classList.toggle('ufs-selected', state.selection.has(entry.path));
+    row.tabIndex = 0;
+    row.title = entry.path;
+    const name = element('div', 'ufs-file-name');
+    name.append(fileIcon(entry));
+    name.append(element('span', 'ufs-filename', entry.name));
+    row.append(name,
+      element('span', 'ufs-extra', formatSize(entry.size)),
+      element('span', 'ufs-extra ufs-date', formattedDate(entry.mtime)),
+      element('span', 'ufs-extra ufs-owner', entry.owner || '—'),
+      element('span', 'ufs-extra ufs-permission', entry.permissions || '—'),
+      renderLocationTags(entry));
+    // Shift+click selects a file range. Suppress the browser's native Shift+mousedown
+    // text selection without cancelling the following click/keyboard selection logic.
+    row.addEventListener('mousedown', (event) => {
+      if (shouldSuppressTextSelection(event)) event.preventDefault();
+    });
+    row.addEventListener('click', (event) => selectEntry(event, entry, index, entries));
+    row.addEventListener('dblclick', () => openEntry(entry));
+    row.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      if (!state.selection.has(entry.path)) {
+        state.selection.clear();
+        state.selection.add(entry.path);
+        state.lastIndex = index;
+        renderSelection();
+      }
+      showMenu(event.clientX, event.clientY, entry);
+    });
+    return row;
   }
   let virtualScheduled = false;
   function updateVirtualWindow(force = false) {
@@ -1034,7 +1033,7 @@
     else {
       const entries = visibleEntries();
       if (!entries.length) list.append(element('div', 'ufs-empty', state.filter ? '没有匹配的文件' : '此文件夹为空'));
-      if (entries.length > VIRTUAL_THRESHOLD) {
+      else if (entries.length > VIRTUAL_THRESHOLD) {
         list.classList.add('ufs-virtualized');
         const before = element('div','ufs-virtual-spacer');
         const body = element('div',state.view === 'grid' ?
