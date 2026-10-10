@@ -188,7 +188,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.2\b/);
+  assert.match(script, /@version\s+0\.2\.2\.1\b/);
 });
 
 
@@ -492,7 +492,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.2\b/);
+  assert.match(script, /@version\s+0\.2\.2\.1\b/);
 });
 
 
@@ -1074,4 +1074,19 @@ test('v0.2.2 单个 UserScript 写入锁阻止新建文件夹与重命名并发'
   unblock();
   await assert.rejects(active,/结果不确定/);
   assert.equal(modes.filter(v=>v==='file').length,1);
+});
+
+
+test('v0.2.2.1 仅接管 Browse 页面 filemonitor，不覆盖 Unraid 全局 refresh',()=>{
+  assert.match(script,/function takeOverNativeFileMonitor\(/);
+  assert.match(script,/if \(isDemo \|\| !browsePage \|\| !app\?\.isConnected/);
+  assert.match(script,/native\.start = function ufsPausedNativeFileMonitorStart\(\)/);
+  assert.match(script,/native\.stop\(\)/);
+  assert.match(script,/new window\.NchanSubscriber\(NATIVE_CHANGE_EVENTS/);
+  assert.match(script,/const value = String\(raw\)\.trim\(\)/);
+  assert.match(script,/if \(value === '1'\)/);
+  assert.match(script,/else if \(value === '0' && sawExternalTask\)/);
+  assert.match(script,/if \(localWriteInProgress\(\)\) return/);
+  assert.match(script,/void refreshDirectory\(\)/);
+  assert.doesNotMatch(script,/(?:window\.)?refresh\s*=\s*function/);
 });
