@@ -12,7 +12,7 @@
 - 在 Shares 页增加独立 **FILE STATION** 按钮，进入全部共享的根目录。
 - 保留 Unraid 顶部导航与现有 Share 名称链接（Share 名称仍进入共享设置）。
 - 在 Browse 页面中嵌入新的文件管理区域，不修改 Unraid 系统文件。
-- 通过 Unraid 7.2.2 的 \`/webGui/include/Browse.php\` 读取真实目录，限定为 \`/mnt/user\`。
+- 通过 Unraid 7.2.2 的 `/webGui/include/Browse.php` 读取真实目录，限定为 `/mnt/user`。
 - 目录树、目录标签页、面包屑路径、后退/前进、上一级、刷新。
 - 列表/网格视图、当前目录过滤、文件夹优先排序。
 - 单选、Ctrl/⌘ 多选、Shift 连选、Ctrl/⌘+A、Escape 取消。
@@ -32,17 +32,17 @@
 ## 安装（开发预览版）
 
 1. 在浏览器中安装 Tampermonkey 或其他兼容的用户脚本管理器。
-2. 打开 \`src/unraid-file-station.user.js\` 的 Raw 地址，安装脚本。
-3. **建议在用户脚本管理器中将匹配地址收窄为自己的 NAS 主机名或 IP。** 默认规则匹配任何主机上的 \`/Shares*\` 路径，仅为兼容不同 Unraid 主机名。
+2. 打开 `src/unraid-file-station.user.js` 的 Raw 地址，安装脚本。
+3. **建议在用户脚本管理器中将匹配地址收窄为自己的 NAS 主机名或 IP。** 默认规则匹配任何主机上的 `/Shares*` 路径，仅为兼容不同 Unraid 主机名。
 4. 打开 Unraid 7.2.2 的 **SHARES** 页，点击共享名称左边的蓝色浏览图标；或者点击 Shares 下方新出现的 **FILE STATION** 按钮。
 5. File Station 右上角的 **返回原生** 可以恢复原生文件管理页面；原生页面上会有 **打开 File Station** 按钮用于切回。
 
-示例：如果你的 Unraid 地址是 \`http://tower\`，可将用户脚本头部的通用匹配规则改为：
+示例：如果你的 Unraid 地址是 `http://tower`，可将用户脚本头部的通用匹配规则改为：
 
-\`\`\`javascript
+```javascript
 // @match        http://tower/Shares*
 // @match        http://tower/Main/Browse*
-\`\`\`
+```
 
 如果使用 IP、端口、HTTPS 或自定义域名，请相应调整。不要直接使用示例地址覆盖自己的 NAS 地址。
 
@@ -61,32 +61,32 @@
 
 ## 无 NAS 的本地演示
 
-\`\`\`bash
+```bash
 git clone https://github.com/nukewarrior/unraid-file-station.git
 cd unraid-file-station
 python3 -m http.server 8088
-\`\`\`
+```
 
-然后访问：\`http://127.0.0.1:8088/demo/\`
+然后访问：`http://127.0.0.1:8088/demo/`
 
 演示页带模拟文件夹和文件，可以测试主题、目录树、标签页、列表/网格切换、文件多选与右键菜单。**演示模式没有真实文件写入或下载**，也不需要访问 NAS。演示里的 Unraid 导航仅是静态外观，不包含管理功能。
 
 ## 开发与测试
 
-- 代码：\`src/unraid-file-station.user.js\`，纯原生 JavaScript，无第三方运行依赖。
-- 演示：\`demo/index.html\`，静态网页，复用同一脚本。
-- 静态检查：\`node --check src/unraid-file-station.user.js\`。
-- 自动检查：\`node --test tests/*.test.mjs\`。
-- 人工验收：\`docs/acceptance.md\`。
+- 代码：`src/unraid-file-station.user.js`，纯原生 JavaScript，无第三方运行依赖。
+- 演示：`demo/index.html`，静态网页，复用同一脚本。
+- 静态检查：`node --check src/unraid-file-station.user.js`。
+- 自动检查：`node --test tests/*.test.mjs`。
+- 人工验收：`docs/acceptance.md`。
 
 建议在真实 Unraid 上分别测试目录名含中文、空格、引号、括号与特殊字符的情况，浏览器返回行为，以及白色和黑色 WebGUI 主题。只读版不应更改 NAS 端任何文件。
 
 ## 技术与安全原则
 
 - **不更改 Unraid 系统文件**，通过浏览器用户脚本实现可逆接入。
-- **只读优先**：当前所有文件操作请求只有 GET 目录请求；下载采用原生文件 URL，写入功能暂不调用 \`Control.php\`。
-- **路径边界**：只允许 \`/mnt/user\` 及其子目录，不让用户共享与物理磁盘路径互相拖放。
-- **视图与数据隔离**：动态文件名使用 \`textContent\` 渲染，不直接拼入 HTML 字符串。
+- **只读优先**：当前所有文件操作请求只有 GET 目录请求；下载采用原生文件 URL，写入功能暂不调用 `Control.php`。
+- **路径边界**：只允许 `/mnt/user` 及其子目录，不让用户共享与物理磁盘路径互相拖放。
+- **视图与数据隔离**：动态文件名使用 `textContent` 渲染，不直接拼入 HTML 字符串。
 - **同源请求**：使用已有 Unraid 登录会话，无第三方上传或数据收集。
 - **回退开关**：浏览器保存用户偏好，关闭/卸载脚本立即恢复原生 WebGUI。
 
