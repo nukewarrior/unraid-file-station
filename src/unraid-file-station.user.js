@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.1.4
+// @version      0.1.5
 // @description  DSM-inspired read-only file browser inside Unraid WebGUI 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -619,14 +619,20 @@
   }
   function renderBrowserBarMarkup() {
     return [
-      '<div class="ufs-navigation" role="toolbar" aria-label="目录导航和视图">',
+      '<div class="ufs-navigation" role="toolbar" aria-label="目录导航">',
       '<button type="button" class="ufs-ico ufs-back" title="后退" aria-label="后退"><span data-ufs-icon="arrow-left"></span></button>',
       '<button type="button" class="ufs-ico ufs-next" title="前进" aria-label="前进"><span data-ufs-icon="arrow-right"></span></button>',
       '<button type="button" class="ufs-ico ufs-up" title="上一级" aria-label="上一级"><span data-ufs-icon="arrow-up"></span></button>',
       '<div class="ufs-address" aria-label="当前位置"></div>',
       '<div class="ufs-search-wrap"><button type="button" class="ufs-ico ufs-search-trigger" title="筛选当前目录" aria-label="筛选当前目录" aria-expanded="false"><span data-ufs-icon="search"></span></button>',
       '<input class="ufs-search" type="search" placeholder="筛选当前目录" aria-label="筛选当前目录" hidden></div>',
-      '<span class="ufs-control-divider" aria-hidden="true"></span>',
+      '</div>'
+    ].join('');
+  }
+  function renderFileActionsMarkup() {
+    return [
+      '<div class="ufs-file-actions" role="toolbar" aria-label="文件内容和视图">',
+      '<span class="ufs-section-label">文件</span><span class="ufs-spacer"></span>',
       '<div class="ufs-view-controls" role="group" aria-label="文件视图">',
       '<button type="button" class="ufs-ico ufs-list-button" title="列表视图" aria-label="列表视图"><span data-ufs-icon="list"></span></button>',
       '<button type="button" class="ufs-ico ufs-grid-button" title="网格视图" aria-label="网格视图"><span data-ufs-icon="grid"></span></button>',
@@ -646,17 +652,29 @@
       '</div>'
     ].join('');
   }
+  function renderWorkspaceMarkup() {
+    return [
+      '<div class="ufs-workspace">',
+      '<aside class="ufs-sidebar"><div class="ufs-tree"></div></aside>',
+      '<div class="ufs-resizer" role="separator" aria-label="调整目录树宽度" aria-orientation="vertical"></div>',
+      '<main class="ufs-main">',
+      renderBrowserBarMarkup(),
+      renderFileActionsMarkup(),
+      renderSelectionBarMarkup(),
+      '<div class="ufs-content">',
+      '<div class="ufs-list" tabindex="0"></div>',
+      '<aside class="ufs-inspector" hidden></aside>',
+      '</div></main></div>'
+    ].join('');
+  }
   function renderUI() {
     app = element('section');
     app.id = 'ufs-app';
     app.className = state.theme === 'dsm' ? 'ufs-dsm' : '';
     app.setAttribute('aria-label', 'Unraid File Station');
     app.innerHTML = [
-      renderHeaderMarkup(), renderBrowserBarMarkup(), renderSelectionBarMarkup(),
-      '<div class="ufs-workspace"><aside class="ufs-sidebar"><div class="ufs-tree"></div></aside>',
-      '<div class="ufs-resizer" role="separator" aria-label="调整目录树宽度" aria-orientation="vertical"></div>',
-      '<main class="ufs-main"><div class="ufs-list" tabindex="0"></div></main>',
-      '<aside class="ufs-inspector" hidden></aside></div>',
+      renderHeaderMarkup(),
+      renderWorkspaceMarkup(),
       '<div class="ufs-status"><span class="ufs-count">准备就绪</span>',
       '<span>只读预览 · 写入操作请使用原生文件管理器</span></div>'
     ].join('');
@@ -892,7 +910,7 @@
   }
   // Explicit opt-in hook for pure-function tests; never enabled on production WebGUI.
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
-    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, listDirectory, availableHeight, visibleEntries, selectedEntries, renderHeaderMarkup, renderBrowserBarMarkup, renderSelectionBarMarkup, state };
+    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, listDirectory, availableHeight, visibleEntries, selectedEntries, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderSelectionBarMarkup, renderWorkspaceMarkup, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();
