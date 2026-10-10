@@ -190,7 +190,7 @@
     expanded: new Set([PREFIX]), selection: new Set(), lastIndex: -1,
     view: localStorage.getItem(STORE + 'view') || 'list',
     theme: localStorage.getItem(STORE + 'theme') || 'unraid',
-    inspector: false, filter: '', busy: false, requestId: 0,
+    inspector: false, filter: '', searchOpen: false, busy: false, requestId: 0,
     sortKey: 'name', sortDirection: 1
   };
   let app;
@@ -216,6 +216,20 @@
     localStorage.setItem(STORE + 'theme', state.theme);
     app.classList.toggle('ufs-dsm', state.theme === 'dsm');
     notify(state.theme === 'dsm' ? '已切换到 DSM 经典主题' : '已切换到 Unraid 融合主题');
+  }
+  function setSearchOpen(open) {
+    state.searchOpen = Boolean(open);
+    const input = $('.ufs-search', app);
+    const trigger = $('.ufs-search-trigger', app);
+    input.hidden = !state.searchOpen;
+    trigger.setAttribute('aria-expanded', String(state.searchOpen));
+    trigger.classList.toggle('ufs-view-active', state.searchOpen);
+    if (state.searchOpen) input.focus();
+    else if (state.filter) {
+      state.filter = '';
+      input.value = '';
+      renderFiles();
+    }
   }
   function writeUrl(path, replace) {
     if (isDemo) return;
@@ -640,7 +654,11 @@
     $('.ufs-back', app).addEventListener('click', () => stepHistory(-1));
     $('.ufs-next', app).addEventListener('click', () => stepHistory(1));
     $('.ufs-up', app).addEventListener('click', () => navigate(currentPath().split('/').slice(0, -1).join('/') || PREFIX));
+    $('.ufs-search-trigger', app).addEventListener('click', () => setSearchOpen(!state.searchOpen));
     $('.ufs-search', app).addEventListener('input', (event) => { state.filter = event.target.value; renderFiles(); });
+    $('.ufs-search', app).addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') { event.stopPropagation(); setSearchOpen(false); $('.ufs-search-trigger', app).focus(); }
+    });
     $('.ufs-list-button', app).addEventListener('click', () => setView('list'));
     $('.ufs-grid-button', app).addEventListener('click', () => setView('grid'));
     $('.ufs-details-button', app).addEventListener('click', () => {
