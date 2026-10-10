@@ -249,9 +249,12 @@ test('网格已经滚至最底部时改变列数，应保留最后的文件与�
   await page.locator('.ufs-entry[data-ufs-index="1199"]').waitFor();
   await page.setViewportSize({width:950,height:760});
   await page.locator('.ufs-entry[data-ufs-index="1199"]').waitFor();
-  await page.waitForFunction(() => {
-    const list=document.querySelector('.ufs-list');
-    return list.scrollHeight-list.clientHeight-list.scrollTop < 8;
-  });
+  await page.waitForTimeout(100); // Allow queued ResizeObserver / RAF updates to settle.
+  const metrics=await list.evaluate(el=>({
+    scrollTop:el.scrollTop,scrollHeight:el.scrollHeight,clientHeight:el.clientHeight,
+    gap:el.scrollHeight-el.clientHeight-el.scrollTop,
+    gridColumns:getComputedStyle(el.querySelector('.ufs-virtual-grid')).gridTemplateColumns
+  }));
+  assert.ok(metrics.gap<8,'grid bottom anchor '+JSON.stringify(metrics));
   assert.equal(errors.length,0,errors.join('\n'));
 });
