@@ -971,6 +971,11 @@
     const list = $('.ufs-list', app);
     if (!list || !list.isConnected || data.list !== list) return;
     const cols = data.view === 'grid' ? virtualGridColumns(list.clientWidth) : 1;
+    const gridResized = data.view === 'grid' && data.columns > 0 && data.columns !== cols;
+    const nearBottom = gridResized &&
+      list.scrollHeight - list.clientHeight - list.scrollTop <= 6;
+    const anchorIndex = gridResized ?
+      Math.floor(Math.max(0, list.scrollTop - 14) / VIRTUAL_GRID_STEP) * data.columns : 0;
     const range = virtualWindow(data.entries.length,list.scrollTop,list.clientHeight,data.view,cols);
     if (!force && data.start === range.start && data.end === range.end &&
         data.columns === cols) return;
@@ -985,6 +990,13 @@
       fragment.append(createFileRow(data.entries[i],i,data.entries));
     }
     data.body.replaceChildren(fragment);
+    if (gridResized) {
+      // Grid column count changes can increase the total scroll height. Retain
+      // the visible item (or the bottom edge) instead of jumping mid-directory.
+      list.scrollTop = nearBottom ? list.scrollHeight :
+        14 + Math.floor(anchorIndex / cols) * VIRTUAL_GRID_STEP;
+      scheduleVirtualWindow(); // Re-mount the new range at the restored scroll offset.
+    }
     scheduleLocationDisplay();
   }
   function scheduleVirtualWindow() {
