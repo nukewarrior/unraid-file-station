@@ -741,11 +741,12 @@ test('v0.1.16 只禁用虚拟文件区的滚动锚定，保留原生滚动与正
 });
 
 
-test('v0.2.1 仍是纯用户脚本，除新建文件夹外的写入操作未开放', () => {
+test('v0.2.2 仍是纯用户脚本，复制、移动及删除等写入操作未开放', () => {
   const { api } = createAPI();
   assert.equal(api.FILE_WRITES_ENABLED, false);
   assert.match(script, /const FILE_WRITES_ENABLED = false/);
   assert.equal(api.CREATE_FOLDER_ENABLED, true);
+  assert.equal(api.RENAME_ENABLED, true);
   assert.match(script, /mode: 'file', action: '0'/);
   assert.match(script, /const NATIVE_CONTROL_URL = '\/webGui\/include\/Control\.php'/);
   assert.doesNotMatch(script, /fetch\([^)]*Control\.php/);
