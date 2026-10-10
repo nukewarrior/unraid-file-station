@@ -172,7 +172,6 @@
     'folder-open':['M3 7a2 2 0 0 1 2-2h4l2 2h9a2 2 0 0 1 2 2','M3 11h17a2 2 0 0 1 1.9 2.6L20 19H4a2 2 0 0 1-1.9-2.6z'],
     file:['M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z','M14 2v6h6'],
     more:['M5 12h.01','M12 12h.01','M19 12h.01'],
-    more:['M5 12h.01','M12 12h.01','M19 12h.01'],
     archive:['M4 4h16v16H4z','M4 9h16','M12 9v8','M10 13h4'],
     image:['M3 3h18v18H3z','M8 8h.01','m3 13 5-5 5 5'],
     video:['M3 5h18v14H3z','m10 4 5 3-5 3z'],
@@ -719,7 +718,10 @@
       toggler.append(icon(state.expanded.has(path) ? 'chevron-down' : 'chevron-right'));
       if (children && !hasKnownChildren) toggler.style.visibility = 'hidden';
       toggler.title = '展开或折叠';
-      toggler.addEventListener('click', async () => {
+      toggler.type = 'button';
+      toggler.addEventListener('click', async (event) => {
+        event.stopPropagation(); // Arrow expands tree; it never navigates the row.
+        event.preventDefault();
         if (state.expanded.has(path)) state.expanded.delete(path);
         else { state.expanded.add(path); await loadTree(path); }
         renderTree();
@@ -728,7 +730,10 @@
       if (path === PREFIX) row.lastChild.replaceWith(icon('drive', 'ufs-file-icon'));
       row.append(element('span', 'ufs-tree-name', path === PREFIX ? '所有共享文件夹' : path.split('/').pop()));
       row.title = path;
-      if (path !== PREFIX) row.addEventListener('click', (event) => { if (event.target === toggler) return; navigate(path); });
+      if (path !== PREFIX) row.addEventListener('click', (event) => {
+        if (event.target.closest('.ufs-tree-toggle')) return;
+        navigate(path);
+      });
       wrapper.append(row);
       target.append(wrapper);
       if (state.expanded.has(path)) {
