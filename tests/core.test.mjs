@@ -272,7 +272,8 @@ test('单选、Ctrl/⌘ 增减选和 Shift 连选不会修改固定工具栏', (
   assert.deepEqual([...api.state.selection].sort(), [entries[0].path, entries[2].path].sort());
   api.updateSelection(e({ctrlKey:true}), entries[0], 0, entries);
   assert.deepEqual([...api.state.selection], [entries[2].path]);
-  api.updateSelection(e({shiftKey:true}), entries[0], 0, entries);
+  // Ctrl toggling a updated the anchor to a; Shift clicking c selects a..c.
+  api.updateSelection(e({shiftKey:true}), entries[2], 2, entries);
   assert.deepEqual([...api.state.selection].sort(), entries.slice(0, 3).map(x=>x.path).sort());
   api.updateSelection(e(), entries[3], 3, entries);
   assert.deepEqual([...api.state.selection], [entries[3].path]);
