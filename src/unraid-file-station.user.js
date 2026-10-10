@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.1.11
+// @version      0.1.12
 // @description  DSM-inspired read-only file browser inside Unraid WebGUI 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -243,11 +243,11 @@
     // Scope this only to navigable rows; inputs / breadcrumbs stay selectable.
     '#ufs-app .ufs-tree-row,#ufs-app .ufs-tree-row *,#ufs-app .ufs-entry,#ufs-app .ufs-entry *{user-select:none;-webkit-user-select:none;cursor:default!important}',
     '#ufs-app .ufs-main{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0;overflow:hidden;background:var(--ufs-bg)}#ufs-app .ufs-content{display:flex;flex:1;min-width:0;min-height:0;overflow:hidden}#ufs-app .ufs-list{min-width:0;min-height:0;overflow:auto;flex:1;padding:0 8px;outline:0}',
-    '#ufs-app .ufs-head,#ufs-app .ufs-entry{display:grid;grid-template-columns:var(--ufs-columns);width:max(100%,var(--ufs-table-min-width));align-items:center;gap:10px;padding:0 12px;border-bottom:1px solid var(--ufs-border)}#ufs-app .ufs-head{height:34px;min-height:34px;font-weight:600;color:var(--ufs-muted);font-size:12px;position:sticky;top:0;background:var(--ufs-bg);z-index:1}',
+    '#ufs-app .ufs-head,#ufs-app .ufs-entry{display:grid;grid-template-columns:var(--ufs-columns);width:100%;min-width:var(--ufs-table-min-width);box-sizing:border-box;align-items:center;gap:10px;padding:0 12px;border-bottom:1px solid var(--ufs-border)}#ufs-app .ufs-head{height:34px;min-height:34px;font-weight:600;color:var(--ufs-muted);font-size:12px;position:sticky;top:0;background:var(--ufs-bg);z-index:1}',
     '#ufs-app .ufs-entry{min-height:38px;height:38px;border-radius:3px;cursor:default}#ufs-app .ufs-entry:hover{background:var(--ufs-hover)}#ufs-app .ufs-entry.ufs-selected{background:var(--ufs-sel);outline:none}#ufs-app .ufs-entry.ufs-selected:hover{background:var(--ufs-selected-hover)}#ufs-app .ufs-entry>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
     '#ufs-app .ufs-file-name{display:flex;align-items:center;gap:9px;min-width:0}#ufs-app .ufs-file-name .ufs-filename{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}',
     '#ufs-app .ufs-sort-button{display:inline-flex;align-items:center;gap:5px;width:100%;height:30px;border:0;padding:0;background:transparent;text-align:left;color:inherit;white-space:nowrap}#ufs-app .ufs-sort-button .ufs-sort-mark{color:var(--ufs-accent);font-size:12px}',
-    '#ufs-app .ufs-head>span{position:relative}#ufs-app .ufs-column-grip{position:absolute;right:-6px;top:0;width:12px;height:100%;cursor:col-resize!important;touch-action:none;z-index:3;user-select:none;-webkit-user-select:none}#ufs-app .ufs-column-grip:hover,#ufs-app .ufs-column-grip:active{border-right:2px solid var(--ufs-accent)}#ufs-app .ufs-entry{width:max(100%,var(--ufs-table-min-width))}',
+    '#ufs-app .ufs-head>span{position:relative}#ufs-app .ufs-column-grip{position:absolute;right:-6px;top:0;width:12px;height:100%;cursor:col-resize!important;touch-action:none;z-index:3;user-select:none;-webkit-user-select:none}#ufs-app .ufs-column-grip:hover,#ufs-app .ufs-column-grip:active{border-right:2px solid var(--ufs-accent)}#ufs-app .ufs-entry{width:100%;min-width:var(--ufs-table-min-width)}',
     '#ufs-app .ufs-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(125px,1fr));gap:10px;align-content:start;padding:14px}#ufs-app .ufs-grid .ufs-entry{display:flex;height:auto;flex-direction:column;text-align:center;gap:7px;border:1px solid var(--ufs-border);padding:16px 8px;min-width:0;min-height:107px;width:auto}',
     '#ufs-app .ufs-grid .ufs-file-name{flex-direction:column;max-width:100%;gap:7px}#ufs-app .ufs-grid .ufs-file-name .ufs-svg{width:34px;height:34px}#ufs-app .ufs-grid .ufs-extra{display:none}',
     '#ufs-app .ufs-inspector{width:285px;flex:0 0 285px;min-width:220px;max-width:38%;border-left:1px solid var(--ufs-border);background:var(--ufs-panel);padding:14px;overflow:auto}#ufs-app .ufs-inspector[hidden]{display:none}#ufs-app .ufs-inspector h3{margin:0 0 12px;font-size:14px}#ufs-app .ufs-prop{display:flex;justify-content:space-between;gap:15px;margin:10px 0;word-break:break-word}#ufs-app .ufs-prop span:first-child{color:var(--ufs-muted);flex-shrink:0}',
@@ -260,6 +260,10 @@
     // Scope to this mode because Unraid's periodic jQuery fadeIn() may change inline display styles.
     'html.ufs-active-page .move_to_end,html.ufs-active-page .back_to_top{display:none!important}',
     '#ufs-app .ufs-list,#ufs-app .ufs-sidebar,#ufs-app .ufs-inspector{overscroll-behavior:contain}',
+    // File Station-only thin native scrollbar. Keep scrolling and thumb dragging intact:
+    // scroll activity and hover show the thumb; idle leaves a transparent track.
+    '#ufs-app .ufs-list{scrollbar-width:thin;scrollbar-color:transparent transparent}#ufs-app .ufs-list:hover,#ufs-app .ufs-list.ufs-scroll-active{scrollbar-color:rgba(105,115,126,.48) transparent}#ufs-app .ufs-list::-webkit-scrollbar{width:6px;height:6px;background:transparent}#ufs-app .ufs-list::-webkit-scrollbar-track{background:transparent}#ufs-app .ufs-list::-webkit-scrollbar-thumb{background:transparent;border-radius:8px}#ufs-app .ufs-list:hover::-webkit-scrollbar-thumb,#ufs-app .ufs-list.ufs-scroll-active::-webkit-scrollbar-thumb{background:rgba(105,115,126,.48)}#ufs-app .ufs-list::-webkit-scrollbar-thumb:hover{background:rgba(94,104,115,.7)}#ufs-app .ufs-list::-webkit-scrollbar-corner{background:transparent}',
+
     '#ufs-app .ufs-menu .ufs-location-copy{width:auto;flex:0 0 auto;white-space:nowrap;padding:4px 9px;font-size:12px;color:var(--ufs-accent);border:1px solid var(--ufs-border)}',
     '.ufs-hide-native{display:none!important}#ufs-native-enable{margin:8px;padding:7px 12px;background:#e87526;color:#fff;border:0;border-radius:5px;cursor:pointer}',
     // Pointer focus should not leave a colored ring after details is closed.
@@ -325,6 +329,37 @@
     const layout = columnLayout(state.columnWidths);
     app.style.setProperty('--ufs-columns', layout.columns);
     app.style.setProperty('--ufs-table-min-width', layout.minWidth + 'px');
+  }
+  function inspectListScrollMetrics(list) {
+    if (!list) return null;
+    const clientWidth = list.clientWidth;
+    const scrollWidth = list.scrollWidth;
+    const clientHeight = list.clientHeight;
+    const scrollHeight = list.scrollHeight;
+    const requiredWidth = columnLayout(state.columnWidths).minWidth + 16; // list padding 8px each side
+    return {
+      clientWidth, scrollWidth, clientHeight, scrollHeight,
+      horizontalOverflow: Math.max(0, scrollWidth - clientWidth),
+      verticalOverflow: Math.max(0, scrollHeight - clientHeight),
+      requiredWidth, columns: { ...state.columnWidths }
+    };
+  }
+  function setupListScrollbars(list) {
+    let idleTimer = null;
+    list.addEventListener('scroll', () => {
+      list.classList.add('ufs-scroll-active');
+      if (idleTimer !== null) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        list.classList.remove('ufs-scroll-active');
+        idleTimer = null;
+      }, 1100);
+    }, { passive: true });
+    // Hover also reveals the native thumb so users can grab and drag it.
+    // No overflow:hidden or simulated scrolling: accessibility remains native.
+    return () => {
+      if (idleTimer !== null) clearTimeout(idleTimer);
+      list.classList.remove('ufs-scroll-active');
+    };
   }
   function updateColumnWidth(key, value, persist = false) {
     const width = clampColumnWidth(key, value);
@@ -971,7 +1006,7 @@
       ['重置文件列表列宽', resetColumnWidths],
       ['返回原生文件管理器（写入操作）', nativeMode],
       [state.theme === 'unraid' ? '切换至 DSM 经典主题' : '切换至 Unraid 融合主题', toggleTheme],
-      ['关于 File Station v0.1.11', () => notify('File Station v0.1.11 · Unraid 7.2.2 · 只读预览')]
+      ['关于 File Station v0.1.12', () => notify('File Station v0.1.12 · Unraid 7.2.2 · 只读预览')]
     ];
     actions.forEach(([label, fn]) => {
       const button = element('button', '', label);
@@ -1078,6 +1113,7 @@
     });
     $('.ufs-operations', app).addEventListener('click', showOperationsMenu);
     setupSidebarResizer();
+    setupListScrollbars($('.ufs-list', app));
     if (typeof ResizeObserver !== 'undefined') {
       new ResizeObserver(() => scheduleLocationDisplay()).observe($('.ufs-list', app));
     }
@@ -1280,7 +1316,7 @@
   }
   // Explicit opt-in hook for pure-function tests; never enabled on production WebGUI.
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
-    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, availableHeight, visibleEntries, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
+    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, availableHeight, visibleEntries, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();
