@@ -396,3 +396,59 @@ test('v0.2.1 请求接受但文件夹未出现时不误报成功或重复提交'
   assert.equal(nativePosts.filter(x=>x.mode==='file').length,1);
   assert.equal(errors.length,0,errors.join('\n'));
 });
+
+
+test('v0.2.1.1 弹窗布局有独立标题、只读路径、表单与底部按钮区', async t=>{
+  const {page,errors,nativePosts}=await pageFor(t);
+  await newFolderDialog(page);
+  const ui=await page.locator('.ufs-create-dialog').evaluate(dialog=>{
+    const box=el=>{const r=el.getBoundingClientRect();return {top:r.top,bottom:r.bottom,left:r.left,right:r.right,width:r.width,height:r.height};};
+    const header=dialog.querySelector('.ufs-create-head');
+    const fields=dialog.querySelector('.ufs-create-fields');
+    const footer=dialog.querySelector('.ufs-create-buttons');
+    const location=dialog.querySelector('.ufs-create-location');
+    const input=dialog.querySelector('.ufs-create-input');
+    const cancel=dialog.querySelector('.ufs-create-cancel');
+    const create=dialog.querySelector('.ufs-create-submit');
+    return {
+      dialog:box(dialog),header:box(header),fields:box(fields),footer:box(footer),
+      locationBackground:getComputedStyle(location).backgroundColor,
+      dialogBackground:getComputedStyle(dialog).backgroundColor,
+      inputHeight:box(input).height,selected:[input.selectionStart,input.selectionEnd,input.value.length],
+      cancel:box(cancel),create:box(create),
+      headerBorder:getComputedStyle(header).borderBottomWidth,
+      footerBorder:getComputedStyle(footer).borderTopWidth
+    };
+  });
+  assert.ok(ui.dialog.width>=390 && ui.dialog.width<=445,JSON.stringify(ui));
+  assert.ok(ui.dialog.height<390,JSON.stringify(ui));
+  assert.ok(ui.header.bottom<=ui.fields.top+1 && ui.fields.bottom<=ui.footer.top+1,JSON.stringify(ui));
+  assert.notEqual(ui.locationBackground,ui.dialogBackground);
+  assert.equal(ui.headerBorder,'1px');
+  assert.equal(ui.footerBorder,'1px');
+  assert.equal(ui.inputHeight,36);
+  assert.deepEqual(ui.selected,[0,5,5]);
+  assert.ok(ui.cancel.left<ui.create.left);
+  assert.equal(ui.cancel.height,ui.create.height);
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.1.1 弹窗在窄窗口不横向溢出，取消不会执行写入', async t=>{
+  const {page,errors,nativePosts}=await pageFor(t);
+  await newFolderDialog(page);
+  await page.setViewportSize({width:420,height:620});
+  const ui=await page.locator('.ufs-create-dialog').evaluate(dialog=>{
+    const box=dialog.getBoundingClientRect();
+    const footer=dialog.querySelector('.ufs-create-buttons').getBoundingClientRect();
+    return {left:box.left,right:box.right,width:box.width,scrollWidth:dialog.scrollWidth,
+      clientWidth:dialog.clientWidth,footerRight:footer.right};
+  });
+  assert.ok(ui.left>=0 && ui.right<=420,JSON.stringify(ui));
+  assert.ok(ui.scrollWidth<=ui.clientWidth+1,JSON.stringify(ui));
+  assert.ok(ui.footerRight<=ui.right+1);
+  await page.locator('.ufs-create-cancel').click();
+  assert.equal(await page.locator('.ufs-create-dialog').count(),0);
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
