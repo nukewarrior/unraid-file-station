@@ -1198,7 +1198,13 @@
       const requested = new URLSearchParams(location.search).get('dir') || PREFIX;
       if (!safePath(requested)) return;
       const path = requested === PREFIX ? defaultSharePath() : requested;
-      if (!path) { void refreshDirectory(); return; }
+      if (!path) {
+        // If discovery failed, keep a valid deep-linked directory and repair
+        // the Back/Forward URL rather than leaving the address at virtual root.
+        if (activeTab()) writeUrl(currentPath(), true);
+        else void refreshDirectory();
+        return;
+      }
       if (requested === PREFIX) writeUrl(path, true);
       if (path === currentPath()) return;
       const tab = activeTab();
