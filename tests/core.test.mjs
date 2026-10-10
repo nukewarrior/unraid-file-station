@@ -138,11 +138,11 @@ test('文件排序保持文件夹在前并能切换大小、时间和名称顺�
   assert.equal(api.visibleEntries().length, 2);
 });
 
-test('只读版本默认只包含两条工具行，移除长期禁用的写入栏', () => {
+test('只读版本采用固定操作菜单且不再创建选中操作栏', () => {
   const { api } = createAPI();
   const header = api.renderHeaderMarkup();
   const navigation = api.renderBrowserBarMarkup();
-  const selection = api.renderSelectionBarMarkup();
+  const workspace = api.renderWorkspaceMarkup();
   assert.match(header, /class="ufs-top"/);
   assert.match(header, /class="ufs-tabs"/);
   assert.match(header, /ufs-more/);
@@ -152,8 +152,9 @@ test('只读版本默认只包含两条工具行，移除长期禁用的写入�
   assert.match(fileActions, /ufs-grid-button/);
   assert.match(fileActions, /class="ufs-file-actions"/);
   assert.doesNotMatch(navigation, /ufs-grid-button|ufs-file-actions/);
-  assert.match(selection, /class="ufs-selection-bar"[^>]*hidden/);
-  assert.doesNotMatch(header + navigation + selection, /ufs-toolbar|ufs-write/);
+  assert.match(api.renderFileActionsMarkup(), /ufs-operations/);
+  assert.doesNotMatch(workspace, /ufs-selection-bar/);
+  assert.doesNotMatch(header + navigation + workspace, /ufs-toolbar|ufs-write/);
   assert.match(script, /const ICONS =/);
   assert.doesNotMatch(script, /'📁'|'📄'/);
   assert.match(script, /nativeBreadcrumb = \$\('\.title \.left'\)/);
@@ -181,17 +182,17 @@ test('只锁定增强版 Browse 外层滚动，不再监听 body 尺寸变化', 
 });
 
 
-test('统一导航栏保留内部滚动，且选中操作栏默认隐藏', () => {
+test('统一导航栏保留内部滚动，工具栏不随选中出现新行', () => {
   const { api } = createAPI();
   assert.match(api.renderBrowserBarMarkup(), /ufs-search[^"]*"[^>]*hidden/);
-  assert.match(api.renderSelectionBarMarkup(), /ufs-selection-count/);
+  assert.doesNotMatch(api.renderWorkspaceMarkup(), /ufs-selection-bar/);
   assert.match(script, /#ufs-app \.ufs-navigation\{height:42px;min-height:42px;max-height:42px/);
   assert.match(script, /#ufs-app \[hidden\]\{display:none!important/);
   assert.match(script, /#ufs-app \.ufs-sidebar\{[^']*overflow:auto/);
   assert.match(script, /#ufs-app \.ufs-list\{[^']*overflow:auto/);
 });
 
-test('选中操作栏根据已选项目提供可用操作', () => {
+test('文件多选记录可供固定操作菜单使用', () => {
   const { api } = createAPI();
   api.state.entries = [
     {path:'/mnt/user/downloads/Photos', name:'Photos', folder:true},
@@ -202,7 +203,7 @@ test('选中操作栏根据已选项目提供可用操作', () => {
   assert.equal(api.selectedEntries().length, 1);
   api.state.selection.add('/mnt/user/downloads/Photos');
   assert.equal(api.selectedEntries().length, 2);
-  assert.match(script, /chosen\.length !== 1 \|\| chosen\[0\]\.folder/);
+  assert.match(script, /chosen\.length === 1 && !chosen\[0\]\.folder/);
   assert.match(script, /setSearchOpen\(false\)/);
 });
 
@@ -215,7 +216,7 @@ test('原生上下滚动浮动按钮仅在增强版 File Station 页面隐藏', 
 });
 
 
-test('v0.1.5 DSM 结构：导航和操作栏仅属于右侧主区域', () => {
+test('v0.1.6 DSM 结构：导航与固定操作栏仅属于右侧主区域', () => {
   const { api } = createAPI();
   const html = api.renderWorkspaceMarkup();
   const sidebar = html.indexOf('<aside class="ufs-sidebar">');
@@ -223,13 +224,12 @@ test('v0.1.5 DSM 结构：导航和操作栏仅属于右侧主区域', () => {
   const main = html.indexOf('<main class="ufs-main">');
   const navigation = html.indexOf('<div class="ufs-navigation"');
   const actions = html.indexOf('<div class="ufs-file-actions"');
-  const selection = html.indexOf('<div class="ufs-selection-bar"');
   const content = html.indexOf('<div class="ufs-content">');
   const list = html.indexOf('<div class="ufs-list"');
   const inspector = html.indexOf('<aside class="ufs-inspector"');
   assert.ok(sidebar >= 0 && sidebar < resizer && resizer < main);
-  assert.ok(main < navigation && navigation < actions && actions < selection);
-  assert.ok(selection < content && content < list && list < inspector);
+  assert.ok(main < navigation && navigation < actions && actions < content);
+  assert.ok(content < list && list < inspector);
   assert.ok(html.indexOf('</main>') > inspector);
   assert.equal((html.match(/class="ufs-navigation"/g) || []).length, 1);
   assert.equal((html.match(/class="ufs-file-actions"/g) || []).length, 1);
@@ -245,4 +245,47 @@ test('v0.1.5 地址框尺寸限制在右侧工具栏，保持白底且不突出'
   assert.match(script, /#ufs-app \.ufs-main\{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0;overflow:hidden/);
   assert.match(script, /#ufs-app \.ufs-content\{display:flex;flex:1;min-width:0;min-height:0;overflow:hidden/);
   assert.doesNotMatch(script, /#ufs-app \.ufs-toolbar\{height:44px/);
+});
+
+
+test('DSM 风格浅蓝选中高亮与橙色目录树选中态分离', () => {
+  assert.match(script, /--ufs-sel:#e4f0fc/);
+  assert.match(script, /--ufs-tree-sel:#fff0e2/);
+  assert.match(script, /ufs-entry\.ufs-selected\{background:var\(--ufs-sel\);outline:none\}/);
+  assert.match(script, /ufs-entry\.ufs-selected:hover\{background:var\(--ufs-selected-hover\)\}/);
+  assert.doesNotMatch(script, /function renderSelectionBar/);
+  assert.doesNotMatch(script, /renderSelectionBarMarkup/);
+  assert.match(script, /if \(event\.target === \$\('\.ufs-list', app\)/);
+  assert.match(script, /if \(!state\.selection\.has\(entry\.path\)\)/);
+});
+
+test('单选、Ctrl/⌘ 增减选和 Shift 连选不会修改固定工具栏', () => {
+  const { api } = createAPI();
+  const entries = ['a', 'b', 'c', 'd'].map(name => ({
+    name, path:'/mnt/user/downloads/'+name, folder:true
+  }));
+  const e = (overrides={}) => ({ metaKey:false, ctrlKey:false, shiftKey:false, ...overrides });
+  api.state.entries = entries;
+  api.updateSelection(e(), entries[0], 0, entries);
+  assert.deepEqual([...api.state.selection], [entries[0].path]);
+  api.updateSelection(e({metaKey:true}), entries[2], 2, entries);
+  assert.deepEqual([...api.state.selection].sort(), [entries[0].path, entries[2].path].sort());
+  api.updateSelection(e({ctrlKey:true}), entries[0], 0, entries);
+  assert.deepEqual([...api.state.selection], [entries[2].path]);
+  api.updateSelection(e({shiftKey:true}), entries[0], 0, entries);
+  assert.deepEqual([...api.state.selection].sort(), entries.slice(0, 3).map(x=>x.path).sort());
+  api.updateSelection(e(), entries[3], 3, entries);
+  assert.deepEqual([...api.state.selection], [entries[3].path]);
+  assert.doesNotMatch(api.renderWorkspaceMarkup(), /ufs-selection-bar/);
+});
+
+test('底部统计仅汇总可知文件大小，不计算文件夹内容大小', () => {
+  const { api } = createAPI();
+  const file1 = { name:'a.zip', path:'/mnt/user/a.zip', folder:false, size:1024 };
+  const file2 = { name:'b.zip', path:'/mnt/user/b.zip', folder:false, size:2048 };
+  const folder = { name:'photos', path:'/mnt/user/photos', folder:true };
+  assert.equal(api.selectionStatus([file1, file2]), '已选择 2 个项目 · 合计 3 KB');
+  assert.equal(api.selectionStatus([file1, folder]), '已选择 2 个项目 · 已知文件合计 1 KB');
+  assert.equal(api.selectionStatus([folder]), '已选择 1 个项目');
+  assert.match(script, /selectionStatus\(chosen\)/);
 });
