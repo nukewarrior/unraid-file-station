@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.1.5
+// @version      0.1.6
 // @description  DSM-inspired read-only file browser inside Unraid WebGUI 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -140,8 +140,8 @@
   }
 
   const css = [
-    '#ufs-app{--ufs-accent:#eb7825;--ufs-accent-soft:#fff1e4;--ufs-bg:#fff;--ufs-panel:#f7f8fa;--ufs-text:#252a30;--ufs-muted:#727a85;--ufs-border:#e1e5eb;--ufs-hover:#f2f5f8;--ufs-sel:#fff0e2;--ufs-sidebar-width:245px;color:var(--ufs-text);background:var(--ufs-bg);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;border:1px solid var(--ufs-border);border-radius:7px;overflow:hidden;display:flex;flex-direction:column;height:var(--ufs-available-height,65vh);min-height:260px;margin:0 0 8px;line-height:1.45;font-size:13px;position:relative}',
-    '#ufs-app.ufs-dsm{--ufs-accent:#318bd2;--ufs-accent-soft:#e8f3ff;--ufs-panel:#f4f7fa;--ufs-hover:#edf4fc;--ufs-sel:#e7f2ff}',
+    '#ufs-app{--ufs-accent:#eb7825;--ufs-accent-soft:#fff1e4;--ufs-bg:#fff;--ufs-panel:#f7f8fa;--ufs-text:#252a30;--ufs-muted:#727a85;--ufs-border:#e1e5eb;--ufs-hover:#f2f5f8;--ufs-sel:#e4f0fc;--ufs-selected-hover:#d8e9fa;--ufs-tree-sel:#fff0e2;--ufs-sidebar-width:245px;color:var(--ufs-text);background:var(--ufs-bg);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;border:1px solid var(--ufs-border);border-radius:7px;overflow:hidden;display:flex;flex-direction:column;height:var(--ufs-available-height,65vh);min-height:260px;margin:0 0 8px;line-height:1.45;font-size:13px;position:relative}',
+    '#ufs-app.ufs-dsm{--ufs-accent:#318bd2;--ufs-accent-soft:#e8f3ff;--ufs-panel:#f4f7fa;--ufs-hover:#edf4fc;--ufs-sel:#e4f0fc;--ufs-selected-hover:#d8e9fa;--ufs-tree-sel:#e7f2ff}',
     '#ufs-app *,#ufs-app *::before,#ufs-app *::after{box-sizing:border-box}#ufs-app button,#ufs-app input{font-family:inherit;font-size:inherit;font-weight:inherit;letter-spacing:normal;text-transform:none;line-height:1.4;box-shadow:none;text-shadow:none;border-radius:5px}#ufs-app button{cursor:pointer}#ufs-app button:disabled{opacity:.42;cursor:not-allowed}#ufs-app button:focus-visible,#ufs-app input:focus-visible,#ufs-app .ufs-entry:focus-visible{outline:2px solid var(--ufs-accent);outline-offset:1px}',
     '#ufs-app .ufs-svg{height:16px;width:16px;min-width:16px;display:inline-block;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;vertical-align:middle;pointer-events:none}#ufs-app .ufs-folder-icon{color:#dba44e}#ufs-app .ufs-file-icon{color:#889bac}#ufs-app .ufs-mark{color:var(--ufs-accent)}',
     '#ufs-app .ufs-top,#ufs-app .ufs-navigation,#ufs-app .ufs-status{display:flex;align-items:center;gap:7px;border-bottom:1px solid var(--ufs-border);flex-shrink:0;min-width:0}',
@@ -154,11 +154,11 @@
     '#ufs-app .ufs-crumb{border:0;background:none;color:var(--ufs-muted);padding:2px;white-space:nowrap;flex-shrink:0}#ufs-app .ufs-crumb:hover{color:var(--ufs-accent)}#ufs-app .ufs-crumb:last-child{color:var(--ufs-text);font-weight:600}#ufs-app .ufs-search{height:29px;border:1px solid var(--ufs-border);background:var(--ufs-bg);color:var(--ufs-text);border-radius:4px;padding:4px 9px;width:150px;min-width:0;max-width:none}',
     '#ufs-app .ufs-workspace{display:flex;flex:1;min-height:0;overflow:hidden}#ufs-app .ufs-sidebar{background:var(--ufs-panel);width:var(--ufs-sidebar-width);flex:0 0 var(--ufs-sidebar-width);min-width:0;overflow:auto;padding:8px 7px}#ufs-app .ufs-resizer{width:5px;flex:0 0 5px;background:var(--ufs-border);cursor:col-resize;touch-action:none;opacity:.7}#ufs-app .ufs-resizer:hover{background:var(--ufs-accent)}',
     '#ufs-app .ufs-tree-label{padding:7px 8px;color:var(--ufs-muted);font-size:12px;font-weight:600;letter-spacing:0}#ufs-app .ufs-tree-row{display:flex;align-items:center;gap:7px;width:100%;height:31px;min-height:31px;padding:0 7px;border:0;background:transparent;text-align:left;color:var(--ufs-text);border-radius:5px;min-width:0}',
-    '#ufs-app .ufs-tree-row:hover{background:var(--ufs-hover)}#ufs-app .ufs-tree-row.ufs-current{background:var(--ufs-sel);color:var(--ufs-accent);font-weight:600}#ufs-app .ufs-tree-toggle{display:inline-flex;align-items:center;justify-content:center;width:16px;min-width:16px;height:24px;min-height:0;padding:0!important;margin:0;border:0;background:transparent;color:var(--ufs-muted);flex:0 0 16px;line-height:1}',
+    '#ufs-app .ufs-tree-row:hover{background:var(--ufs-hover)}#ufs-app .ufs-tree-row.ufs-current{background:var(--ufs-tree-sel);color:var(--ufs-accent);font-weight:600}#ufs-app .ufs-tree-toggle{display:inline-flex;align-items:center;justify-content:center;width:16px;min-width:16px;height:24px;min-height:0;padding:0!important;margin:0;border:0;background:transparent;color:var(--ufs-muted);flex:0 0 16px;line-height:1}',
     '#ufs-app .ufs-tree-spacer{width:16px;flex:0 0 16px}#ufs-app .ufs-tree-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;text-transform:none;letter-spacing:normal}',
     '#ufs-app .ufs-main{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0;overflow:hidden;background:var(--ufs-bg)}#ufs-app .ufs-content{display:flex;flex:1;min-width:0;min-height:0;overflow:hidden}#ufs-app .ufs-list{min-width:0;min-height:0;overflow:auto;flex:1;padding:0 8px;outline:0}',
     '#ufs-app .ufs-head,#ufs-app .ufs-entry{display:grid;grid-template-columns:minmax(160px,2.5fr) minmax(72px,.65fr) minmax(132px,1.2fr) minmax(82px,.75fr);align-items:center;gap:10px;padding:0 12px;border-bottom:1px solid var(--ufs-border)}#ufs-app .ufs-head{height:34px;min-height:34px;font-weight:600;color:var(--ufs-muted);font-size:12px;position:sticky;top:0;background:var(--ufs-bg);z-index:1}',
-    '#ufs-app .ufs-entry{min-height:38px;height:38px;border-radius:3px;cursor:default}#ufs-app .ufs-entry:hover{background:var(--ufs-hover)}#ufs-app .ufs-entry.ufs-selected{background:var(--ufs-sel);outline:1px solid var(--ufs-accent);outline-offset:-1px}#ufs-app .ufs-entry>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '#ufs-app .ufs-entry{min-height:38px;height:38px;border-radius:3px;cursor:default}#ufs-app .ufs-entry:hover{background:var(--ufs-hover)}#ufs-app .ufs-entry.ufs-selected{background:var(--ufs-sel);outline:none}#ufs-app .ufs-entry.ufs-selected:hover{background:var(--ufs-selected-hover)}#ufs-app .ufs-entry>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
     '#ufs-app .ufs-file-name{display:flex;align-items:center;gap:9px;min-width:0}#ufs-app .ufs-file-name .ufs-filename{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}',
     '#ufs-app .ufs-sort-button{display:inline-flex;align-items:center;gap:5px;width:100%;height:30px;border:0;padding:0;background:transparent;text-align:left;color:inherit;white-space:nowrap}#ufs-app .ufs-sort-button .ufs-sort-mark{color:var(--ufs-accent);font-size:12px}',
     '#ufs-app .ufs-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(125px,1fr));gap:10px;align-content:start;padding:14px}#ufs-app .ufs-grid .ufs-entry{display:flex;height:auto;flex-direction:column;text-align:center;gap:7px;border:1px solid var(--ufs-border);padding:16px 8px;min-width:0;min-height:107px}',
@@ -180,7 +180,6 @@
     '#ufs-app .ufs-top .ufs-tabs{display:flex;align-items:center;flex:1;min-width:0;height:100%;gap:4px;padding:0;background:transparent;border:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}#ufs-app .ufs-top .ufs-tabs::-webkit-scrollbar{display:none}#ufs-app .ufs-top .ufs-tab{flex-shrink:0;height:31px;min-width:85px;max-width:195px;padding:4px 8px}#ufs-app .ufs-top .ufs-tabs>.ufs-ico{flex:0 0 auto}',
     '#ufs-app .ufs-file-actions{display:flex;align-items:center;gap:5px;height:34px;min-height:34px;max-height:34px;flex-shrink:0;padding:0 10px;border-bottom:1px solid var(--ufs-border);background:var(--ufs-bg);overflow:hidden}#ufs-app .ufs-file-actions .ufs-section-label{font-size:12px;color:var(--ufs-muted);font-weight:500}#ufs-app .ufs-file-actions .ufs-view-controls{display:flex;align-items:center;gap:3px;margin-left:auto;flex-shrink:0}#ufs-app .ufs-file-actions .ufs-ico{height:28px;min-height:0;padding:3px 8px}',
     '#ufs-app .ufs-search-wrap{display:flex;align-items:center;gap:3px;min-width:0;flex-shrink:0}#ufs-app .ufs-search{width:150px;min-width:0;max-width:none}#ufs-app [hidden]{display:none!important}',
-    '#ufs-app .ufs-selection-bar{display:flex;align-items:center;gap:7px;min-width:0;flex-shrink:0;height:36px;padding:0 11px;background:var(--ufs-accent-soft);border-bottom:1px solid var(--ufs-border)}#ufs-app .ufs-selection-count{font-weight:600;white-space:nowrap}#ufs-app .ufs-selection-bar .ufs-ico{height:28px;padding:3px 8px}',
     '@media(max-width:850px){#ufs-app .ufs-preview-chip{display:none}#ufs-app .ufs-search{width:115px}}',
     '@media(max-width:720px){#ufs-app .ufs-brand-divider{display:none}#ufs-app .ufs-top{padding:0 7px;gap:6px}#ufs-app .ufs-navigation{padding:0 6px;gap:3px}#ufs-app .ufs-search{width:90px}#ufs-app .ufs-view-controls .ufs-details-button{display:none}}',
   ].join('\n');
@@ -434,21 +433,18 @@
   function selectedEntries() {
     return state.entries.filter((entry) => state.selection.has(entry.path));
   }
-  function renderSelectionBar() {
-    const bar = $('.ufs-selection-bar', app);
-    if (!bar) return;
-    const chosen = selectedEntries();
-    bar.hidden = chosen.length === 0;
-    if (!chosen.length) return;
-    $('.ufs-selection-count', bar).textContent = '已选择 ' + chosen.length + ' 个项目';
-    $('.ufs-selection-download', bar).hidden = chosen.length !== 1 || chosen[0].folder;
+  function selectionStatus(chosen) {
+    const files = chosen.filter((entry) => !entry.folder && Number.isFinite(entry.size) && entry.size >= 0);
+    const knownBytes = files.reduce((total, entry) => total + entry.size, 0);
+    return '已选择 ' + chosen.length + ' 个项目' +
+      (files.length ? (files.length === chosen.length ? ' · 合计 ' : ' · 已知文件合计 ') + formatSize(knownBytes) : '');
   }
   function renderSelection() {
     $$('[data-ufs-file]', app).forEach((node) => node.classList.toggle('ufs-selected', state.selection.has(node.dataset.ufsFile)));
-    const count = state.selection.size;
+    const chosen = selectedEntries();
     $('.ufs-count', app).textContent = state.busy ? '正在读取目录…' :
-      visibleEntries().length + (state.filter ? ' 个匹配项目' : ' 个项目') + (count ? ' · 已选择 ' + count + ' 个项目' : '');
-    renderSelectionBar();
+      visibleEntries().length + (state.filter ? ' 个匹配项目' : ' 个项目') +
+      (chosen.length ? ' · ' + selectionStatus(chosen) : '');
     renderInspector();
   }
   function renderInspector() {
@@ -551,30 +547,77 @@
   function closeMenu() {
     if (currentMenu) currentMenu.remove();
     currentMenu = null;
-    const trigger = app && $('.ufs-more', app);
-    if (trigger) trigger.setAttribute('aria-expanded', 'false');
+    for (const selector of ['.ufs-more', '.ufs-operations']) {
+      const trigger = app && $(selector, app);
+      if (trigger) trigger.setAttribute('aria-expanded', 'false');
+    }
   }
-  function showMenu(x, y, entry) {
+  async function copySelectedPaths() {
+    const paths = selectedEntries().map((entry) => entry.path);
+    if (!paths.length) return notify('请先选择文件或文件夹');
+    try {
+      await navigator.clipboard.writeText(paths.join('\n'));
+      notify('已复制 ' + paths.length + ' 个文件路径');
+    } catch (_) {
+      notify('浏览器不允许访问剪贴板，请检查站点权限');
+    }
+  }
+  function showSelectedDetails() {
+    if (!selectedEntries().length) return notify('请先选择文件或文件夹');
+    if (!state.inspector) {
+      state.inspector = true;
+      $('.ufs-details-button', app).classList.add('ufs-view-active');
+    }
+    renderInspector();
+  }
+  function showFileActionMenu(x, y, entry) {
     closeMenu();
+    const chosen = selectedEntries();
     const menu = element('div', 'ufs-menu');
-    const actions = [
-      [entry.folder ? '打开' : '打开 / 下载', () => openEntry(entry)],
-      ...(entry.folder ? [['在新标签中打开', () => addTab(entry.path)]] : [['下载', () => downloadEntry(entry)]]),
-      ['复制文件路径', async () => {
-        try { await navigator.clipboard.writeText(entry.path); notify('已复制路径'); }
-        catch (_) { notify('浏览器阻止了剪贴板访问'); }
-      }],
-      ['重命名 / 移动 / 删除（原生）', nativeMode]
-    ];
-    actions.forEach(([label, fn]) => {
+    menu.setAttribute('role', 'menu');
+    const actions = [];
+    if (entry && chosen.length === 1) {
+      actions.push([entry.folder ? '打开文件夹' : '打开 / 下载', () => openEntry(entry)]);
+      if (entry.folder) actions.push(['在新标签页中打开', () => addTab(entry.path)]);
+    }
+    if (chosen.length) {
+      actions.push(['复制路径（' + chosen.length + ' 项）', copySelectedPaths]);
+      if (chosen.length === 1 && !chosen[0].folder)
+        actions.push(['下载文件', () => downloadEntry(chosen[0])]);
+      actions.push(['属性', showSelectedDetails]);
+      actions.push(['取消选择', () => {
+        state.selection.clear();
+        state.lastIndex = -1;
+        renderSelection();
+      }]);
+    } else {
+      actions.push(['刷新当前目录', refreshDirectory]);
+    }
+    actions.push(['返回原生文件管理器（写入操作）', nativeMode]);
+    actions.forEach(([label, action]) => {
       const button = element('button', '', label);
-      button.addEventListener('click', () => { closeMenu(); fn(); });
+      button.type = 'button';
+      button.setAttribute('role', 'menuitem');
+      button.addEventListener('click', () => { closeMenu(); action(); });
       menu.append(button);
     });
     app.append(menu);
     menu.style.left = Math.max(8, Math.min(x, innerWidth - menu.offsetWidth - 8)) + 'px';
     menu.style.top = Math.max(8, Math.min(y, innerHeight - menu.offsetHeight - 8)) + 'px';
     currentMenu = menu;
+  }
+  function showMenu(x, y, entry) {
+    showFileActionMenu(x, y, entry);
+  }
+  function showOperationsMenu() {
+    const trigger = $('.ufs-operations', app);
+    if (currentMenu && trigger.getAttribute('aria-expanded') === 'true') {
+      closeMenu();
+      return;
+    }
+    const rect = trigger.getBoundingClientRect();
+    showFileActionMenu(rect.left, rect.bottom + 4, null);
+    trigger.setAttribute('aria-expanded', 'true');
   }
   function showAppMenu() {
     const trigger = $('.ufs-more', app);
@@ -588,7 +631,7 @@
     const actions = [
       ['返回原生文件管理器（写入操作）', nativeMode],
       [state.theme === 'unraid' ? '切换至 DSM 经典主题' : '切换至 Unraid 融合主题', toggleTheme],
-      ['关于 File Station v0.1.4', () => notify('File Station v0.1.4 · Unraid 7.2.2 · 只读预览')]
+      ['关于 File Station v0.1.6', () => notify('File Station v0.1.6 · Unraid 7.2.2 · 只读预览')]
     ];
     actions.forEach(([label, fn]) => {
       const button = element('button', '', label);
@@ -631,24 +674,14 @@
   function renderFileActionsMarkup() {
     return [
       '<div class="ufs-file-actions" role="toolbar" aria-label="文件内容和视图">',
-      '<span class="ufs-section-label">文件</span><span class="ufs-spacer"></span>',
+      '<span class="ufs-section-label">文件</span>',
+      '<button type="button" class="ufs-ico ufs-operations" title="文件操作" aria-label="文件操作" aria-haspopup="menu" aria-expanded="false">操作 <span data-ufs-icon="chevron-down"></span></button>',
+      '<span class="ufs-spacer"></span>',
       '<div class="ufs-view-controls" role="group" aria-label="文件视图">',
       '<button type="button" class="ufs-ico ufs-list-button" title="列表视图" aria-label="列表视图"><span data-ufs-icon="list"></span></button>',
       '<button type="button" class="ufs-ico ufs-grid-button" title="网格视图" aria-label="网格视图"><span data-ufs-icon="grid"></span></button>',
       '<button type="button" class="ufs-ico ufs-details-button" title="详细信息" aria-label="详细信息"><span data-ufs-icon="panel"></span></button>',
       '</div></div>'
-    ].join('');
-  }
-  function renderSelectionBarMarkup() {
-    return [
-      '<div class="ufs-selection-bar" role="toolbar" aria-label="所选文件操作" hidden>',
-      '<span class="ufs-selection-count" aria-live="polite"></span><span class="ufs-spacer"></span>',
-      '<button type="button" class="ufs-ico ufs-copy-path"><span data-ufs-icon="copy"></span>复制路径</button>',
-      '<button type="button" class="ufs-ico ufs-selection-download"><span data-ufs-icon="download"></span>下载</button>',
-      '<button type="button" class="ufs-ico ufs-show-selection-details"><span data-ufs-icon="info"></span>属性</button>',
-      '<button type="button" class="ufs-ico ufs-selection-native" title="在原生文件管理器中操作"><span data-ufs-icon="external-link"></span>原生操作</button>',
-      '<button type="button" class="ufs-ico ufs-clear-selection" title="取消选择" aria-label="取消选择"><span data-ufs-icon="close"></span></button>',
-      '</div>'
     ].join('');
   }
   function renderWorkspaceMarkup() {
@@ -659,7 +692,6 @@
       '<main class="ufs-main">',
       renderBrowserBarMarkup(),
       renderFileActionsMarkup(),
-      renderSelectionBarMarkup(),
       '<div class="ufs-content">',
       '<div class="ufs-list" tabindex="0"></div>',
       '<aside class="ufs-inspector" hidden></aside>',
@@ -700,29 +732,16 @@
       renderInspector();
     }
     $('.ufs-details-button', app).addEventListener('click', showDetails);
-    $('.ufs-show-selection-details', app).addEventListener('click', () => {
-      if (!state.inspector) showDetails();
-      else renderInspector();
-    });
-    $('.ufs-selection-native', app).addEventListener('click', nativeMode);
-    $('.ufs-clear-selection', app).addEventListener('click', () => {
-      state.selection.clear();
-      state.lastIndex = -1;
-      renderSelection();
-    });
-    $('.ufs-selection-download', app).addEventListener('click', () => {
-      const chosen = selectedEntries();
-      if (chosen.length === 1 && !chosen[0].folder) downloadEntry(chosen[0]);
-    });
-    $('.ufs-copy-path', app).addEventListener('click', async () => {
-      const paths = selectedEntries().map((entry) => entry.path);
-      if (!paths.length) return;
-      try {
-        await navigator.clipboard.writeText(paths.join('\n'));
-        notify('已复制 ' + paths.length + ' 个文件路径');
-      } catch (_) { notify('浏览器不允许读取剪贴板，请检查站点权限'); }
-    });
+    $('.ufs-operations', app).addEventListener('click', showOperationsMenu);
     setupSidebarResizer();
+    $('.ufs-list', app).addEventListener('click', (event) => {
+      // Clicking on blank space clears selection, but clicking headers/entries does not.
+      if (event.target === $('.ufs-list', app) || event.target.classList.contains('ufs-empty')) {
+        state.selection.clear();
+        state.lastIndex = -1;
+        renderSelection();
+      }
+    });
     $('.ufs-list', app).addEventListener('contextmenu', (event) => {
       if (event.target === $('.ufs-list', app)) {
         event.preventDefault();
@@ -731,7 +750,10 @@
     });
     document.addEventListener('pointerdown', (event) => {
       const more = $('.ufs-more', app);
-      if (currentMenu && !currentMenu.contains(event.target) && !(more && more.contains(event.target))) closeMenu();
+      const operations = $('.ufs-operations', app);
+      if (currentMenu && !currentMenu.contains(event.target) &&
+          !(more && more.contains(event.target)) &&
+          !(operations && operations.contains(event.target))) closeMenu();
     });
     document.addEventListener('keydown', (event) => {
       if (!app.isConnected || !app.contains(event.target)) return;
@@ -909,7 +931,7 @@
   }
   // Explicit opt-in hook for pure-function tests; never enabled on production WebGUI.
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
-    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, listDirectory, availableHeight, visibleEntries, selectedEntries, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderSelectionBarMarkup, renderWorkspaceMarkup, state };
+    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, listDirectory, availableHeight, visibleEntries, selectedEntries, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, selectionStatus, selectEntry, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();
