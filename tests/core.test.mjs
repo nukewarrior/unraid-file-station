@@ -186,7 +186,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.1\.14/);
+  assert.match(script, /@version\s+0\.1\.15/);
 });
 
 
@@ -490,7 +490,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.1\.14/);
+  assert.match(script, /@version\s+0\.1\.15/);
 });
 
 
@@ -681,4 +681,48 @@ test('v0.1.14 初始化状态禁止在未创建标签时操作历史或新标签
   assert.match(script, /if \(!tab \|\| destroyed\) return/);
   assert.match(script, /state\.initializing \|\| tab\.cursor <= 0/);
   assert.match(script, /add\.disabled = state\.initializing/);
+});
+
+
+test('v0.1.15 可视窗口计算：滚动定位、超扫描和 10000 项有限挂载', () => {
+  const {api} = createAPI();
+  const top=api.virtualWindow(10000,0,760,'list');
+  assert.equal(top.start,0);
+  assert.ok(top.end>0 && top.end<70);
+  assert.equal(top.before,0);
+  assert.equal(top.after + (top.end-top.start)*38,10000*38);
+  const middle=api.virtualWindow(10000,190000,760,'list');
+  assert.ok(middle.start>4000 && middle.end<6000);
+  assert.ok(middle.end-middle.start<70);
+  assert.equal(middle.before + (middle.end-middle.start)*38 + middle.after,10000*38);
+  const bottom=api.virtualWindow(10000,380000,760,'list');
+  assert.equal(bottom.end,10000);
+  assert.ok(bottom.start>=9900);
+});
+
+test('v0.1.15 网格虚拟化适配容器宽度且不截断最后一行', () => {
+  const {api} = createAPI();
+  assert.equal(api.virtualGridColumns(1420),10);
+  assert.equal(api.virtualGridColumns(250),1);
+  const top=api.virtualWindow(10001,0,600,'grid',10);
+  assert.equal(top.start,0);
+  assert.ok(top.end<=150 && top.end>50);
+  const bottom=api.virtualWindow(10001,200000,600,'grid',10);
+  assert.equal(bottom.end,10001);
+  assert.equal(bottom.columns,10);
+  assert.equal(bottom.before+Math.ceil((bottom.end-bottom.start)/10)*132+bottom.after,
+    Math.ceil(10001/10)*132);
+});
+
+test('v0.1.15 虚拟渲染保留全量 Shift 选择索引及原有位置和列宽功能', () => {
+  assert.match(script,/const VIRTUAL_THRESHOLD = 200/);
+  assert.match(script,/list\.classList\.add\('ufs-virtualized'\)/);
+  assert.match(script,/for \(let i = range\.start; i < range\.end; i\+\+\)/);
+  assert.match(script,/createFileRow\(data\.entries\[i\],i,data\.entries\)/);
+  assert.match(script,/selectEntry\(event, entry, index, entries\)/);
+  assert.match(script,/row\.dataset\.ufsFile = entry\.path/);
+  assert.match(script,/renderLocationTags\(entry\)/);
+  assert.match(script,/ufs-virtual-grid/);
+  assert.match(script,/scheduleVirtualWindow\(\)/);
+  assert.match(script,/visibleCache && visibleCache\.entries === state\.entries/);
 });
