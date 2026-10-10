@@ -46,8 +46,8 @@ function bulkRows(path,count) {
 const esc = text => String(text).replace(/[&<>"']/g, ch =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 
-function responseFor(path, extra = []) {
-  const children = [...(contents[path] || []), ...extra];
+function responseFor(path, extra = [], list = contents[path] || []) {
+  const children = [...list, ...extra];
   return '<tbody>' + children.map(([name,folder], index) => {
     const full = path + '/' + name;
     const locations = name === 'backup'
@@ -80,6 +80,7 @@ async function pageFor(t, options = {}) {
   const errors = [];
   const nativePosts = [];
   const created = [];
+  const renamed = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.route('**/Shares/Browse?*',route=>route.fulfill({status:200,contentType:'text/html',body:html}));
   let rootFailures = options.rootFailures || 0;
@@ -93,8 +94,18 @@ async function pageFor(t, options = {}) {
     if (path === '/mnt/user/downloads' && options.delayDownloads) {
       await new Promise(resolve=>setTimeout(resolve,options.delayDownloads));
     }
+    const oldPath=renamed.reduceRight((result,rename)=>
+      result===rename.target || result.startsWith(rename.target+'/')
+        ? rename.source+result.slice(rename.target.length) : result,path);
+    const originalRows=contents[oldPath] || [];
+    const mappedRows=originalRows.map(([name,folder])=>{
+      const oldEntry=oldPath+'/'+name;
+      const changed=renamed.find(item=>item.source===oldEntry);
+      return [changed ? changed.target.split('/').pop() : name,folder];
+    });
     const response=options.bulkCount && path==='/mnt/user/TimeMachine' ?
-      bulkRows(path,options.bulkCount) : responseFor(path, path==='/mnt/user/TimeMachine' ? created.map(name=>[name,true]) : []);
+      bulkRows(path,options.bulkCount) : responseFor(path,
+        path==='/mnt/user/TimeMachine' ? created.map(name=>[name,true]) : [], mappedRows);
     await route.fulfill({status:200,contentType:'text/html',body:response}).catch(()=>{});
   });
   await page.route('**/webGui/include/Control.php',async route=>{
@@ -118,10 +129,17 @@ async function pageFor(t, options = {}) {
       await route.fulfill({status:200,body:''});
       return;
     }
+    if(mode==='file' && ['2','7'].includes(body.get('action'))) {
+      const source=decodeURIComponent(body.get('source') || '');
+      const name=decodeURIComponent(body.get('target') || '');
+      if(!options.dropRename) renamed.push({source,target:source.slice(0,source.lastIndexOf('/'))+'/'+name});
+      await route.fulfill({status:200,body:''});
+      return;
+    }
     await route.fulfill({status:400,body:'Unexpected native operation'});
   });
   await page.goto(base + '/Shares/Browse?dir=%2Fmnt%2Fuser');
-  return {page,errors,nativePosts,created};
+  return {page,errors,nativePosts,created,renamed};
 }
 
 const currentLabel = page => page.locator('.ufs-tab.ufs-active .ufs-tab-name');
@@ -450,5 +468,82 @@ test('v0.2.1.1 弹窗在窄窗口不横向溢出，取消不会执行写入', as
   await page.locator('.ufs-create-cancel').click();
   assert.equal(await page.locator('.ufs-create-dialog').count(),0);
   assert.equal(nativePosts.filter(x=>x.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+
+test('v0.2.2 F2 重命名文件只选主文件名，成功后刷新且仅调用 action=7',async t=>{
+  const {page,errors,nativePosts,renamed}=await pageFor(t);
+  await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).first().click();
+  await page.keyboard.press('F2');
+  await page.locator('.ufs-rename-dialog').waitFor();
+  assert.deepEqual(await page.locator('.ufs-rename-input').evaluate(el=>
+    [el.selectionStart,el.selectionEnd,el.value]),[0,5,'notes.txt']);
+  await page.locator('.ufs-rename-input').fill('memo.txt');
+  await page.locator('.ufs-rename-submit').click();
+  await page.locator('.ufs-entry').filter({hasText:'memo.txt'}).first().waitFor();
+  assert.equal(await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).count(),0);
+  assert.equal(renamed.length,1);
+  const writes=nativePosts.filter(x=>x.mode==='file');
+  assert.equal(writes.length,1);
+  assert.equal(writes[0].action,'7');
+  assert.equal(decodeURIComponent(writes[0].source),'/mnt/user/TimeMachine/notes.txt');
+  assert.equal(decodeURIComponent(writes[0].target),'memo.txt');
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.2 文件夹重命名保持嵌套标签路径和子目录可用，旧浏览器历史自动重定向',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t);
+  await page.locator('.ufs-entry').filter({hasText:'backup'}).first().dblclick();
+  await page.locator('.ufs-entry').filter({hasText:'snapshot.zip'}).first().waitFor();
+  await page.locator('.ufs-tabs > .ufs-ico[aria-label="新建标签页"]').click();
+  await page.locator('.ufs-entry').filter({hasText:'backup'}).first().click({button:'right'});
+  await page.getByRole('menuitem',{name:'重命名'}).click();
+  await page.locator('.ufs-rename-input').fill('Archived');
+  await page.locator('.ufs-rename-submit').click();
+  await page.locator('.ufs-entry').filter({hasText:'Archived'}).first().waitFor();
+  assert.equal(await page.locator('.ufs-entry').filter({hasText:'backup'}).count(),0);
+  const tabs=await page.locator('.ufs-tab').evaluateAll(nodes=>nodes.map(n=>n.title));
+  assert.ok(tabs.includes('/mnt/user/TimeMachine/Archived'),JSON.stringify(tabs));
+  await page.locator('.ufs-tab').filter({hasText:'Archived'}).first().click();
+  await page.locator('.ufs-entry').filter({hasText:'snapshot.zip'}).first().waitFor();
+  assert.equal(new URL(page.url()).searchParams.get('dir'),'/mnt/user/TimeMachine/Archived');
+  await page.evaluate(()=>{
+    const path='/mnt/user/TimeMachine/backup';
+    const state={ufs:true,tabId:1,path};
+    const url=new URL(location.href); url.searchParams.set('dir',path);
+    history.replaceState(state,'',url);
+    window.dispatchEvent(new PopStateEvent('popstate',{state}));
+  });
+  await page.waitForFunction(()=>new URL(location.href).searchParams.get('dir')==='/mnt/user/TimeMachine/Archived');
+  assert.equal(nativePosts.filter(x=>x.mode==='file'&&x.action==='2').length,1);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.2 重名预检查阻止文件夹覆盖且多选不提供重命名',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t);
+  await page.locator('.ufs-entry').filter({hasText:'backup'}).first().click();
+  await page.keyboard.press('F2');
+  await page.locator('.ufs-rename-input').fill('Photos');
+  await page.locator('.ufs-rename-submit').click();
+  await page.locator('.ufs-rename-feedback',{hasText:'目标名称已存在'}).waitFor();
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,0);
+  await page.locator('.ufs-rename-cancel').click();
+  await page.locator('.ufs-entry').filter({hasText:'backup'}).first().click();
+  await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).first().click({modifiers:['Control']});
+  await page.locator('.ufs-operations').click();
+  assert.equal(await page.getByRole('menuitem',{name:'重命名'}).count(),0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.2 请求已接受但目标没出现时不误报成功、不自动重试',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t,{dropRename:true});
+  await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).first().click();
+  await page.keyboard.press('F2');
+  await page.locator('.ufs-rename-input').fill('unverified.txt');
+  await page.locator('.ufs-rename-submit').click();
+  await page.locator('.ufs-rename-feedback',{hasText:'结果不确定'}).waitFor();
+  assert.equal(await page.locator('.ufs-rename-submit').isDisabled(),true);
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,1);
   assert.equal(errors.length,0,errors.join('\n'));
 });
