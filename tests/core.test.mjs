@@ -186,7 +186,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.1\.16/);
+  assert.match(script, /@version\s+0\.2\.0/);
 });
 
 
@@ -490,7 +490,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.1\.16/);
+  assert.match(script, /@version\s+0\.2\.0/);
 });
 
 
@@ -736,4 +736,143 @@ test('v0.1.16 只禁用虚拟文件区的滚动锚定，保留原生滚动与正
   assert.match(script, /'\#ufs-app \.ufs-virtual-spacer\{height:0/);
   assert.doesNotMatch(script, /#ufs-app \.ufs-sidebar\{overflow-anchor:none/);
   assert.doesNotMatch(script, /addEventListener\('wheel'/);
+});
+
+
+test('v0.2.0 仍是纯用户脚本且正式 NAS 写入被硬禁用', () => {
+  const { api } = createAPI();
+  assert.equal(api.FILE_WRITES_ENABLED, false);
+  assert.match(script, /const FILE_WRITES_ENABLED = false/);
+  assert.match(script, /const NATIVE_CONTROL_URL = '\/webGui\/include\/Control\.php'/);
+  assert.doesNotMatch(script, /fetch\([^)]*Control\.php/);
+  assert.doesNotMatch(script, /GM_xmlhttpRequest|@require/);
+});
+
+test('v0.2.0 写入路径比只读浏览更严格，禁止双重 URL 解码和原生任务分隔符', () => {
+  const { api } = createAPI();
+  assert.equal(api.safeWritePath('/mnt/user/TimeMachine', true), true);
+  assert.equal(api.safeWritePath('/mnt/user/TimeMachine'), false);
+  assert.equal(api.safeWritePath('/mnt/user/TimeMachine/照片 1.jpg'), true);
+  assert.equal(api.safeWriteName('新建文件夹'), true);
+  for (const name of ['', '.', '..', '../x', 'a/b', 'a\\b', '%2e%2e', '测试%25',
+    ' bad', 'bad ', 'x\rhidden', 'x\nhidden', 'x\0hidden']) {
+    assert.equal(api.safeWriteName(name), false, JSON.stringify(name));
+  }
+  for (const path of ['/mnt/user', '/mnt/user/', '/mnt/user//folder', '/mnt/user/share/../etc',
+    '/mnt/user/share/./file', '/mnt/user/share/file%2fname', '/mnt/user/share/x\rhidden',
+    '/mnt/disk1/share/file', '/mnt/user/share/file\\name']) {
+    assert.equal(api.safeWritePath(path, true), false, JSON.stringify(path));
+  }
+});
+
+test('v0.2.0 新建与重命名预览保留 /mnt/user 边界、默认拒绝覆盖', () => {
+  const { api } = createAPI();
+  const mkdir = api.planFileOperation({type:'mkdir',parent:'/mnt/user/TimeMachine',name:'新目录'});
+  assert.equal(mkdir.target, '/mnt/user/TimeMachine/新目录');
+  assert.equal(mkdir.source, '/mnt/user/TimeMachine');
+  assert.equal(mkdir.previewOnly, true);
+  assert.equal(Object.isFrozen(mkdir),true);
+
+  const rename = api.planFileOperation({
+    type:'rename',source:'/mnt/user/TimeMachine/notes.txt',folder:false,name:'新名称.txt'
+  });
+  assert.equal(rename.target,'/mnt/user/TimeMachine/新名称.txt');
+  assert.throws(()=>api.planFileOperation({type:'rename',
+    source:'/mnt/user/TimeMachine',folder:true,name:'new'}),/只能操作共享文件夹内/);
+  assert.throws(()=>api.planFileOperation({type:'rename',
+    source:'/mnt/user/TimeMachine/notes.txt',folder:false,name:'notes.txt'}),/相同/);
+  assert.throws(()=>api.planFileOperation({type:'mkdir',
+    parent:'/mnt/user/TimeMachine',name:'x',conflictPolicy:'overwrite'}),/不允许覆盖/);
+  assert.throws(()=>api.planFileOperation({type:'unknown'}),/不支持/);
+});
+
+test('v0.2.0 复制、移动、删除仅生成预览并拦截目录套娃及共享根操作', () => {
+  const { api } = createAPI();
+  const copy = api.planFileOperation({
+    type:'copy',source:'/mnt/user/downloads/zip',destinationDir:'/mnt/user/TimeMachine',folder:true
+  });
+  assert.equal(copy.target,'/mnt/user/TimeMachine/zip');
+  assert.equal(copy.conflictPolicy,'fail');
+  const del=api.planFileOperation({type:'delete',source:'/mnt/user/TimeMachine/old.txt',folder:false});
+  assert.equal(del.target,'');
+  for (const type of ['copy','move']) {
+    assert.throws(()=>api.planFileOperation({
+      type,source:'/mnt/user/downloads/dir',folder:true,destinationDir:'/mnt/user/downloads/dir/sub'
+    }),/目录复制或移动到其内部/);
+    assert.throws(()=>api.planFileOperation({
+      type,source:'/mnt/user/downloads/dir',folder:true,destinationDir:'/mnt/user/downloads'
+    }),/源和目标不能相同/);
+  }
+  assert.throws(()=>api.planFileOperation({
+    type:'delete',source:'/mnt/user/downloads',folder:true
+  }),/只能操作共享文件夹内/);
+  assert.throws(()=>api.planFileOperation({
+    type:'move',source:'/mnt/user/downloads/x',destinationDir:'/mnt/user/TimeMachine'
+  }),/必须明确/);
+});
+
+test('v0.2.0 原生请求仅生成描述，不会主动提交任何网络操作', () => {
+  const { api } = createAPI();
+  const input=[
+    [{type:'mkdir',parent:'/mnt/user/downloads',name:'new'},0,'/mnt/user/downloads','new'],
+    [{type:'rename',source:'/mnt/user/downloads/dir',folder:true,name:'renamed'},2,'/mnt/user/downloads/dir','renamed'],
+    [{type:'rename',source:'/mnt/user/downloads/a.txt',folder:false,name:'b.txt'},7,'/mnt/user/downloads/a.txt','b.txt'],
+    [{type:'copy',source:'/mnt/user/downloads/dir',folder:true,destinationDir:'/mnt/user/TimeMachine'},3,'/mnt/user/downloads/dir','/mnt/user/TimeMachine'],
+    [{type:'copy',source:'/mnt/user/downloads/a.txt',folder:false,destinationDir:'/mnt/user/TimeMachine'},8,'/mnt/user/downloads/a.txt','/mnt/user/TimeMachine'],
+    [{type:'move',source:'/mnt/user/downloads/dir',folder:true,destinationDir:'/mnt/user/TimeMachine'},4,'/mnt/user/downloads/dir','/mnt/user/TimeMachine'],
+    [{type:'move',source:'/mnt/user/downloads/a.txt',folder:false,destinationDir:'/mnt/user/TimeMachine'},9,'/mnt/user/downloads/a.txt','/mnt/user/TimeMachine'],
+    [{type:'delete',source:'/mnt/user/downloads/dir',folder:true},1,'/mnt/user/downloads/dir',''],
+    [{type:'delete',source:'/mnt/user/downloads/a.txt',folder:false},6,'/mnt/user/downloads/a.txt','']
+  ];
+  for (const [inputSpec,action,source,target] of input) {
+    const native=api.previewNativeOperationRequest(api.planFileOperation(inputSpec));
+    assert.equal(native.method,'POST');
+    assert.equal(native.mode,'file');
+    assert.equal(native.endpoint,'/webGui/include/Control.php');
+    assert.equal(native.action,action);
+    assert.equal(native.source,source);
+    assert.equal(native.target,target);
+    assert.equal(native.taskEvents,'/sub/filemanager');
+    assert.equal(native.requiresCsrfToken,true);
+    assert.equal(native.globallySharedTask,true);
+    assert.equal(native.previewOnly,true);
+  }
+});
+
+test('v0.2.0 模拟任务必须先确认；运行期间只能单任务，不能取消或插队', async () => {
+  const { api } = createAPI();
+  let finish;
+  const runner=api.createFileOperationCoordinator(()=>new Promise(resolve=>{finish=resolve;}));
+  assert.equal(runner.snapshot().status,'idle');
+  assert.equal(runner.review({type:'mkdir',parent:'/mnt/user/downloads',name:'test'}).status,
+    'awaiting-confirmation');
+  await assert.rejects(runner.confirm(false),/明确确认/);
+  const running=runner.confirm(true);
+  assert.equal(runner.snapshot().status,'running');
+  assert.equal(runner.cancel(),false);
+  assert.throws(()=>runner.review({type:'mkdir',parent:'/mnt/user/downloads',name:'other'}),/正在执行/);
+  finish({simulated:true});
+  const done=await running;
+  assert.equal(done.status,'completed');
+  assert.equal(done.result.simulated,true);
+  assert.equal(runner.snapshot().status,'completed');
+  await assert.rejects(runner.confirm(true),/没有等待确认/);
+});
+
+test('v0.2.0 模拟失败可恢复，且没有模拟执行器时拒绝确认', async () => {
+  const { api } = createAPI();
+  const blocked=api.createFileOperationCoordinator();
+  blocked.review({type:'mkdir',parent:'/mnt/user/downloads',name:'test'});
+  await assert.rejects(blocked.confirm(true),/禁止向真实 NAS 提交文件写入/);
+  assert.equal(blocked.snapshot().status,'awaiting-confirmation');
+  assert.equal(blocked.cancel(),true);
+  assert.equal(blocked.snapshot().status,'idle');
+
+  const runner=api.createFileOperationCoordinator(async ()=>{throw Error('模拟任务失败');});
+  runner.review({type:'rename',source:'/mnt/user/downloads/a',folder:false,name:'b'});
+  const failed=await runner.confirm(true);
+  assert.equal(failed.status,'failed');
+  assert.match(failed.error,/模拟任务失败/);
+  assert.equal(runner.review({type:'mkdir',parent:'/mnt/user/downloads',name:'retry'}).status,
+    'awaiting-confirmation');
 });
