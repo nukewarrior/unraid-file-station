@@ -46,8 +46,8 @@ function bulkRows(path,count) {
 const esc = text => String(text).replace(/[&<>"']/g, ch =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 
-function responseFor(path) {
-  const children = contents[path] || [];
+function responseFor(path, extra = []) {
+  const children = [...(contents[path] || []), ...extra];
   return '<tbody>' + children.map(([name,folder], index) => {
     const full = path + '/' + name;
     const locations = name === 'backup'
@@ -75,8 +75,11 @@ const html = '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'+
 async function pageFor(t, options = {}) {
   const context = await browser.newContext({viewport: {width: options.width || 1440, height: 900}});
   t.after(()=>context.close());
+  await context.addInitScript({content:options.noCsrf ? 'delete window.csrf_token;' : "window.csrf_token = 'test-csrf';"});
   const page = await context.newPage();
   const errors = [];
+  const nativePosts = [];
+  const created = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.route('**/Shares/Browse?*',route=>route.fulfill({status:200,contentType:'text/html',body:html}));
   let rootFailures = options.rootFailures || 0;
@@ -91,11 +94,34 @@ async function pageFor(t, options = {}) {
       await new Promise(resolve=>setTimeout(resolve,options.delayDownloads));
     }
     const response=options.bulkCount && path==='/mnt/user/TimeMachine' ?
-      bulkRows(path,options.bulkCount) : responseFor(path);
+      bulkRows(path,options.bulkCount) : responseFor(path, path==='/mnt/user/TimeMachine' ? created.map(name=>[name,true]) : []);
     await route.fulfill({status:200,contentType:'text/html',body:response}).catch(()=>{});
   });
+  await page.route('**/webGui/include/Control.php',async route=>{
+    const body=new URLSearchParams(route.request().postData() || '');
+    const mode=body.get('mode');
+    nativePosts.push({mode,action:body.get('action'),source:body.get('source'),target:body.get('target'),csrf:body.get('csrf_token')});
+    if (body.get('csrf_token') !== 'test-csrf') {
+      await route.fulfill({status:403,body:'CSRF rejected'});
+      return;
+    }
+    if (mode==='read') {
+      const busy=options.nativeBusy ?
+        JSON.stringify({action:'6',source:'/mnt/user/TimeMachine/backup',target:''}) : '';
+      await route.fulfill({status:200,body:busy});
+      return;
+    }
+    if (mode==='file' && body.get('action')==='0') {
+      const parent=decodeURIComponent(body.get('source') || '');
+      const name=decodeURIComponent(body.get('target') || '');
+      if (!options.dropCreate && parent==='/mnt/user/TimeMachine') created.push(name);
+      await route.fulfill({status:200,body:''});
+      return;
+    }
+    await route.fulfill({status:400,body:'Unexpected native operation'});
+  });
   await page.goto(base + '/Shares/Browse?dir=%2Fmnt%2Fuser');
-  return {page,errors};
+  return {page,errors,nativePosts,created};
 }
 
 const currentLabel = page => page.locator('.ufs-tab.ufs-active .ufs-tab-name');
@@ -307,5 +333,66 @@ test('v0.1.16 网格虚拟滚动同样不放大单次 wheel 输入', async t => 
   assert.ok(Math.abs(early-380)<=8,'网格单次滚轮应约滚动 380px，实际 '+early);
   assert.ok(Math.abs(settled-early)<=3,
     '网格滚动不能自行增加: '+JSON.stringify({early,settled}));
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+
+async function newFolderDialog(page) {
+  await page.locator('.ufs-tab.ufs-active .ufs-tab-name',{hasText:'TimeMachine'}).waitFor();
+  await page.locator('.ufs-create-trigger').click();
+  await page.getByRole('menuitem',{name:'新建文件夹'}).click();
+  await page.locator('.ufs-create-dialog').waitFor();
+}
+
+test('v0.2.1 新建文件夹经模拟原生接口提交一次并验证出现后刷新', async t=>{
+  const {page,errors,nativePosts,created}=await pageFor(t);
+  await newFolderDialog(page);
+  assert.equal(await page.locator('.ufs-create-location').innerText(),'/mnt/user/TimeMachine');
+  await page.locator('.ufs-create-input').fill('E2E 新目录');
+  await page.locator('.ufs-create-submit').click();
+  await page.locator('.ufs-entry').filter({hasText:'E2E 新目录'}).first().waitFor();
+  assert.deepEqual(created,['E2E 新目录']);
+  const writes=nativePosts.filter(x=>x.mode==='file');
+  assert.equal(writes.length,1);
+  assert.equal(writes[0].action,'0');
+  assert.equal(writes[0].csrf,'test-csrf');
+  assert.equal(decodeURIComponent(writes[0].source),'/mnt/user/TimeMachine');
+  assert.equal(decodeURIComponent(writes[0].target),'E2E 新目录');
+  assert.equal(await page.locator('.ufs-create-dialog').count(),0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.1 拒绝重复目录及危险名称，不会发出文件写入请求', async t=>{
+  const {page,errors,nativePosts}=await pageFor(t);
+  await newFolderDialog(page);
+  await page.locator('.ufs-create-input').fill('backup');
+  await page.locator('.ufs-create-submit').click();
+  await page.locator('.ufs-create-feedback',{hasText:'同名文件或文件夹已存在'}).waitFor();
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,0);
+  await page.locator('.ufs-create-input').fill('bad"name');
+  await page.locator('.ufs-create-submit').click();
+  await page.locator('.ufs-create-feedback',{hasText:'新建文件夹名称或父目录不安全'}).waitFor();
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.1 全局任务占用时拒绝创建', async t=>{
+  const {page,errors,nativePosts}=await pageFor(t,{nativeBusy:true});
+  await newFolderDialog(page);
+  await page.locator('.ufs-create-input').fill('blocked');
+  await page.locator('.ufs-create-submit').click();
+  await page.locator('.ufs-create-feedback',{hasText:'正在执行其他原生文件任务'}).waitFor();
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.1 请求接受但文件夹未出现时不误报成功或重复提交', async t=>{
+  const {page,errors,nativePosts}=await pageFor(t,{dropCreate:true});
+  await newFolderDialog(page);
+  await page.locator('.ufs-create-input').fill('not-created');
+  await page.locator('.ufs-create-submit').click();
+  await page.locator('.ufs-create-feedback',{hasText:'结果不确定'}).waitFor();
+  assert.equal(await page.locator('.ufs-create-submit').isDisabled(),true);
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,1);
   assert.equal(errors.length,0,errors.join('\n'));
 });
