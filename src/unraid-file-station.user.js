@@ -494,11 +494,13 @@
     addTab(home);
   }
   function notify(message) {
+    if (!app || destroyed) return;
     const previous = $('.ufs-toast', app);
     if (previous) previous.remove();
     const toast = element('div', 'ufs-toast', message);
     app.append(toast);
-    setTimeout(() => { if (toast.isConnected) toast.remove(); }, 3500);
+    const timer = setTimeout(() => { if (toast.isConnected) toast.remove(); }, 3500);
+    onCleanup(() => clearTimeout(timer));
   }
   function nativeMode() {
     if (isDemo) { notify('演示模式没有原生文件管理器'); return; }
@@ -628,7 +630,7 @@
         if (destroyed) return;
         if (path === PREFIX) state.rootLoadError = error.message;
         // Do not cache an unsuccessful read as an empty folder: next click retries.
-        state.tree.delete(path);
+        if (retry) state.tree.delete(path);
         renderTree();
         notify('目录树读取失败：' + error.message);
       } finally {
@@ -1225,9 +1227,11 @@
     });
     $('.ufs-operations', app).addEventListener('click', showOperationsMenu);
     setupSidebarResizer();
-    setupListScrollbars($('.ufs-list', app));
+    onCleanup(setupListScrollbars($('.ufs-list', app)));
     if (typeof ResizeObserver !== 'undefined') {
-      new ResizeObserver(() => scheduleLocationDisplay()).observe($('.ufs-list', app));
+      const locationObserver = new ResizeObserver(() => scheduleLocationDisplay());
+      locationObserver.observe($('.ufs-list', app));
+      onCleanup(() => locationObserver.disconnect());
     }
     $('.ufs-list', app).addEventListener('click', (event) => {
       // Clicking on blank space clears selection, but clicking headers/entries does not.
@@ -1244,6 +1248,7 @@
       }
     });
     document.addEventListener('pointerdown', (event) => {
+      if (destroyed || !app.isConnected) return;
       const more = $('.ufs-more', app);
       const operations = $('.ufs-operations', app);
       const currentTrigger = currentMenu && currentMenu._ufsTrigger;
@@ -1251,9 +1256,9 @@
           !(more && more.contains(event.target)) &&
           !(operations && operations.contains(event.target)) &&
           !(currentTrigger && currentTrigger.contains(event.target))) closeMenu();
-    });
+    }, { signal: lifecycle.signal });
     document.addEventListener('keydown', (event) => {
-      if (!app.isConnected || !app.contains(event.target)) return;
+      if (destroyed || !app.isConnected || !app.contains(event.target)) return;
       if (event.target.closest('input,textarea,[contenteditable]')) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') {
         event.preventDefault();
@@ -1262,7 +1267,7 @@
       }
       if (event.key === 'Escape') { closeMenu(); state.selection.clear(); renderSelection(); }
       if (event.key === 'Backspace' && !event.metaKey && !event.ctrlKey && activeTab()) { event.preventDefault(); stepHistory(-1); }
-    });
+    }, { signal: lifecycle.signal });
     window.addEventListener('popstate', (event) => {
       if (!app.isConnected || isDemo || destroyed) return;
       const requested = new URLSearchParams(location.search).get('dir') || PREFIX;
@@ -1298,7 +1303,7 @@
     let scheduled = false;
     const measure = () => {
       scheduled = false;
-      if (!app || !app.isConnected) return;
+      if (destroyed || !app || !app.isConnected) return;
       const top = app.getBoundingClientRect().top;
       const footer = isDemo ? null : document.querySelector('#footer');
       const footerTop = footer ? footer.getBoundingClientRect().top : NaN;
@@ -1306,12 +1311,12 @@
       if (app.style.height !== height + 'px') app.style.height = height + 'px';
     };
     const schedule = () => {
-      if (scheduled) return;
+      if (destroyed || scheduled) return;
       scheduled = true;
       requestAnimationFrame(measure);
     };
-    window.addEventListener('resize', schedule);
-    if (window.visualViewport) window.visualViewport.addEventListener('resize', schedule);
+    window.addEventListener('resize', schedule, { signal: lifecycle.signal });
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', schedule, { signal: lifecycle.signal });
     // Never observe document.body: resizing #ufs-app would trigger that observer
     // and form a self-sustaining layout feedback cycle.
     if (typeof ResizeObserver !== 'undefined') {
@@ -1319,10 +1324,18 @@
       const targets = [document.querySelector('#header'),
         document.querySelector('header'), document.querySelector('nav'), document.querySelector('#footer')];
       [...new Set(targets.filter(Boolean))].forEach((node) => observer.observe(node));
+      onCleanup(() => observer.disconnect());
     }
     // Recalculate after Unraid's masthead transitions (including collapsed state).
-    document.addEventListener('transitionend', schedule);
-    document.addEventListener('click', () => { setTimeout(schedule, 120); setTimeout(schedule, 400); });
+    document.addEventListener('transitionend', schedule, { signal: lifecycle.signal });
+    const resizeTimers = new Set();
+    document.addEventListener('click', () => {
+      for (const delay of [120, 400]) {
+        const timeout = setTimeout(() => { resizeTimers.delete(timeout); schedule(); }, delay);
+        resizeTimers.add(timeout);
+      }
+    }, { signal: lifecycle.signal });
+    onCleanup(() => { for (const timeout of resizeTimers) clearTimeout(timeout); resizeTimers.clear(); });
     schedule();
   }
   function setupSidebarResizer() {
@@ -1377,6 +1390,7 @@
     const original = $('table.indexer');
     const native = original && original.closest('.autoheight');
     if (!native && !isDemo) return false;
+    if ($('#ufs-app')) return true;
     const mount = isDemo ? $('#ufs-demo-mount') : native.parentNode;
     if (!mount) return false;
     const disabled = !isDemo && localStorage.getItem(STORE + 'native') === '1';
@@ -1454,6 +1468,7 @@
       addSharesEntry();
       const observer = new MutationObserver(() => addSharesEntry());
       observer.observe(document.body, { childList: true, subtree: true });
+      onCleanup(() => observer.disconnect());
       return;
     }
     if (!browsePage && !isDemo) return;
@@ -1461,8 +1476,9 @@
     // WebGUI may mount the Browse table after scripts or Ajax initialization.
     let attempts = 0;
     const timer = setInterval(() => {
-      if (setupBrowser() || ++attempts >= 25) clearInterval(timer);
+      if (destroyed || setupBrowser() || ++attempts >= 25) clearInterval(timer);
     }, 200);
+    onCleanup(() => clearInterval(timer));
   }
   // Explicit opt-in hook for pure-function tests; never enabled on production WebGUI.
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
