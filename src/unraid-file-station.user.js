@@ -1435,6 +1435,144 @@
   function showMenu(x, y, entry) {
     showFileActionMenu(x, y, entry);
   }
+
+  let createFolderBusy = false;
+  function showCreateMenu() {
+    if (destroyed || !activeTab() || state.initializing || state.busy || createFolderBusy) return;
+    const trigger = $('.ufs-create-trigger', app);
+    if (currentMenu && trigger.getAttribute('aria-expanded') === 'true') {
+      closeMenu();
+      return;
+    }
+    closeMenu();
+    const menu = element('div', 'ufs-menu');
+    menu.setAttribute('role', 'menu');
+    const item = element('button', '', '新建文件夹');
+    item.type = 'button';
+    item.setAttribute('role', 'menuitem');
+    item.addEventListener('click', () => { closeMenu(); showCreateFolderDialog(); });
+    menu.append(item);
+    app.append(menu);
+    const rect = trigger.getBoundingClientRect();
+    menu.style.left = Math.max(8, Math.min(rect.left, innerWidth - menu.offsetWidth - 8)) + 'px';
+    menu.style.top = Math.max(8, Math.min(rect.bottom + 4, innerHeight - menu.offsetHeight - 8)) + 'px';
+    currentMenu = menu;
+    trigger.setAttribute('aria-expanded', 'true');
+  }
+  function showCreateFolderDialog() {
+    if (!CREATE_FOLDER_ENABLED || destroyed || !activeTab() || state.busy || createFolderBusy ||
+        $('.ufs-dialog-overlay', app)) return;
+    const parent = currentPath();
+    if (!safeWritePath(parent, true)) return notify('当前目录不允许新建文件夹');
+    const overlay = element('div', 'ufs-dialog-overlay');
+    const dialog = element('div', 'ufs-create-dialog');
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    dialog.setAttribute('aria-label', '新建文件夹');
+    const top = element('div', 'ufs-create-head');
+    top.append(element('h3', '', '新建文件夹'));
+    const dismissButton = element('button', 'ufs-create-dismiss');
+    dismissButton.type = 'button';
+    dismissButton.title = '关闭';
+    dismissButton.setAttribute('aria-label', '关闭新建文件夹窗口');
+    dismissButton.append(icon('close'));
+    top.append(dismissButton);
+    const form = element('form', 'ufs-create-form');
+    const locationSection = element('div');
+    locationSection.append(element('label', 'ufs-create-label', '当前位置'));
+    locationSection.append(element('div', 'ufs-create-location', parent));
+    const nameSection = element('div');
+    const label = element('label', 'ufs-create-label', '文件夹名称');
+    const input = element('input', 'ufs-create-input');
+    input.type = 'text';
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    input.value = '新建文件夹';
+    input.maxLength = 255; // UTF-8 byte limit is checked again by planFileOperation.
+    input.setAttribute('aria-label', '文件夹名称');
+    label.append(input);
+    nameSection.append(label);
+    const feedback = element('div', 'ufs-create-feedback');
+    feedback.setAttribute('role', 'status');
+    feedback.textContent = '同名文件夹不会被覆盖';
+    const buttons = element('div', 'ufs-create-buttons');
+    const cancel = element('button', 'ufs-create-cancel', '取消');
+    cancel.type = 'button';
+    const submit = element('button', 'ufs-create-submit', '创建');
+    submit.type = 'submit';
+    buttons.append(cancel, submit);
+    form.append(locationSection, nameSection, feedback, buttons);
+    dialog.append(top, form);
+    overlay.append(dialog);
+    app.append(overlay);
+    const close = () => { if (!createFolderBusy) overlay.remove(); };
+    dismissButton.addEventListener('click', close);
+    cancel.addEventListener('click', close);
+    overlay.addEventListener('click', event => { if (event.target === overlay) close(); });
+    dialog.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && !createFolderBusy) { event.stopPropagation(); close(); }
+    });
+    input.addEventListener('input', () => {
+      if (!createFolderBusy) {
+        feedback.textContent = '同名文件夹不会被覆盖';
+        feedback.classList.remove('ufs-error');
+      }
+    });
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      if (createFolderBusy || submit.disabled) return;
+      let plan;
+      try {
+        plan = planFileOperation({ type: 'mkdir', parent, name: input.value });
+      } catch (error) {
+        feedback.textContent = String(error.message || error);
+        feedback.classList.add('ufs-error');
+        return;
+      }
+      createFolderBusy = true;
+      input.disabled = true;
+      submit.disabled = true;
+      cancel.disabled = true;
+      dismissButton.disabled = true;
+      submit.textContent = '创建中…';
+      feedback.classList.remove('ufs-error');
+      feedback.textContent = '正在检查目标目录…';
+      try {
+        await createNativeFolder(plan, message => {
+          if (dialog.isConnected && message) feedback.textContent = message;
+        });
+        if (destroyed) return;
+        overlay.remove();
+        notify('已创建文件夹：' + plan.name);
+        if (currentPath() === parent) await refreshDirectory();
+        else state.tree.delete(parent);
+      } catch (error) {
+        if (destroyed) return;
+        feedback.classList.add('ufs-error');
+        feedback.textContent = String(error?.message || error);
+        // A request which may have been accepted must never be submitted again
+        // from this same dialog; ask the user to refresh and inspect first.
+        if (feedback.textContent.includes('结果不确定')) {
+          submit.textContent = '请刷新后核实';
+          submit.disabled = true;
+        }
+      } finally {
+        createFolderBusy = false;
+        if (dialog.isConnected) {
+          input.disabled = false;
+          cancel.disabled = false;
+          dismissButton.disabled = false;
+          if (submit.textContent !== '请刷新后核实') {
+            submit.disabled = false;
+            submit.textContent = '创建';
+          }
+        }
+      }
+    });
+    input.focus();
+    input.select();
+  }
+
   function showOperationsMenu() {
     const trigger = $('.ufs-operations', app);
     if (currentMenu && trigger.getAttribute('aria-expanded') === 'true') {
