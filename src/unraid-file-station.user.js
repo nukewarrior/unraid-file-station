@@ -834,15 +834,32 @@
       if (trigger) trigger.setAttribute('aria-expanded', 'false');
     }
   }
+  async function copyText(text) {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch (_) { /* Fall back for browser permission or insecure HTTP origin. */ }
+    }
+    // The Unraid WebGUI is frequently accessed over plain HTTP. execCommand is
+    // a best-effort user-gesture fallback, not a server-side clipboard service.
+    const textarea = element('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.cssText = 'position:fixed;top:0;left:-9999px;opacity:0;pointer-events:none';
+    document.body.append(textarea);
+    try {
+      textarea.focus();
+      textarea.select();
+      return Boolean(document.execCommand('copy'));
+    } catch (_) { return false; }
+    finally { textarea.remove(); }
+  }
   async function copySelectedPaths() {
     const paths = selectedEntries().map((entry) => entry.path);
     if (!paths.length) return notify('请先选择文件或文件夹');
-    try {
-      await navigator.clipboard.writeText(paths.join('\n'));
-      notify('已复制 ' + paths.length + ' 个文件路径');
-    } catch (_) {
-      notify('浏览器不允许访问剪贴板，请检查站点权限');
-    }
+    if (await copyText(paths.join('\n'))) notify('已复制 ' + paths.length + ' 个文件路径');
+    else notify('浏览器不允许访问剪贴板，请检查站点权限');
   }
   function showSelectedDetails() {
     if (!selectedEntries().length) return notify('请先选择文件或文件夹');
@@ -924,10 +941,8 @@
     copy.type = 'button';
     copy.addEventListener('click', async (event) => {
       event.stopPropagation();
-      try {
-        await navigator.clipboard.writeText(names.join(', '));
-        notify('已复制 ' + names.length + ' 个存储位置');
-      } catch (_) { notify('无法访问剪贴板，请检查浏览器权限'); }
+      if (await copyText(names.join(', '))) notify('已复制 ' + names.length + ' 个存储位置');
+      else notify('无法访问剪贴板，请检查浏览器权限');
     });
     header.insertBefore(copy, close);
     popup.append(header, items);
