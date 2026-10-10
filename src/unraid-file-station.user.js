@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.1.2
+// @version      0.1.3
 // @description  DSM-inspired read-only file browser inside Unraid WebGUI 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -148,7 +148,7 @@
     '#ufs-app .ufs-ico.ufs-primary{background:var(--ufs-accent);border-color:var(--ufs-accent);color:#fff}#ufs-app .ufs-ico.ufs-primary:hover{filter:brightness(.96)}#ufs-app .ufs-ico.ufs-view-active{background:var(--ufs-accent-soft);color:var(--ufs-accent);border-color:var(--ufs-accent-soft)}#ufs-app .ufs-ico.ufs-view-active:hover{background:var(--ufs-accent-soft)}',
     '#ufs-app .ufs-tabs{height:36px;background:var(--ufs-panel);padding:3px 9px;gap:5px;overflow-x:auto;overflow-y:hidden}#ufs-app .ufs-tab{display:inline-flex;align-items:center;gap:8px;border:1px solid transparent;height:29px;min-width:0;max-width:220px;padding:3px 10px;background:transparent;color:var(--ufs-muted)}#ufs-app .ufs-tab.ufs-active{background:var(--ufs-bg);border-color:var(--ufs-border);color:var(--ufs-text);font-weight:600}',
     '#ufs-app .ufs-tab-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#ufs-app .ufs-tab-close{display:flex;align-items:center;border:0;background:transparent;color:var(--ufs-muted);height:19px;width:19px;padding:0;justify-content:center}#ufs-app .ufs-tab-close:hover{background:var(--ufs-hover)}',
-    '#ufs-app .ufs-toolbar{height:44px;padding:0 10px;overflow-x:auto}#ufs-app .ufs-toolbar::-webkit-scrollbar,#ufs-app .ufs-tabs::-webkit-scrollbar{height:4px}#ufs-app .ufs-separator{height:18px;width:1px;background:var(--ufs-border);flex-shrink:0}#ufs-app .ufs-write[disabled]{color:var(--ufs-muted)}',
+    '#ufs-app .ufs-toolbar{height:44px;padding:0 10px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}#ufs-app .ufs-toolbar::-webkit-scrollbar{display:none}#ufs-app .ufs-tabs::-webkit-scrollbar{height:4px}#ufs-app .ufs-separator{height:18px;width:1px;background:var(--ufs-border);flex-shrink:0}#ufs-app .ufs-write[disabled]{color:var(--ufs-muted)}',
     '#ufs-app .ufs-navigation{height:42px;padding:0 10px}#ufs-app .ufs-address{display:flex;align-items:center;gap:6px;min-width:60px;flex:1;padding:4px 10px;border:1px solid var(--ufs-border);border-radius:5px;background:var(--ufs-panel);overflow-x:auto;scrollbar-width:none;white-space:nowrap}#ufs-app .ufs-address::-webkit-scrollbar{display:none}',
     '#ufs-app .ufs-crumb{border:0;background:none;color:var(--ufs-text);padding:2px;white-space:nowrap;flex-shrink:0}#ufs-app .ufs-crumb:hover{color:var(--ufs-accent)}#ufs-app .ufs-search{height:29px;border:1px solid var(--ufs-border);background:var(--ufs-bg);color:var(--ufs-text);border-radius:5px;padding:4px 9px;width:175px;min-width:92px;max-width:22%}',
     '#ufs-app .ufs-workspace{display:flex;flex:1;min-height:0;overflow:hidden}#ufs-app .ufs-sidebar{background:var(--ufs-panel);width:var(--ufs-sidebar-width);flex:0 0 var(--ufs-sidebar-width);min-width:0;overflow:auto;padding:8px 7px}#ufs-app .ufs-resizer{width:5px;flex:0 0 5px;background:var(--ufs-border);cursor:col-resize;touch-action:none;opacity:.7}#ufs-app .ufs-resizer:hover{background:var(--ufs-accent)}',
@@ -168,6 +168,9 @@
     '#ufs-app .ufs-menu button{background:transparent;border:0;display:block;width:100%;text-align:left;padding:8px 12px;color:var(--ufs-text)}#ufs-app .ufs-menu button:hover{background:var(--ufs-hover)}#ufs-app .ufs-toast{position:absolute;bottom:42px;right:25px;background:#30363c;color:#fff;padding:10px 14px;border-radius:6px;box-shadow:0 5px 18px #0003;max-width:360px}',
     // Only the enhanced Browse view is locked; the native view and every other Unraid page scroll normally.
     'html.ufs-active-page,html.ufs-active-page body{overflow-y:hidden!important;overscroll-behavior-y:none}',
+    // Unraid adds two fixed global page-scroll arrows; neither applies to our internally scrolling browser.
+    // Scope to this mode because Unraid's periodic jQuery fadeIn() may change inline display styles.
+    'html.ufs-active-page .move_to_end,html.ufs-active-page .back_to_top{display:none!important}',
     '#ufs-app .ufs-list,#ufs-app .ufs-sidebar,#ufs-app .ufs-inspector{overscroll-behavior:contain}',
     '.ufs-hide-native{display:none!important}#ufs-native-enable{margin:8px;padding:7px 12px;background:#e87526;color:#fff;border:0;border-radius:5px;cursor:pointer}',
     '@media(max-width:980px){#ufs-app .ufs-inspector{display:none}#ufs-app .ufs-entry,#ufs-app .ufs-head{grid-template-columns:minmax(140px,1fr) 85px 150px}#ufs-app .ufs-permission{display:none}}',
