@@ -258,3 +258,54 @@ test('网格已经滚至最底部时改变列数，应保留最后的文件与�
   assert.ok(metrics.gap<8,'grid bottom anchor '+JSON.stringify(metrics));
   assert.equal(errors.length,0,errors.join('\n'));
 });
+
+
+test('v0.1.16 一次真实鼠标滚轮不会被虚拟行更新持续放大', async t => {
+  const {page,errors}=await pageFor(t,{bulkCount:1200});
+  await page.locator('.ufs-count',{hasText:'1200 个项目'}).waitFor();
+  const list=page.locator('.ufs-list.ufs-virtualized');
+  await list.waitFor();
+  const before=await list.evaluate(el=>({
+    top:el.scrollTop,height:el.scrollHeight,anchor:getComputedStyle(el).overflowAnchor
+  }));
+  assert.equal(before.top,0);
+  assert.equal(before.anchor,'none','虚拟列表必须禁用 Chromium 自动滚动锚定');
+  const rect=await list.boundingBox();
+  assert.ok(rect && rect.height>100);
+  await page.mouse.move(rect.x+Math.min(130,rect.width/2),rect.y+Math.min(180,rect.height/2));
+  await page.mouse.wheel(0,380); // One wheel input, no more events afterwards.
+  await page.waitForFunction(()=>document.querySelector('.ufs-list').scrollTop>=370);
+  const early=await list.evaluate(el=>el.scrollTop);
+  await page.waitForTimeout(900); // The original bug kept increasing after this delay.
+  const settled=await list.evaluate(el=>({
+    top:el.scrollTop,height:el.scrollHeight,mounted:el.querySelectorAll('.ufs-entry').length
+  }));
+  assert.ok(Math.abs(early-380)<=8,'一次 wheel 应约滚动 380px，实际 '+early);
+  assert.ok(Math.abs(settled.top-early)<=3,
+    '没有额外 wheel 时 scrollTop 不应继续增加: '+JSON.stringify({early,settled}));
+  assert.ok(Math.abs(settled.height-before.height)<=1,
+    '虚拟窗口滚动前后总高度应稳定: '+JSON.stringify({before,settled}));
+  assert.ok(settled.mounted<100);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.1.16 网格虚拟滚动同样不放大单次 wheel 输入', async t => {
+  const {page,errors}=await pageFor(t,{bulkCount:1200});
+  await page.locator('.ufs-count',{hasText:'1200 个项目'}).waitFor();
+  await page.locator('.ufs-grid-button').click();
+  const list=page.locator('.ufs-list.ufs-grid.ufs-virtualized');
+  await list.waitFor();
+  assert.equal(await list.evaluate(el=>getComputedStyle(el).overflowAnchor),'none');
+  const rect=await list.boundingBox();
+  assert.ok(rect && rect.height>100);
+  await page.mouse.move(rect.x+Math.min(130,rect.width/2),rect.y+Math.min(180,rect.height/2));
+  await page.mouse.wheel(0,380);
+  await page.waitForFunction(()=>document.querySelector('.ufs-list').scrollTop>=370);
+  const early=await list.evaluate(el=>el.scrollTop);
+  await page.waitForTimeout(900);
+  const settled=await list.evaluate(el=>el.scrollTop);
+  assert.ok(Math.abs(early-380)<=8,'网格单次滚轮应约滚动 380px，实际 '+early);
+  assert.ok(Math.abs(settled-early)<=3,
+    '网格滚动不能自行增加: '+JSON.stringify({early,settled}));
+  assert.equal(errors.length,0,errors.join('\n'));
+});
