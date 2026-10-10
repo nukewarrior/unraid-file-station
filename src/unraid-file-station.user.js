@@ -979,7 +979,8 @@
     const gridTotalHeight = 28 + Math.ceil(data.entries.length / cols) * VIRTUAL_GRID_STEP;
     const desiredScrollTop = gridResized ? (nearBottom ?
       Math.max(0, gridTotalHeight - list.clientHeight) :
-      14 + Math.floor(anchorIndex / cols) * VIRTUAL_GRID_STEP) : list.scrollTop;
+      (anchorIndex === 0 ? Math.min(list.scrollTop, 14) :
+        14 + Math.floor(anchorIndex / cols) * VIRTUAL_GRID_STEP)) : list.scrollTop;
     // Compute the new virtual window from its final scroll position, so a
     // resized grid never renders a stale middle slice for one animation frame.
     const range = virtualWindow(data.entries.length,desiredScrollTop,list.clientHeight,data.view,cols);
