@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.1.7
+// @version      0.1.8
 // @description  DSM-inspired read-only file browser inside Unraid WebGUI 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -43,6 +43,31 @@
   function encodeFileUrl(path) {
     return path.split('/').map((segment) => encodeURIComponent(segment)).join('/');
   }
+  function extractLocations(cell) {
+    // Browse.php puts disk/pool names in device_* spans. The surrounding cell also
+    // contains lock-state tooltips ("Not encrypted", "Locked", etc.), not locations.
+    // Never read its complete textContent or execute the original inline handlers.
+    if (!cell || typeof cell.querySelectorAll !== 'function') return [];
+    const names = Array.from(cell.querySelectorAll('span[id^="device_"]'))
+      .map((node) => (node.textContent || '').trim())
+      .filter((name) => name && name !== '---');
+    return [...new Set(names)];
+  }
+  function locationNames(entry) {
+    return Array.isArray(entry.locations) ? entry.locations.filter((name) => typeof name === 'string' && name.trim()) : [];
+  }
+  function renderLocationTags(entry) {
+    const names = locationNames(entry);
+    const cell = element('span', 'ufs-extra ufs-location-col');
+    cell.title = names.length ? names.join(', ') : '存储位置未知';
+    if (!names.length) {
+      cell.append(element('span', 'ufs-muted', '—'));
+      return cell;
+    }
+    names.slice(0, 2).forEach((name) => cell.append(element('span', 'ufs-location-tag', name)));
+    if (names.length > 2) cell.append(element('span', 'ufs-location-more', '+' + (names.length - 2)));
+    return cell;
+  }
   function parseBrowse(html, directory) {
     // Browse.php responds with bare tbody/tfoot fragments, not an entire table.
     const doc = new DOMParser().parseFromString('<table>' + html + '</table>', 'text/html');
@@ -52,13 +77,14 @@
       const cells = row ? Array.from(row.cells) : [];
       const path = icon.getAttribute('data') || '';
       const folder = icon.getAttribute('type') === 'd';
-      if (!safePath(path) || !row || cells.length < 7 || !path.startsWith(directory.replace(/\/$/, '') + '/')) return null;
+      if (!safePath(path) || !row || cells.length < 8 || !path.startsWith(directory.replace(/\/$/, '') + '/')) return null;
       return {
         path, name: path.substring(path.lastIndexOf('/') + 1), folder,
         size: folder ? null : Number(cells[5].getAttribute('data') || '0'),
         mtime: Number(cells[6].getAttribute('data') || '0'),
         owner: (cells[3].textContent || '').trim(),
-        permissions: (cells[4].textContent || '').trim()
+        permissions: (cells[4].textContent || '').trim(),
+        locations: extractLocations(cells[7])
       };
     }).filter(Boolean);
   }
@@ -160,7 +186,7 @@
     // Scope this only to navigable rows; inputs / breadcrumbs stay selectable.
     '#ufs-app .ufs-tree-row,#ufs-app .ufs-tree-row *,#ufs-app .ufs-entry,#ufs-app .ufs-entry *{user-select:none;-webkit-user-select:none;cursor:default!important}',
     '#ufs-app .ufs-main{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0;overflow:hidden;background:var(--ufs-bg)}#ufs-app .ufs-content{display:flex;flex:1;min-width:0;min-height:0;overflow:hidden}#ufs-app .ufs-list{min-width:0;min-height:0;overflow:auto;flex:1;padding:0 8px;outline:0}',
-    '#ufs-app .ufs-head,#ufs-app .ufs-entry{display:grid;grid-template-columns:minmax(160px,2.5fr) minmax(72px,.65fr) minmax(132px,1.2fr) minmax(82px,.75fr);align-items:center;gap:10px;padding:0 12px;border-bottom:1px solid var(--ufs-border)}#ufs-app .ufs-head{height:34px;min-height:34px;font-weight:600;color:var(--ufs-muted);font-size:12px;position:sticky;top:0;background:var(--ufs-bg);z-index:1}',
+    '#ufs-app .ufs-head,#ufs-app .ufs-entry{display:grid;grid-template-columns:minmax(210px,2.6fr) minmax(72px,.65fr) minmax(135px,1.15fr) minmax(85px,.7fr) minmax(105px,.9fr) minmax(115px,1fr);align-items:center;gap:10px;padding:0 12px;border-bottom:1px solid var(--ufs-border)}#ufs-app .ufs-head{height:34px;min-height:34px;font-weight:600;color:var(--ufs-muted);font-size:12px;position:sticky;top:0;background:var(--ufs-bg);z-index:1}',
     '#ufs-app .ufs-entry{min-height:38px;height:38px;border-radius:3px;cursor:default}#ufs-app .ufs-entry:hover{background:var(--ufs-hover)}#ufs-app .ufs-entry.ufs-selected{background:var(--ufs-sel);outline:none}#ufs-app .ufs-entry.ufs-selected:hover{background:var(--ufs-selected-hover)}#ufs-app .ufs-entry>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
     '#ufs-app .ufs-file-name{display:flex;align-items:center;gap:9px;min-width:0}#ufs-app .ufs-file-name .ufs-filename{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}',
     '#ufs-app .ufs-sort-button{display:inline-flex;align-items:center;gap:5px;width:100%;height:30px;border:0;padding:0;background:transparent;text-align:left;color:inherit;white-space:nowrap}#ufs-app .ufs-sort-button .ufs-sort-mark{color:var(--ufs-accent);font-size:12px}',
@@ -177,7 +203,9 @@
     'html.ufs-active-page .move_to_end,html.ufs-active-page .back_to_top{display:none!important}',
     '#ufs-app .ufs-list,#ufs-app .ufs-sidebar,#ufs-app .ufs-inspector{overscroll-behavior:contain}',
     '.ufs-hide-native{display:none!important}#ufs-native-enable{margin:8px;padding:7px 12px;background:#e87526;color:#fff;border:0;border-radius:5px;cursor:pointer}',
-    '@media(max-width:980px){#ufs-app .ufs-inspector{display:none}#ufs-app .ufs-entry,#ufs-app .ufs-head{grid-template-columns:minmax(140px,1fr) 85px 150px}#ufs-app .ufs-permission{display:none}}',
+    '@media(max-width:1280px) and (min-width:981px){#ufs-app .ufs-entry,#ufs-app .ufs-head{grid-template-columns:minmax(180px,1fr) 85px 155px 105px}#ufs-app .ufs-permission,#ufs-app .ufs-location-col{display:none!important}}',
+    '#ufs-app .ufs-location-col{display:flex;align-items:center;gap:4px;min-width:0;overflow:hidden;white-space:nowrap}#ufs-app .ufs-location-tag,#ufs-app .ufs-location-more{display:inline-block;max-width:100%;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;border-radius:3px;background:var(--ufs-panel);padding:2px 6px;color:var(--ufs-text);font-size:11px;line-height:1.4}#ufs-app .ufs-location-more{flex:0 0 auto;color:var(--ufs-muted)}#ufs-app .ufs-owner{min-width:0;overflow:hidden;text-overflow:ellipsis}',
+    '@media(max-width:980px){#ufs-app .ufs-inspector{display:none}#ufs-app .ufs-entry,#ufs-app .ufs-head{grid-template-columns:minmax(140px,1fr) 85px 150px}#ufs-app .ufs-permission,#ufs-app .ufs-owner,#ufs-app .ufs-location-col{display:none!important}}',
     '@media(max-width:720px){#ufs-app .ufs-sidebar{width:42px;flex-basis:42px;padding:4px}#ufs-app .ufs-resizer{display:none}#ufs-app .ufs-sidebar .ufs-tree-name,#ufs-app .ufs-tree-label,#ufs-app .ufs-tree-toggle,#ufs-app .ufs-sidebar .ufs-tree-spacer{display:none}#ufs-app .ufs-entry,#ufs-app .ufs-head{grid-template-columns:minmax(120px,1fr) 80px}#ufs-app .ufs-date{display:none}#ufs-app .ufs-search{width:90px}}',
     '#ufs-app .ufs-top{height:46px;gap:9px;padding:0 12px}#ufs-app .ufs-brand{display:flex;align-items:center;gap:7px;flex-shrink:0;white-space:nowrap}#ufs-app .ufs-heading{font-size:15px}#ufs-app .ufs-brand-divider{height:19px;width:1px;background:var(--ufs-border);flex-shrink:0}#ufs-app .ufs-preview-chip{font-size:11px;color:var(--ufs-muted);white-space:nowrap}#ufs-app .ufs-app-actions{display:flex;align-items:center;gap:3px;flex-shrink:0}',
     '#ufs-app .ufs-top .ufs-tabs{display:flex;align-items:center;flex:1;min-width:0;height:100%;gap:4px;padding:0;background:transparent;border:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}#ufs-app .ufs-top .ufs-tabs::-webkit-scrollbar{display:none}#ufs-app .ufs-top .ufs-tab{flex-shrink:0;height:31px;min-width:85px;max-width:195px;padding:4px 8px}#ufs-app .ufs-top .ufs-tabs>.ufs-ico{flex:0 0 auto}',
@@ -412,7 +440,10 @@
         if (foldersFirst) return foldersFirst;
         if (state.sortKey === 'size') return direction * ((a.size || 0) - (b.size || 0)) || nameCompare(a, b);
         if (state.sortKey === 'mtime') return direction * ((a.mtime || 0) - (b.mtime || 0)) || nameCompare(a, b);
+        if (state.sortKey === 'owner') return direction * (a.owner || '').localeCompare(b.owner || '', 'zh-CN', { numeric: true }) || nameCompare(a, b);
         if (state.sortKey === 'permissions') return direction * (a.permissions || '').localeCompare(b.permissions || '') || nameCompare(a, b);
+        if (state.sortKey === 'locations') return direction *
+          locationNames(a).join(',').localeCompare(locationNames(b).join(','), 'zh-CN', { numeric: true }) || nameCompare(a, b);
         return direction * nameCompare(a, b);
       });
   }
@@ -469,7 +500,8 @@
     }
     const entry = chosen[0];
     const props = [['名称', entry.name], ['类型', entry.folder ? '文件夹' : '文件'], ['大小', formatSize(entry.size)],
-      ['修改日期', formattedDate(entry.mtime)], ['所有者', entry.owner || '—'], ['权限', entry.permissions || '—'], ['路径', entry.path]];
+      ['修改日期', formattedDate(entry.mtime)], ['所有者', entry.owner || '—'], ['权限', entry.permissions || '—'],
+      ['存储位置', locationNames(entry).join(', ') || '—'], ['逻辑路径', entry.path]];
     props.forEach(([label, value]) => {
       const row = element('div', 'ufs-prop');
       row.append(element('span', '', label), element('span', '', value));
@@ -484,8 +516,11 @@
     $('.ufs-grid-button', app).classList.toggle('ufs-view-active', state.view === 'grid');
     if (state.view === 'list') {
       const head = element('div', 'ufs-head');
-      [['name', '名称'], ['size', '大小'], ['mtime', '修改日期'], ['permissions', '权限']].forEach(([key, label], index) => {
-        const cell = element('span', index === 2 ? 'ufs-date' : index === 3 ? 'ufs-permission' : '');
+      [['name', '名称'], ['size', '大小'], ['mtime', '修改日期'], ['owner', 'OWNER'],
+        ['permissions', '权限'], ['locations', 'LOCATION']].forEach(([key, label]) => {
+        const className = { mtime: 'ufs-date', owner: 'ufs-owner', permissions: 'ufs-permission',
+          locations: 'ufs-location-col' }[key] || '';
+        const cell = element('span', className);
         const button = element('button', 'ufs-sort-button');
         button.type = 'button';
         button.append(element('span', '', label));
@@ -517,7 +552,9 @@
         row.append(name,
           element('span', 'ufs-extra', formatSize(entry.size)),
           element('span', 'ufs-extra ufs-date', formattedDate(entry.mtime)),
-          element('span', 'ufs-extra ufs-permission', entry.permissions || '—'));
+          element('span', 'ufs-extra ufs-owner', entry.owner || '—'),
+          element('span', 'ufs-extra ufs-permission', entry.permissions || '—'),
+          renderLocationTags(entry));
         // Shift+click selects a file range. Suppress the browser's native Shift+mousedown
         // text selection without cancelling the following click/keyboard selection logic.
         row.addEventListener('mousedown', (event) => {
@@ -945,7 +982,7 @@
   }
   // Explicit opt-in hook for pure-function tests; never enabled on production WebGUI.
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
-    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, listDirectory, availableHeight, visibleEntries, selectedEntries, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
+    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, renderLocationTags, listDirectory, availableHeight, visibleEntries, selectedEntries, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();
