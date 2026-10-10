@@ -1049,3 +1049,28 @@ test('v0.2.2 原生任务签名区分文件及文件夹的重命名',()=>{
   assert.equal(api.matchesRenameTask(task,{source:task.source,name:'new',folder:false}),false);
   assert.equal(api.matchesRenameTask({...task,target:'other'},{source:task.source,name:'new',folder:true}),false);
 });
+
+
+test('v0.2.2 单个 UserScript 写入锁阻止新建文件夹与重命名并发', async () => {
+  let unblock;
+  let entered;
+  const started=new Promise(resolve=>{entered=resolve;});
+  const gate=new Promise(resolve=>{unblock=resolve;});
+  const modes=[];
+  const {api,sandbox}=createAPI({fetch:async(_url,opts)=>{
+    const mode=new URLSearchParams(opts.body).get('mode');
+    modes.push(mode);
+    if(mode==='read') { entered(); await gate; }
+    return {ok:true,text:async()=>''};
+  }});
+  sandbox.window.__UFS_DEMO__['/mnt/user/downloads']=[{name:'old.txt',folder:false}];
+  const rename=api.planFileOperation({type:'rename',source:'/mnt/user/downloads/old.txt',name:'new.txt',folder:false});
+  const active=api.renameNativeEntry(rename);
+  await started;
+  const mkdir=api.planFileOperation({type:'mkdir',parent:'/mnt/user/downloads',name:'new-folder'});
+  await assert.rejects(api.createNativeFolder(mkdir),/已有文件操作正在执行/);
+  assert.deepEqual(modes,['read']);
+  unblock();
+  await assert.rejects(active,/结果不确定/);
+  assert.equal(modes.filter(v=>v==='file').length,1);
+});
