@@ -282,7 +282,7 @@ test('深路径折叠中间目录但保留每层导航能力', () => {
   assert.deepEqual([...shortened.visible], ['/mnt/user',null,'/mnt/user/a/b/c','/mnt/user/a/b/c/d']);
   assert.deepEqual([...shortened.hidden], ['/mnt/user/a','/mnt/user/a/b']);
   assert.equal(api.breadcrumbDisplayPaths(paths.slice(0,3)).hidden.length, 0);
-  assert.match(script, /width:max-content;min-width:0;max-width:65%;height:28px/);
+  assert.match(script, /flex:1 1 auto;width:auto;min-width:0;max-width:none;height:30px/);
   assert.match(script, /ufs-crumb-more/);
 });
 
@@ -369,7 +369,7 @@ test('统一导航栏保留内部滚动，工具栏不随选中出现新行', ()
   const { api } = createAPI();
   assert.match(api.renderBrowserBarMarkup(), /ufs-search[^"]*"[^>]*hidden/);
   assert.doesNotMatch(api.renderWorkspaceMarkup(), /ufs-selection-bar/);
-  assert.match(script, /#ufs-app \.ufs-navigation\{height:38px;min-height:38px;max-height:38px/);
+  assert.match(script, /#ufs-app \.ufs-navigation\{height:42px;min-height:42px;max-height:42px/);
   assert.match(script, /#ufs-app \[hidden\]\{display:none!important/);
   assert.match(script, /#ufs-app \.ufs-sidebar\{[^']*overflow:auto/);
   assert.match(script, /#ufs-app \.ufs-list\{[^']*overflow:auto/);
@@ -423,8 +423,8 @@ test('v0.1.5 地址框尺寸限制在右侧工具栏，保持白底且不突出'
   assert.match(api.renderBrowserBarMarkup(), /class="ufs-address"/);
   assert.doesNotMatch(api.renderBrowserBarMarkup(), /ufs-view-controls/);
   assert.match(api.renderFileActionsMarkup(), /ufs-view-controls/);
-  assert.match(script, /#ufs-app \.ufs-address\{display:inline-flex;align-items:center;flex:0 1 auto;[^']*height:28px;min-height:28px;max-height:28px/);
-  assert.match(script, /background:var\(--ufs-panel\);box-shadow:none;line-height:26px/);
+  assert.match(script, /#ufs-app \.ufs-address\{display:flex;align-items:center;gap:2px;flex:1 1 auto;[^']*height:30px;min-height:30px;max-height:30px/);
+  assert.match(script, /background:var\(--ufs-bg\);box-shadow:none;line-height:28px/);
   assert.match(script, /#ufs-app \.ufs-main\{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0;overflow:hidden/);
   assert.match(script, /#ufs-app \.ufs-content\{display:flex;flex:1;min-width:0;min-height:0;overflow:hidden/);
   assert.doesNotMatch(script, /#ufs-app \.ufs-toolbar\{height:44px/);
@@ -506,3 +506,22 @@ test('表头单元格与排序按钮垂直居中，不受 Unraid 全局 CSS 基�
   assert.match(script, /#ufs-app \.ufs-head \.ufs-sort-button\{display:inline-flex;align-items:center;justify-content:flex-start;width:100%;height:100%/);
   assert.match(script, /#ufs-app \.ufs-menu \.ufs-location-popover-close\{display:inline-flex/);
 });
+
+test('v0.1.11 还原 v0.1.9 路径栏的白底、宽度和原高度', () => {
+  assert.match(script, /#ufs-app \.ufs-navigation\{height:42px;min-height:42px;max-height:42px/);
+  assert.match(script, /#ufs-app \.ufs-address\{display:flex;align-items:center;gap:2px;flex:1 1 auto;width:auto;min-width:0;max-width:none;height:30px;min-height:30px;max-height:30px/);
+  assert.match(script, /background:var\(--ufs-bg\);box-shadow:none;line-height:28px/);
+  assert.doesNotMatch(script, /max-width:65%;height:28px/);
+  assert.doesNotMatch(script, /#ufs-app \.ufs-address\{display:inline-flex/);
+});
+
+test('仅缩短面包屑箭头两侧空隙，避免 Unraid 全局按钮样式拉宽按钮', () => {
+  assert.match(script, /#ufs-app \.ufs-crumb\{[^']*width:auto;min-width:0;max-width:none;min-height:0;height:auto;margin:0;padding:0 2px/);
+  assert.match(script, /#ufs-app \.ufs-address>\.ufs-svg\{width:12px;height:12px;min-width:12px;flex:0 0 12px\}/);
+  assert.match(script, /#ufs-app \.ufs-svg\{height:16px;width:16px;min-width:16px/); // Other icons unchanged.
+  const { api } = createAPI();
+  const paths = ['/mnt/user','/mnt/user/downloads','/mnt/user/downloads/aria2'];
+  assert.deepEqual([...api.breadcrumbDisplayPaths(paths).visible],paths);
+  assert.equal(api.breadcrumbDisplayPaths(paths).hidden.length,0);
+});
+
