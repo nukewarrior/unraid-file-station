@@ -432,6 +432,9 @@
       state.lastIndex = index;
     }
   }
+  function shouldSuppressTextSelection(event) {
+    return event.button === 0 && event.shiftKey === true;
+  }
   function selectEntry(event, entry, index, visible) {
     updateSelection(event, entry, index, visible);
     renderSelection();
@@ -518,7 +521,7 @@
         // Shift+click selects a file range. Suppress the browser's native Shift+mousedown
         // text selection without cancelling the following click/keyboard selection logic.
         row.addEventListener('mousedown', (event) => {
-          if (event.button === 0 && event.shiftKey) event.preventDefault();
+          if (shouldSuppressTextSelection(event)) event.preventDefault();
         });
         row.addEventListener('click', (event) => selectEntry(event, entry, index, entries));
         row.addEventListener('dblclick', () => openEntry(entry));
@@ -942,7 +945,7 @@
   }
   // Explicit opt-in hook for pure-function tests; never enabled on production WebGUI.
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
-    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, listDirectory, availableHeight, visibleEntries, selectedEntries, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, selectionStatus, updateSelection, state };
+    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, listDirectory, availableHeight, visibleEntries, selectedEntries, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();
