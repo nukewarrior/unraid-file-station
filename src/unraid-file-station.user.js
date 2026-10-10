@@ -232,7 +232,7 @@
     '#ufs-app .ufs-ico.ufs-primary{background:var(--ufs-accent);border-color:var(--ufs-accent);color:#fff}#ufs-app .ufs-ico.ufs-primary:hover{filter:brightness(.96)}#ufs-app .ufs-ico.ufs-view-active{background:var(--ufs-accent-soft);color:var(--ufs-accent);border-color:var(--ufs-accent-soft)}#ufs-app .ufs-ico.ufs-view-active:hover{background:var(--ufs-accent-soft)}',
     '#ufs-app .ufs-tab{display:inline-flex;align-items:center;gap:6px;border:1px solid transparent;min-width:0;max-width:195px;background:transparent;color:var(--ufs-muted)}#ufs-app .ufs-tab.ufs-active{background:var(--ufs-bg);border-color:var(--ufs-border);color:var(--ufs-text);font-weight:600}',
     '#ufs-app .ufs-tab-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#ufs-app .ufs-tab-close{display:flex;align-items:center;border:0;background:transparent;color:var(--ufs-muted);height:19px;width:19px;padding:0;justify-content:center}#ufs-app .ufs-tab-close:hover{background:var(--ufs-hover)}',
-    '#ufs-app .ufs-navigation{height:42px;min-height:42px;max-height:42px;width:100%;max-width:100%;margin:0;padding:0 11px;overflow:hidden;gap:5px;align-items:center;border-radius:0;background:var(--ufs-bg)}#ufs-app .ufs-navigation>.ufs-ico{flex:0 0 auto;min-height:0;height:30px}#ufs-app .ufs-address{display:flex;align-items:center;flex:1 1 auto;width:auto;min-width:0;max-width:none;height:30px;min-height:30px;max-height:30px;align-self:center;padding:0 10px;margin:0;border:1px solid var(--ufs-border);border-radius:4px;background:var(--ufs-bg);box-shadow:none;line-height:28px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;white-space:nowrap}#ufs-app .ufs-address::-webkit-scrollbar{display:none}',
+    '#ufs-app .ufs-navigation{height:38px;min-height:38px;max-height:38px;width:100%;max-width:100%;margin:0;padding:0 10px;overflow:hidden;gap:5px;align-items:center;border-radius:0;background:var(--ufs-bg)}#ufs-app .ufs-navigation>.ufs-ico{flex:0 0 auto;min-height:0;height:28px}#ufs-app .ufs-address{display:inline-flex;align-items:center;flex:0 1 auto;width:max-content;min-width:0;max-width:65%;height:28px;min-height:28px;max-height:28px;align-self:center;padding:0 8px;margin:0;border:1px solid var(--ufs-border);border-radius:4px;background:var(--ufs-panel);box-shadow:none;line-height:26px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;white-space:nowrap}#ufs-app .ufs-address::-webkit-scrollbar{display:none}',
     '#ufs-app .ufs-crumb{border:0;background:none;color:var(--ufs-muted);padding:2px;white-space:nowrap;flex-shrink:0}#ufs-app .ufs-crumb:hover{color:var(--ufs-accent)}#ufs-app .ufs-crumb:last-child{color:var(--ufs-text);font-weight:600}#ufs-app .ufs-search{height:29px;border:1px solid var(--ufs-border);background:var(--ufs-bg);color:var(--ufs-text);border-radius:4px;padding:4px 9px;width:150px;min-width:0;max-width:none}',
     '#ufs-app .ufs-workspace{display:flex;flex:1;min-height:0;overflow:hidden}#ufs-app .ufs-sidebar{background:var(--ufs-panel);width:var(--ufs-sidebar-width);flex:0 0 var(--ufs-sidebar-width);min-width:0;overflow:auto;padding:8px 7px}#ufs-app .ufs-resizer{width:5px;flex:0 0 5px;background:var(--ufs-border);cursor:col-resize;touch-action:none;opacity:.7}#ufs-app .ufs-resizer:hover{background:var(--ufs-accent)}',
     '#ufs-app .ufs-tree-label{padding:7px 8px;color:var(--ufs-muted);font-size:12px;font-weight:600;letter-spacing:0}#ufs-app .ufs-tree-row{display:flex;align-items:center;gap:7px;width:100%;height:31px;min-height:31px;padding:0 7px;border:0;background:transparent;text-align:left;color:var(--ufs-text);border-radius:5px;min-width:0}',
@@ -272,7 +272,7 @@
     '#ufs-app .ufs-top{height:46px;gap:9px;padding:0 12px}#ufs-app .ufs-brand{display:flex;align-items:center;gap:7px;flex-shrink:0;white-space:nowrap}#ufs-app .ufs-heading{font-size:15px}#ufs-app .ufs-brand-divider{height:19px;width:1px;background:var(--ufs-border);flex-shrink:0}#ufs-app .ufs-preview-chip{font-size:11px;color:var(--ufs-muted);white-space:nowrap}#ufs-app .ufs-app-actions{display:flex;align-items:center;gap:3px;flex-shrink:0}',
     '#ufs-app .ufs-top .ufs-tabs{display:flex;align-items:center;flex:1;min-width:0;height:100%;gap:4px;padding:0;background:transparent;border:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}#ufs-app .ufs-top .ufs-tabs::-webkit-scrollbar{display:none}#ufs-app .ufs-top .ufs-tab{flex-shrink:0;height:31px;min-width:85px;max-width:195px;padding:4px 8px}#ufs-app .ufs-top .ufs-tabs>.ufs-ico{flex:0 0 auto}',
     '#ufs-app .ufs-file-actions{display:flex;align-items:center;gap:5px;height:34px;min-height:34px;max-height:34px;flex-shrink:0;padding:0 10px;border-bottom:1px solid var(--ufs-border);background:var(--ufs-bg);overflow:hidden}#ufs-app .ufs-file-actions .ufs-section-label{font-size:12px;color:var(--ufs-muted);font-weight:500}#ufs-app .ufs-file-actions .ufs-view-controls{display:flex;align-items:center;gap:3px;margin-left:auto;flex-shrink:0}#ufs-app .ufs-file-actions .ufs-ico{height:28px;min-height:0;padding:3px 8px}',
-    '#ufs-app .ufs-search-wrap{display:flex;align-items:center;gap:3px;min-width:0;flex-shrink:0}#ufs-app .ufs-search{width:150px;min-width:0;max-width:none}#ufs-app [hidden]{display:none!important}',
+    '#ufs-app .ufs-search-wrap{display:flex;align-items:center;gap:3px;min-width:0;flex-shrink:0;margin-left:auto}#ufs-app .ufs-search{width:150px;min-width:0;max-width:none}#ufs-app [hidden]{display:none!important}',
     '@media(max-width:850px){#ufs-app .ufs-preview-chip{display:none}#ufs-app .ufs-search{width:115px}}',
     '@media(max-width:720px){#ufs-app .ufs-brand-divider{display:none}#ufs-app .ufs-top{padding:0 7px;gap:6px}#ufs-app .ufs-navigation{padding:0 6px;gap:3px}#ufs-app .ufs-search{width:90px}#ufs-app .ufs-view-controls .ufs-details-button{display:none}}',
   ].join('\n');
@@ -592,20 +592,65 @@
     }
     appendNode(PREFIX, 0);
   }
+  function breadcrumbDisplayPaths(paths) {
+    if (paths.length <= 4) return { visible: paths, hidden: [] };
+    return { visible: [paths[0], null, ...paths.slice(-2)], hidden: paths.slice(1, -2) };
+  }
+  function showBreadcrumbMenu(trigger, hiddenPaths) {
+    if (currentMenu && currentMenu._ufsTrigger === trigger) {
+      closeMenu();
+      return;
+    }
+    closeMenu();
+    const menu = element('div', 'ufs-menu');
+    menu.setAttribute('role', 'menu');
+    menu._ufsTrigger = trigger;
+    hiddenPaths.forEach((path) => {
+      const item = element('button', '', path.split('/').pop());
+      item.type = 'button';
+      item.title = path;
+      item.addEventListener('click', (event) => {
+        event.stopPropagation();
+        closeMenu();
+        navigate(path);
+      });
+      menu.append(item);
+    });
+    app.append(menu);
+    const rect = trigger.getBoundingClientRect();
+    menu.style.left = Math.max(8, Math.min(rect.left, innerWidth - menu.offsetWidth - 8)) + 'px';
+    menu.style.top = Math.max(8, Math.min(rect.bottom + 4, innerHeight - menu.offsetHeight - 8)) + 'px';
+    currentMenu = menu;
+    trigger.setAttribute('aria-expanded', 'true');
+  }
   function renderNavigation() {
     const address = $('.ufs-address', app);
     address.replaceChildren();
     const parts = currentPath().split('/').filter(Boolean);
     const paths = [PREFIX];
     for (let i = 3; i <= parts.length; i++) paths.push('/' + parts.slice(0, i).join('/'));
-    [...new Set(paths)].forEach((path, index) => {
+    const { visible, hidden } = breadcrumbDisplayPaths([...new Set(paths)]);
+    visible.forEach((path, index) => {
       if (index) address.append(icon('chevron-right', 'ufs-muted'));
-      const crumb = element('button', 'ufs-crumb', path === PREFIX ? '共享文件夹' : path.split('/').pop());
-      crumb.title = path;
-      crumb.addEventListener('click', () => navigate(path));
-      address.append(crumb);
+      if (path === null) {
+        const ellipsis = element('button', 'ufs-crumb ufs-crumb-more', '…');
+        ellipsis.title = hidden.map((hiddenPath) => hiddenPath.split('/').pop()).join(' / ');
+        ellipsis.setAttribute('aria-label', '选择中间目录');
+        ellipsis.setAttribute('aria-haspopup', 'menu');
+        ellipsis.setAttribute('aria-expanded', 'false');
+        ellipsis.addEventListener('click', (event) => {
+          event.stopPropagation();
+          showBreadcrumbMenu(ellipsis, hidden);
+        });
+        address.append(ellipsis);
+      } else {
+        const crumb = element('button', 'ufs-crumb', path === PREFIX ? '共享文件夹' : path.split('/').pop());
+        crumb.title = path;
+        crumb.addEventListener('click', () => navigate(path));
+        address.append(crumb);
+      }
     });
-    // Long paths should keep the current (right-most) folder visible.
+    // Long names still scroll horizontally inside the compact breadcrumb.
     address.scrollLeft = address.scrollWidth;
     const tab = activeTab();
     $('.ufs-back', app).disabled = !tab || tab.cursor <= 0;
@@ -781,6 +826,7 @@
     link.remove();
   }
   function closeMenu() {
+    if (currentMenu?._ufsTrigger) currentMenu._ufsTrigger.setAttribute('aria-expanded', 'false');
     if (currentMenu?._ufsTrigger) currentMenu._ufsTrigger.setAttribute('aria-expanded', 'false');
     if (currentMenu) currentMenu.remove();
     currentMenu = null;
@@ -1037,9 +1083,11 @@
     document.addEventListener('pointerdown', (event) => {
       const more = $('.ufs-more', app);
       const operations = $('.ufs-operations', app);
+      const currentTrigger = currentMenu && currentMenu._ufsTrigger;
       if (currentMenu && !currentMenu.contains(event.target) &&
           !(more && more.contains(event.target)) &&
-          !(operations && operations.contains(event.target))) closeMenu();
+          !(operations && operations.contains(event.target)) &&
+          !(currentTrigger && currentTrigger.contains(event.target))) closeMenu();
     });
     document.addEventListener('keydown', (event) => {
       if (!app.isConnected || !app.contains(event.target)) return;
@@ -1217,7 +1265,7 @@
   }
   // Explicit opt-in hook for pure-function tests; never enabled on production WebGUI.
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
-    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, availableHeight, visibleEntries, selectedEntries, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
+    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, availableHeight, visibleEntries, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();
