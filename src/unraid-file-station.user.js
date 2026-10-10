@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.1
+// @version      0.2.1.1
 // @description  DSM-inspired File Station with native new-folder support for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -516,7 +516,28 @@
     '#ufs-app .ufs-status{height:30px;border-top:1px solid var(--ufs-border);border-bottom:0;background:var(--ufs-panel);justify-content:space-between;padding:0 12px;color:var(--ufs-muted);font-size:12px;gap:14px}#ufs-app .ufs-status span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}',
     '#ufs-app .ufs-empty{padding:48px 20px;text-align:center;color:var(--ufs-muted)}#ufs-app .ufs-error{color:#c13d37}#ufs-app .ufs-menu{position:fixed;z-index:2147483647;background:var(--ufs-bg);border:1px solid var(--ufs-border);border-radius:7px;box-shadow:0 10px 32px #0002;min-width:190px;padding:5px}',
     '#ufs-app .ufs-menu button{background:transparent;border:0;display:block;width:100%;text-align:left;padding:8px 12px;color:var(--ufs-text)}#ufs-app .ufs-menu button:hover{background:var(--ufs-hover)}#ufs-app .ufs-toast{position:absolute;bottom:42px;right:25px;background:#30363c;color:#fff;padding:10px 14px;border-radius:6px;box-shadow:0 5px 18px #0003;max-width:360px}',
-    '#ufs-app .ufs-dialog-overlay{position:absolute;inset:0;z-index:2147483640;display:flex;align-items:center;justify-content:center;background:rgba(18,25,34,.35);padding:16px}#ufs-app .ufs-create-dialog{width:min(420px,100%);max-height:calc(100% - 20px);overflow:auto;background:var(--ufs-bg);border:1px solid var(--ufs-border);border-radius:9px;padding:17px;box-shadow:0 18px 55px #0003;display:flex;flex-direction:column;gap:13px}#ufs-app .ufs-create-head{display:flex;align-items:center;justify-content:space-between}#ufs-app .ufs-create-head h3{font-size:15px;margin:0;font-weight:650}#ufs-app .ufs-create-dialog .ufs-create-label{display:block;font-size:12px;color:var(--ufs-muted);margin:0 0 5px}#ufs-app .ufs-create-location{font-size:12px;overflow-wrap:anywhere;color:var(--ufs-muted)}#ufs-app .ufs-create-form{display:flex;flex-direction:column;gap:13px;margin:0}#ufs-app .ufs-create-input{width:100%;height:34px;min-height:34px;border:1px solid var(--ufs-border);color:var(--ufs-text);background:var(--ufs-bg);padding:6px 9px}#ufs-app .ufs-create-feedback{min-height:17px;font-size:12px;color:var(--ufs-muted);overflow-wrap:anywhere}#ufs-app .ufs-create-feedback.ufs-error{color:#c13d37}#ufs-app .ufs-create-buttons{display:flex;justify-content:flex-end;gap:8px}#ufs-app .ufs-create-buttons button{padding:6px 15px;border-radius:5px;border:1px solid var(--ufs-border);background:var(--ufs-bg);color:var(--ufs-text)}#ufs-app .ufs-create-buttons .ufs-create-submit{background:var(--ufs-accent);color:#fff;border-color:var(--ufs-accent)}#ufs-app .ufs-create-head .ufs-create-dismiss{border:0;background:transparent;color:var(--ufs-muted);padding:3px;display:flex}',
+    "#ufs-app .ufs-dialog-overlay{position:absolute;inset:0;z-index:2147483640;display:flex;align-items:center;justify-content:center;background:rgba(22,28,36,.40);backdrop-filter:blur(1px);padding:16px}",
+    "#ufs-app .ufs-create-dialog{width:min(440px,100%);max-height:calc(100% - 16px);overflow-y:auto;background:var(--ufs-bg);border:1px solid var(--ufs-border);border-radius:10px;box-shadow:0 20px 55px rgba(0,0,0,.24);display:flex;flex-direction:column;padding:0;gap:0}",
+    "#ufs-app .ufs-create-head{display:flex;align-items:center;justify-content:space-between;min-height:57px;gap:12px;padding:14px 20px;border-bottom:1px solid var(--ufs-border)}",
+    "#ufs-app .ufs-create-head h3{font-size:16px;line-height:1.4;margin:0;font-weight:650;color:var(--ufs-text)}",
+    "#ufs-app .ufs-create-head .ufs-create-dismiss{border:0;background:transparent;color:var(--ufs-muted);padding:4px;display:flex;align-items:center;justify-content:center;width:28px;height:28px;min-width:28px;flex:0 0 28px}",
+    "#ufs-app .ufs-create-head .ufs-create-dismiss:hover:not(:disabled){color:var(--ufs-text);background:var(--ufs-hover)}",
+    "#ufs-app .ufs-create-form{display:flex;flex-direction:column;gap:0;margin:0;min-width:0}",
+    "#ufs-app .ufs-create-fields{display:flex;flex-direction:column;gap:17px;padding:18px 20px 20px;min-width:0}",
+    "#ufs-app .ufs-create-field{min-width:0}",
+    "#ufs-app .ufs-create-dialog .ufs-create-label{display:block;font-size:12px;font-weight:500;color:var(--ufs-muted);line-height:1.5;margin:0 0 7px}",
+    "#ufs-app .ufs-create-location{display:block;width:100%;min-height:36px;padding:8px 10px;background:var(--ufs-panel);border:1px solid var(--ufs-border);border-radius:5px;color:var(--ufs-text);font-size:13px;line-height:19px;overflow-wrap:anywhere}",
+    "#ufs-app .ufs-create-input{display:block;width:100%;height:36px;min-height:36px;margin:0;border:1px solid #cbd2da;border-radius:5px;color:var(--ufs-text);background:var(--ufs-bg);padding:7px 10px;line-height:20px;transition:border-color .15s,box-shadow .15s}",
+    "#ufs-app .ufs-create-input:focus{border-color:var(--ufs-accent);outline:none!important;box-shadow:0 0 0 2px rgba(235,120,37,.18)}",
+    "#ufs-app .ufs-create-input::selection{background:var(--ufs-accent);color:#fff}",
+    "#ufs-app .ufs-create-feedback{min-height:17px;margin-top:8px;font-size:12px;line-height:1.5;color:var(--ufs-muted);overflow-wrap:anywhere}",
+    "#ufs-app .ufs-create-feedback.ufs-error{color:#c13d37}",
+    "#ufs-app .ufs-create-buttons{display:flex;align-items:center;justify-content:flex-end;gap:9px;padding:13px 20px 16px;border-top:1px solid var(--ufs-border)}",
+    "#ufs-app .ufs-create-buttons button{display:inline-flex;align-items:center;justify-content:center;min-width:85px;min-height:34px;height:34px;padding:6px 16px;margin:0;border-radius:5px;border:1px solid var(--ufs-border);background:var(--ufs-bg);color:var(--ufs-text);font-weight:500;line-height:1.4}",
+    "#ufs-app .ufs-create-buttons .ufs-create-cancel:hover:not(:disabled){background:var(--ufs-hover)}",
+    "#ufs-app .ufs-create-buttons .ufs-create-submit{background:var(--ufs-accent);color:#fff;border-color:var(--ufs-accent)}",
+    "#ufs-app .ufs-create-buttons .ufs-create-submit:hover:not(:disabled){filter:brightness(.96)}",
+    "@media(max-width:560px){#ufs-app .ufs-dialog-overlay{padding:10px}#ufs-app .ufs-create-head{padding:12px 15px}#ufs-app .ufs-create-fields{padding:15px}#ufs-app .ufs-create-buttons{padding:12px 15px 14px}}",
     // Only the enhanced Browse view is locked; the native view and every other Unraid page scroll normally.
     'html.ufs-active-page,html.ufs-active-page body{overflow-y:hidden!important;overscroll-behavior-y:none}',
     // Unraid adds two fixed global page-scroll arrows; neither applies to our internally scrolling browser.
@@ -1478,10 +1499,11 @@
     dismissButton.append(icon('close'));
     top.append(dismissButton);
     const form = element('form', 'ufs-create-form');
-    const locationSection = element('div');
+    const fields = element('div', 'ufs-create-fields');
+    const locationSection = element('div', 'ufs-create-field');
     locationSection.append(element('label', 'ufs-create-label', '当前位置'));
     locationSection.append(element('div', 'ufs-create-location', parent));
-    const nameSection = element('div');
+    const nameSection = element('div', 'ufs-create-field');
     const label = element('label', 'ufs-create-label', '文件夹名称');
     const input = element('input', 'ufs-create-input');
     input.type = 'text';
@@ -1495,13 +1517,15 @@
     const feedback = element('div', 'ufs-create-feedback');
     feedback.setAttribute('role', 'status');
     feedback.textContent = '同名文件夹不会被覆盖';
+    nameSection.append(feedback);
     const buttons = element('div', 'ufs-create-buttons');
     const cancel = element('button', 'ufs-create-cancel', '取消');
     cancel.type = 'button';
     const submit = element('button', 'ufs-create-submit', '创建');
     submit.type = 'submit';
     buttons.append(cancel, submit);
-    form.append(locationSection, nameSection, feedback, buttons);
+    fields.append(locationSection, nameSection);
+    form.append(fields, buttons);
     dialog.append(top, form);
     overlay.append(dialog);
     app.append(overlay);
@@ -1635,7 +1659,7 @@
       ['重置文件列表列宽', resetColumnWidths],
       ['返回原生文件管理器（其他写入操作）', nativeMode],
       [state.theme === 'unraid' ? '切换至 DSM 经典主题' : '切换至 Unraid 融合主题', toggleTheme],
-      ['关于 File Station v0.2.1', () => notify('File Station v0.2.1 · Unraid 7.2.2 · 新建文件夹已开放')]
+      ['关于 File Station v0.2.1.1', () => notify('File Station v0.2.1.1 · Unraid 7.2.2 · 新建文件夹已开放')]
     ];
     actions.forEach(([label, fn]) => {
       const button = element('button', '', label);
