@@ -88,6 +88,7 @@
     folder:['M3 7a2 2 0 0 1 2-2h4l2 2h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'],
     'folder-open':['M3 7a2 2 0 0 1 2-2h4l2 2h9a2 2 0 0 1 2 2','M3 11h17a2 2 0 0 1 1.9 2.6L20 19H4a2 2 0 0 1-1.9-2.6z'],
     file:['M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z','M14 2v6h6'],
+    more:['M5 12h.01','M12 12h.01','M19 12h.01'],
     archive:['M4 4h16v16H4z','M4 9h16','M12 9v8','M10 13h4'],
     image:['M3 3h18v18H3z','M8 8h.01','m3 13 5-5 5 5'],
     video:['M3 5h18v14H3z','m10 4 5 3-5 3z'],
@@ -544,33 +545,54 @@
     menu.style.top = Math.max(8, Math.min(y, innerHeight - menu.offsetHeight - 8)) + 'px';
     currentMenu = menu;
   }
+  function renderHeaderMarkup() {
+    return [
+      '<div class="ufs-top">',
+      '<div class="ufs-brand"><span data-ufs-icon="folder-open" class="ufs-mark"></span><span class="ufs-heading">File Station</span></div>',
+      '<span class="ufs-brand-divider" aria-hidden="true"></span>',
+      '<div class="ufs-tabs" aria-label="目录标签页"></div>',
+      '<div class="ufs-app-actions"><span class="ufs-preview-chip">只读预览</span>',
+      '<button type="button" class="ufs-ico ufs-refresh" title="刷新目录" aria-label="刷新目录"><span data-ufs-icon="refresh"></span></button>',
+      '<button type="button" class="ufs-ico ufs-more" title="更多选项" aria-label="更多选项" aria-haspopup="menu" aria-expanded="false"><span data-ufs-icon="more"></span></button>',
+      '</div></div>'
+    ].join('');
+  }
+  function renderBrowserBarMarkup() {
+    return [
+      '<div class="ufs-navigation" role="toolbar" aria-label="目录导航和视图">',
+      '<button type="button" class="ufs-ico ufs-back" title="后退" aria-label="后退"><span data-ufs-icon="arrow-left"></span></button>',
+      '<button type="button" class="ufs-ico ufs-next" title="前进" aria-label="前进"><span data-ufs-icon="arrow-right"></span></button>',
+      '<button type="button" class="ufs-ico ufs-up" title="上一级" aria-label="上一级"><span data-ufs-icon="arrow-up"></span></button>',
+      '<div class="ufs-address" aria-label="当前位置"></div>',
+      '<div class="ufs-search-wrap"><button type="button" class="ufs-ico ufs-search-trigger" title="筛选当前目录" aria-label="筛选当前目录" aria-expanded="false"><span data-ufs-icon="search"></span></button>',
+      '<input class="ufs-search" type="search" placeholder="筛选当前目录" aria-label="筛选当前目录" hidden></div>',
+      '<span class="ufs-control-divider" aria-hidden="true"></span>',
+      '<div class="ufs-view-controls" role="group" aria-label="文件视图">',
+      '<button type="button" class="ufs-ico ufs-list-button" title="列表视图" aria-label="列表视图"><span data-ufs-icon="list"></span></button>',
+      '<button type="button" class="ufs-ico ufs-grid-button" title="网格视图" aria-label="网格视图"><span data-ufs-icon="grid"></span></button>',
+      '<button type="button" class="ufs-ico ufs-details-button" title="详细信息" aria-label="详细信息"><span data-ufs-icon="panel"></span></button>',
+      '</div></div>'
+    ].join('');
+  }
+  function renderSelectionBarMarkup() {
+    return [
+      '<div class="ufs-selection-bar" role="toolbar" aria-label="所选文件操作" hidden>',
+      '<span class="ufs-selection-count" aria-live="polite"></span><span class="ufs-spacer"></span>',
+      '<button type="button" class="ufs-ico ufs-copy-path"><span data-ufs-icon="copy"></span>复制路径</button>',
+      '<button type="button" class="ufs-ico ufs-selection-download"><span data-ufs-icon="download"></span>下载</button>',
+      '<button type="button" class="ufs-ico ufs-show-selection-details"><span data-ufs-icon="info"></span>属性</button>',
+      '<button type="button" class="ufs-ico ufs-selection-native" title="在原生文件管理器中操作"><span data-ufs-icon="external-link"></span>原生操作</button>',
+      '<button type="button" class="ufs-ico ufs-clear-selection" title="取消选择" aria-label="取消选择"><span data-ufs-icon="close"></span></button>',
+      '</div>'
+    ].join('');
+  }
   function renderUI() {
     app = element('section');
     app.id = 'ufs-app';
     app.className = state.theme === 'dsm' ? 'ufs-dsm' : '';
     app.setAttribute('aria-label', 'Unraid File Station');
     app.innerHTML = [
-      '<div class="ufs-top"><span data-ufs-icon="folder-open" class="ufs-mark"></span><span class="ufs-heading">File Station</span>',
-      '<span class="ufs-version">Unraid 7.2.2 · 只读预览</span><span class="ufs-spacer"></span>',
-      '<button type="button" class="ufs-ico ufs-theme" title="切换主题"><span data-ufs-icon="theme"></span><span>主题</span></button>',
-      '<button type="button" class="ufs-ico ufs-refresh" title="刷新目录"><span data-ufs-icon="refresh"></span><span>刷新</span></button>',
-      '<button type="button" class="ufs-ico ufs-native"><span data-ufs-icon="external-link"></span><span>返回原生</span></button></div>',
-      '<div class="ufs-tabs"></div>',
-      '<div class="ufs-toolbar" role="toolbar" aria-label="文件工具栏">',
-      '<button type="button" class="ufs-ico ufs-write" disabled title="只读预览版不支持新建"><span data-ufs-icon="plus"></span>新建</button>',
-      '<button type="button" class="ufs-ico ufs-write" disabled title="只读预览版不支持上传"><span data-ufs-icon="upload"></span>上传</button>',
-      '<span class="ufs-separator"></span>',
-      '<button type="button" class="ufs-ico ufs-write" disabled title="只读预览版不支持复制"><span data-ufs-icon="copy"></span>复制</button>',
-      '<button type="button" class="ufs-ico ufs-write" disabled title="只读预览版不支持移动"><span data-ufs-icon="move"></span>移动</button>',
-      '<button type="button" class="ufs-ico ufs-write" disabled title="只读预览版不支持删除"><span data-ufs-icon="trash"></span>删除</button>',
-      '<span class="ufs-spacer"></span>',
-      '<button type="button" class="ufs-ico ufs-list-button" title="列表视图" aria-label="列表视图"><span data-ufs-icon="list"></span></button>',
-      '<button type="button" class="ufs-ico ufs-grid-button" title="网格视图" aria-label="网格视图"><span data-ufs-icon="grid"></span></button>',
-      '<button type="button" class="ufs-ico ufs-details-button" title="显示或隐藏详细信息" aria-label="显示或隐藏详细信息"><span data-ufs-icon="panel"></span></button></div>',
-      '<div class="ufs-navigation"><button type="button" class="ufs-ico ufs-back" title="后退" aria-label="后退"><span data-ufs-icon="arrow-left"></span></button>',
-      '<button type="button" class="ufs-ico ufs-next" title="前进" aria-label="前进"><span data-ufs-icon="arrow-right"></span></button>',
-      '<button type="button" class="ufs-ico ufs-up" title="上一级" aria-label="上一级"><span data-ufs-icon="arrow-up"></span></button>',
-      '<div class="ufs-address"></div><input class="ufs-search" type="search" placeholder="筛选当前文件夹" aria-label="筛选当前文件夹"></div>',
+      renderHeaderMarkup(), renderBrowserBarMarkup(), renderSelectionBarMarkup(),
       '<div class="ufs-workspace"><aside class="ufs-sidebar"><div class="ufs-tree"></div></aside>',
       '<div class="ufs-resizer" role="separator" aria-label="调整目录树宽度" aria-orientation="vertical"></div>',
       '<main class="ufs-main"><div class="ufs-list" tabindex="0"></div></main>',
