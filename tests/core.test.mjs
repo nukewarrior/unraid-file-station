@@ -148,7 +148,10 @@ test('只读版本默认只包含两条工具行，移除长期禁用的写入�
   assert.match(header, /ufs-more/);
   assert.match(navigation, /class="ufs-navigation"/);
   assert.match(navigation, /ufs-search-trigger/);
-  assert.match(navigation, /ufs-grid-button/);
+  const fileActions = api.renderFileActionsMarkup();
+  assert.match(fileActions, /ufs-grid-button/);
+  assert.match(fileActions, /class="ufs-file-actions"/);
+  assert.doesNotMatch(navigation, /ufs-grid-button|ufs-file-actions/);
   assert.match(selection, /class="ufs-selection-bar"[^>]*hidden/);
   assert.doesNotMatch(header + navigation + selection, /ufs-toolbar|ufs-write/);
   assert.match(script, /const ICONS =/);
@@ -182,7 +185,7 @@ test('统一导航栏保留内部滚动，且选中操作栏默认隐藏', () =>
   const { api } = createAPI();
   assert.match(api.renderBrowserBarMarkup(), /ufs-search[^"]*"[^>]*hidden/);
   assert.match(api.renderSelectionBarMarkup(), /ufs-selection-count/);
-  assert.match(script, /#ufs-app \.ufs-navigation\{height:44px/);
+  assert.match(script, /#ufs-app \.ufs-navigation\{height:42px;min-height:42px;max-height:42px/);
   assert.match(script, /#ufs-app \[hidden\]\{display:none!important/);
   assert.match(script, /#ufs-app \.ufs-sidebar\{[^']*overflow:auto/);
   assert.match(script, /#ufs-app \.ufs-list\{[^']*overflow:auto/);
@@ -209,4 +212,37 @@ test('原生上下滚动浮动按钮仅在增强版 File Station 页面隐藏', 
   assert.match(script, /document\.documentElement\.classList\.remove\('ufs-active-page'\)/);
   // Avoid broad selectors that would disable global arrows on other Unraid pages.
   assert.doesNotMatch(script, /'\.move_to_end,\.back_to_top\{display:none!important\}'/);
+});
+
+
+test('v0.1.5 DSM 结构：导航和操作栏仅属于右侧主区域', () => {
+  const { api } = createAPI();
+  const html = api.renderWorkspaceMarkup();
+  const sidebar = html.indexOf('<aside class="ufs-sidebar">');
+  const resizer = html.indexOf('<div class="ufs-resizer"');
+  const main = html.indexOf('<main class="ufs-main">');
+  const navigation = html.indexOf('<div class="ufs-navigation"');
+  const actions = html.indexOf('<div class="ufs-file-actions"');
+  const selection = html.indexOf('<div class="ufs-selection-bar"');
+  const content = html.indexOf('<div class="ufs-content">');
+  const list = html.indexOf('<div class="ufs-list"');
+  const inspector = html.indexOf('<aside class="ufs-inspector"');
+  assert.ok(sidebar >= 0 && sidebar < resizer && resizer < main);
+  assert.ok(main < navigation && navigation < actions && actions < selection);
+  assert.ok(selection < content && content < list && list < inspector);
+  assert.ok(html.indexOf('</main>') > inspector);
+  assert.equal((html.match(/class="ufs-navigation"/g) || []).length, 1);
+  assert.equal((html.match(/class="ufs-file-actions"/g) || []).length, 1);
+});
+
+test('v0.1.5 地址框尺寸限制在右侧工具栏，保持白底且不突出', () => {
+  const { api } = createAPI();
+  assert.match(api.renderBrowserBarMarkup(), /class="ufs-address"/);
+  assert.doesNotMatch(api.renderBrowserBarMarkup(), /ufs-view-controls/);
+  assert.match(api.renderFileActionsMarkup(), /ufs-view-controls/);
+  assert.match(script, /#ufs-app \.ufs-address\{display:flex;align-items:center;flex:1 1 auto;[^']*height:30px;min-height:30px;max-height:30px/);
+  assert.match(script, /background:var\(--ufs-bg\);box-shadow:none;line-height:28px/);
+  assert.match(script, /#ufs-app \.ufs-main\{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0;overflow:hidden/);
+  assert.match(script, /#ufs-app \.ufs-content\{display:flex;flex:1;min-width:0;min-height:0;overflow:hidden/);
+  assert.doesNotMatch(script, /#ufs-app \.ufs-toolbar\{height:44px/);
 });
