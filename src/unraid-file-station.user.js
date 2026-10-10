@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.1.3
+// @version      0.1.4
 // @description  DSM-inspired read-only file browser inside Unraid WebGUI 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -174,7 +174,14 @@
     '#ufs-app .ufs-list,#ufs-app .ufs-sidebar,#ufs-app .ufs-inspector{overscroll-behavior:contain}',
     '.ufs-hide-native{display:none!important}#ufs-native-enable{margin:8px;padding:7px 12px;background:#e87526;color:#fff;border:0;border-radius:5px;cursor:pointer}',
     '@media(max-width:980px){#ufs-app .ufs-inspector{display:none}#ufs-app .ufs-entry,#ufs-app .ufs-head{grid-template-columns:minmax(140px,1fr) 85px 150px}#ufs-app .ufs-permission{display:none}}',
-    '@media(max-width:720px){#ufs-app .ufs-sidebar{width:42px;flex-basis:42px;padding:4px}#ufs-app .ufs-resizer{display:none}#ufs-app .ufs-sidebar .ufs-tree-name,#ufs-app .ufs-tree-label,#ufs-app .ufs-tree-toggle,#ufs-app .ufs-sidebar .ufs-tree-spacer{display:none}#ufs-app .ufs-toolbar{overflow-x:auto}#ufs-app .ufs-entry,#ufs-app .ufs-head{grid-template-columns:minmax(120px,1fr) 80px}#ufs-app .ufs-date{display:none}#ufs-app .ufs-search{width:90px}}'
+    '@media(max-width:720px){#ufs-app .ufs-sidebar{width:42px;flex-basis:42px;padding:4px}#ufs-app .ufs-resizer{display:none}#ufs-app .ufs-sidebar .ufs-tree-name,#ufs-app .ufs-tree-label,#ufs-app .ufs-tree-toggle,#ufs-app .ufs-sidebar .ufs-tree-spacer{display:none}#ufs-app .ufs-toolbar{overflow-x:auto}#ufs-app .ufs-entry,#ufs-app .ufs-head{grid-template-columns:minmax(120px,1fr) 80px}#ufs-app .ufs-date{display:none}#ufs-app .ufs-search{width:90px}}',
+    '#ufs-app .ufs-top{height:46px;gap:9px;padding:0 12px}#ufs-app .ufs-brand{display:flex;align-items:center;gap:7px;flex-shrink:0;white-space:nowrap}#ufs-app .ufs-heading{font-size:15px}#ufs-app .ufs-brand-divider{height:19px;width:1px;background:var(--ufs-border);flex-shrink:0}#ufs-app .ufs-preview-chip{font-size:11px;color:var(--ufs-muted);white-space:nowrap}#ufs-app .ufs-app-actions{display:flex;align-items:center;gap:3px;flex-shrink:0}',
+    '#ufs-app .ufs-top .ufs-tabs{display:flex;align-items:center;flex:1;min-width:0;height:100%;gap:4px;padding:0;background:transparent;border:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}#ufs-app .ufs-top .ufs-tabs::-webkit-scrollbar{display:none}#ufs-app .ufs-top .ufs-tab{flex-shrink:0;height:31px;min-width:85px;max-width:195px;padding:4px 8px}#ufs-app .ufs-top .ufs-tabs>.ufs-ico{flex:0 0 auto}',
+    '#ufs-app .ufs-navigation{height:44px;padding:0 10px;gap:5px;background:var(--ufs-bg)}#ufs-app .ufs-navigation>.ufs-ico{flex-shrink:0}#ufs-app .ufs-address{min-width:65px;gap:5px}#ufs-app .ufs-crumb{color:var(--ufs-muted)}#ufs-app .ufs-crumb:last-child{color:var(--ufs-text);font-weight:600}',
+    '#ufs-app .ufs-search-wrap,#ufs-app .ufs-view-controls{display:flex;align-items:center;gap:3px;flex-shrink:0}#ufs-app .ufs-search{width:160px;min-width:0;max-width:none}#ufs-app [hidden]{display:none!important}#ufs-app .ufs-control-divider{width:1px;height:18px;flex-shrink:0;background:var(--ufs-border)}',
+    '#ufs-app .ufs-selection-bar{display:flex;align-items:center;gap:7px;min-width:0;flex-shrink:0;height:36px;padding:0 11px;background:var(--ufs-accent-soft);border-bottom:1px solid var(--ufs-border)}#ufs-app .ufs-selection-count{font-weight:600;white-space:nowrap}#ufs-app .ufs-selection-bar .ufs-ico{height:28px;padding:3px 8px}',
+    '@media(max-width:850px){#ufs-app .ufs-preview-chip{display:none}#ufs-app .ufs-search{width:115px}}',
+    '@media(max-width:720px){#ufs-app .ufs-brand-divider{display:none}#ufs-app .ufs-top{padding:0 7px;gap:6px}#ufs-app .ufs-navigation{padding:0 5px;gap:3px}#ufs-app .ufs-search{width:90px}#ufs-app .ufs-view-controls .ufs-details-button{display:none}}'
   ].join('\n');
 
   const state = {
