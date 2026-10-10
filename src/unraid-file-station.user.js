@@ -605,8 +605,7 @@
         placeholder.classList.contains('ufs-mark') ? 'ufs-mark' : ''));
     });
     $('.ufs-refresh', app).addEventListener('click', refreshDirectory);
-    $('.ufs-theme', app).addEventListener('click', toggleTheme);
-    $('.ufs-native', app).addEventListener('click', nativeMode);
+    $('.ufs-more', app).addEventListener('click', showAppMenu);
     // Writes remain disabled in v0.1; native Unraid is the only write surface.
     $('.ufs-back', app).addEventListener('click', () => stepHistory(-1));
     $('.ufs-next', app).addEventListener('click', () => stepHistory(1));
