@@ -46,7 +46,7 @@ function createAPI(options = {}) {
     ...(options.fetch ? { fetch: options.fetch } : {}),
   };
   vm.runInNewContext(script, sandbox, { filename: 'unraid-file-station.user.js' });
-  return { api: sandbox.window.__UFS_TEST_API__, rows };
+  return { api: sandbox.window.__UFS_TEST_API__, rows, sandbox };
 }
 
 function makeIcon(path, type = 'f') {
@@ -188,7 +188,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.1\.1\b/);
+  assert.match(script, /@version\s+0\.2\.2\b/);
 });
 
 
@@ -492,7 +492,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.1\.1\b/);
+  assert.match(script, /@version\s+0\.2\.2\b/);
 });
 
 
@@ -955,4 +955,97 @@ test('v0.2.1.1 弹窗样式分为标题、表单、底部操作区且不影响�
   assert.match(script,/input\.select\(\)/);
   assert.match(script,/await createNativeFolder\(plan/);
   assert.equal(createAPI().api.CREATE_FOLDER_ENABLED,true);
+});
+
+
+test('v0.2.2 重命名仅允许单个 Share 内项目，默认禁止覆盖与非法路径', () => {
+  const {api}=createAPI();
+  assert.equal(api.RENAME_ENABLED,true);
+  const file=api.planFileOperation({type:'rename',source:'/mnt/user/downloads/file.txt',name:'new.txt',folder:false});
+  assert.equal(file.target,'/mnt/user/downloads/new.txt');
+  assert.equal(api.previewNativeOperationRequest(file).action,7);
+  const folder=api.planFileOperation({type:'rename',source:'/mnt/user/downloads/old',name:'new',folder:true});
+  assert.equal(api.previewNativeOperationRequest(folder).action,2);
+  for(const spec of [
+    {source:'/mnt/user/downloads',folder:true,name:'renamed'},
+    {source:'/mnt/user/downloads/old',folder:true,name:'old'},
+    {source:'/mnt/user/downloads/old',folder:true,name:'../outside'},
+    {source:'/mnt/user/downloads/old',folder:true,name:'x"bad'},
+  ]) assert.throws(()=>api.planFileOperation({type:'rename',...spec}),/不能|无效|相同|不安全/);
+  assert.throws(()=>api.planFileOperation({type:'rename',source:'/mnt/user/downloads/a.txt',
+    name:'b.txt',folder:false,conflictPolicy:'overwrite'}),/不允许覆盖/);
+});
+
+test('v0.2.2 仅高亮主文件名，目录和隐藏文件选择完整名称',()=>{
+  const {api}=createAPI();
+  assert.equal(api.renameSelectionEnd('photo.raw',false),5);
+  assert.equal(api.renameSelectionEnd('backup.tar.gz',false),10);
+  assert.equal(api.renameSelectionEnd('.env',false),4);
+  assert.equal(api.renameSelectionEnd('README',false),6);
+  assert.equal(api.renameSelectionEnd('dir.with.dot',true),12);
+});
+
+test('v0.2.2 只替换路径组件前缀，不误伤名称相似的目录',()=>{
+  const {api}=createAPI();
+  const f=path=>api.remapPathPrefix(path,'/mnt/user/downloads/Movies','/mnt/user/downloads/Films');
+  assert.equal(f('/mnt/user/downloads/Movies'),'/mnt/user/downloads/Films');
+  assert.equal(f('/mnt/user/downloads/Movies/2026/a.txt'),'/mnt/user/downloads/Films/2026/a.txt');
+  assert.equal(f('/mnt/user/downloads/Movies-Backup'),'/mnt/user/downloads/Movies-Backup');
+  assert.equal(f('/mnt/user/downloads/Movies2/sub'),'/mnt/user/downloads/Movies2/sub');
+});
+
+test('v0.2.2 模拟重命名请求包含 CSRF 和 action 7，并在目录确认后成功', async()=>{
+  const calls=[];
+  const {api,sandbox}=createAPI({fetch:async(_url,opts)=>{
+    const data=new URLSearchParams(opts.body);calls.push(data.get('mode'));
+    assert.equal(data.get('csrf_token'),'test-csrf');
+    if(data.get('mode')==='file'){
+      assert.equal(data.get('action'),'7');
+      assert.equal(decodeURIComponent(data.get('source')),'/mnt/user/downloads/old.txt');
+      assert.equal(decodeURIComponent(data.get('target')),'new.txt');
+      sandbox.window.__UFS_DEMO__['/mnt/user/downloads']=[{name:'new.txt',folder:false}];
+    }
+    return {ok:true,text:async()=>''};
+  }});
+  sandbox.window.__UFS_DEMO__['/mnt/user/downloads']=[{name:'old.txt',folder:false}];
+  const plan=api.planFileOperation({type:'rename',source:'/mnt/user/downloads/old.txt',folder:false,name:'new.txt'});
+  const result=await api.renameNativeEntry(plan);
+  assert.equal(result.name,'new.txt');
+  assert.deepEqual(calls,['read','file','read','read']);
+});
+
+test('v0.2.2 目标冲突或源丢失必须在写入前拒绝',async()=>{
+  const requests=[];
+  const {api,sandbox}=createAPI({fetch:async(_url,opts)=>{
+    requests.push(new URLSearchParams(opts.body).get('mode'));
+    return {ok:true,text:async()=>''};
+  }});
+  const data=sandbox.window.__UFS_DEMO__;
+  data['/mnt/user/downloads']=[{name:'old.txt',folder:false},{name:'new.txt',folder:false}];
+  const plan=api.planFileOperation({type:'rename',source:'/mnt/user/downloads/old.txt',folder:false,name:'new.txt'});
+  await assert.rejects(api.renameNativeEntry(plan),/目标名称已存在/);
+  assert.deepEqual(requests,[]);
+  data['/mnt/user/downloads']=[{name:'other.txt',folder:false}];
+  await assert.rejects(api.renameNativeEntry(plan),/已不存在/);
+  assert.deepEqual(requests,[]);
+});
+
+test('v0.2.2 未观察到重命名结果不得误报成功或自动重新发起请求',async()=>{
+  const requests=[];
+  const {api,sandbox}=createAPI({fetch:async(_url,opts)=>{
+    const body=new URLSearchParams(opts.body);requests.push(body.get('mode'));
+    return {ok:true,text:async()=>''};
+  }});
+  sandbox.window.__UFS_DEMO__['/mnt/user/downloads']=[{name:'old.txt',folder:false}];
+  const plan=api.planFileOperation({type:'rename',source:'/mnt/user/downloads/old.txt',folder:false,name:'new.txt'});
+  await assert.rejects(api.renameNativeEntry(plan),/结果不确定/);
+  assert.deepEqual(requests,['read','file','read','read']);
+});
+
+test('v0.2.2 原生任务签名区分文件及文件夹的重命名',()=>{
+  const {api}=createAPI();
+  const task={action:'2',source:'/mnt/user/downloads/old',target:'new'};
+  assert.equal(api.matchesRenameTask(task,{source:task.source,name:'new',folder:true}),true);
+  assert.equal(api.matchesRenameTask(task,{source:task.source,name:'new',folder:false}),false);
+  assert.equal(api.matchesRenameTask({...task,target:'other'},{source:task.source,name:'new',folder:true}),false);
 });
