@@ -238,3 +238,20 @@ test('1200 文件网格视图也虚拟化，调整窗口后仍能滚动到底部
   await page.locator('.ufs-entry[data-ufs-index="0"]').waitFor();
   assert.equal(errors.length,0,errors.join('\n'));
 });
+
+
+test('网格已经滚至最底部时改变列数，应保留最后的文件与底部锚点', async t => {
+  const {page,errors}=await pageFor(t,{bulkCount:1200,width:1600});
+  await page.locator('.ufs-count',{hasText:'1200 个项目'}).waitFor();
+  await page.locator('.ufs-grid-button').click();
+  const list=page.locator('.ufs-list.ufs-grid.ufs-virtualized');
+  await list.evaluate(el=>{el.scrollTop=el.scrollHeight;});
+  await page.locator('.ufs-entry[data-ufs-index="1199"]').waitFor();
+  await page.setViewportSize({width:950,height:760});
+  await page.locator('.ufs-entry[data-ufs-index="1199"]').waitFor();
+  await page.waitForFunction(() => {
+    const list=document.querySelector('.ufs-list');
+    return list.scrollHeight-list.clientHeight-list.scrollTop < 8;
+  });
+  assert.equal(errors.length,0,errors.join('\n'));
+});
