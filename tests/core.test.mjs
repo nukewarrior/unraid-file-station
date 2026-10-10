@@ -110,3 +110,38 @@ test('非 Unraid 页面不执行目录读取或插入 UI', () => {
   };
   assert.doesNotThrow(() => vm.runInNewContext(script, sandbox));
 });
+
+
+test('布局高度随头部位置和固定页脚动态变化', () => {
+  const { api } = createAPI();
+  assert.equal(api.availableHeight(340, 901, 960), 549);
+  assert.equal(api.availableHeight(210, 901, 960), 679);
+  assert.equal(api.availableHeight(210, Number.NaN, 960), 738);
+  assert.equal(api.availableHeight(800, 850, 960), 260);
+});
+
+test('文件排序保持文件夹在前并能切换大小、时间和名称顺序', () => {
+  const { api } = createAPI();
+  api.state.entries = [
+    { name: 'z.zip', folder: false, size: 100, mtime: 2 },
+    { name: 'a.zip', folder: false, size: 300, mtime: 1 },
+    { name: 'Movies', folder: true },
+  ];
+  assert.equal(api.visibleEntries().map(x => x.name).join(','), 'Movies,a.zip,z.zip');
+  api.state.sortKey = 'size';
+  api.state.sortDirection = -1;
+  assert.equal(api.visibleEntries().map(x => x.name).join(','), 'Movies,a.zip,z.zip');
+  api.state.sortKey = 'mtime';
+  api.state.sortDirection = -1;
+  assert.equal(api.visibleEntries().map(x => x.name).join(','), 'Movies,z.zip,a.zip');
+  api.state.filter = 'ZIP';
+  assert.equal(api.visibleEntries().length, 2);
+});
+
+test('只读工具栏全部显式禁用且文件图标不使用 emoji', () => {
+  assert.match(script, /class="ufs-ico ufs-write" disabled/);
+  assert.doesNotMatch(script, /'📁'|'📄'/);
+  assert.match(script, /const ICONS =/);
+  assert.match(script, /nativeBreadcrumb = \$\('\.title \.left'\)/);
+  assert.match(script, /footer = isDemo \? null : document\.querySelector\('#footer'\)/);
+});
