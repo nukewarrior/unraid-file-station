@@ -1,0 +1,112 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+
+const script = readFileSync(new URL('../src/unraid-file-station.user.js', import.meta.url), 'utf8');
+
+function createAPI() {
+  const rows = [];
+  const sandbox = {
+    location: { pathname: '/demo/', search: '' },
+    document: {
+      documentElement: { getAttribute: () => 'true' },
+      readyState: 'loading',
+      addEventListener() {},
+    },
+    window: {
+      __UFS_TEST_MODE__: true,
+      __UFS_DEMO__: {
+        '/mnt/user': [
+          { name: 'downloads', folder: true },
+          { name: '演示文件.txt', folder: false, size: 1024 },
+        ],
+      },
+    },
+    localStorage: { getItem: () => null },
+    DOMParser: class {
+      parseFromString() {
+        return {
+          querySelector: () => (rows.length ? {} : null),
+          querySelectorAll: () => rows,
+        };
+      }
+    },
+    URL, URLSearchParams, setTimeout, clearTimeout, console,
+  };
+  vm.runInNewContext(script, sandbox, { filename: 'unraid-file-station.user.js' });
+  return { api: sandbox.window.__UFS_TEST_API__, rows };
+}
+
+function makeIcon(path, type = 'f') {
+  const cells = Array.from({ length: 9 }, () => ({
+    getAttribute: () => null,
+    textContent: '',
+  }));
+  cells[3].textContent = 'nobody';
+  cells[4].textContent = '-rw-rw-rw-';
+  cells[5].getAttribute = () => '1024';
+  cells[6].getAttribute = () => '1791435600';
+  return {
+    getAttribute: (name) => ({ data: path, type }[name]),
+    closest: () => ({ cells }),
+  };
+}
+
+test('脚本可正常解析且具有明确的 Unraid 路由限定', () => {
+  assert.doesNotThrow(() => new vm.Script(script));
+  assert.match(script, /@match\s+\*:\/\/\*\/Shares\*/);
+  assert.match(script, /@match\s+\*:\/\/\*\/Main\/Browse\*/);
+  assert.match(script, /@grant\s+none/);
+});
+
+test('仅允许 /mnt/user 目录，禁止穿越或混用磁盘视图', () => {
+  const { api } = createAPI();
+  assert.equal(api.safePath('/mnt/user'), true);
+  assert.equal(api.safePath('/mnt/user/downloads/测试'), true);
+  for (const path of [
+    '/mnt/user0', '/mnt/disk1', '/boot', '/mnt/user/../disk1',
+    '/mnt/user/./downloads', '/mnt/user/file\0hidden',
+  ]) assert.equal(api.safePath(path), false, path);
+});
+
+test('文件大小和路径编码适用于中文及 URL 特殊字符', () => {
+  const { api } = createAPI();
+  assert.equal(api.formatSize(null), '—');
+  assert.equal(api.formatSize(0), '0 B');
+  assert.equal(api.formatSize(1024), '1 KB');
+  assert.equal(api.encodeFileUrl('/mnt/user/照片 #1?.png'), '/mnt/user/%E7%85%A7%E7%89%87%20%231%3F.png');
+});
+
+test('目录读取在演示模式下无需真实 NAS 且不会发起写入', async () => {
+  const { api } = createAPI();
+  const data = await api.listDirectory('/mnt/user');
+  assert.equal(data.length, 2);
+  assert.equal(data[0].path, '/mnt/user/downloads');
+  assert.equal(data[1].size, 1024);
+  await assert.rejects(api.listDirectory('/mnt/disk1'), /仅允许访问/);
+});
+
+test('7.2.2 Browse 表格解析映射目录元信息并过滤越界行', () => {
+  const { api, rows } = createAPI();
+  rows.push(
+    makeIcon('/mnt/user/downloads/test.zip', 'f'),
+    makeIcon('/mnt/user/downloads/照片', 'd'),
+    makeIcon('/mnt/disk1/private.txt', 'f'),
+  );
+  const files = api.parseBrowse('<tbody>test</tbody>', '/mnt/user/downloads');
+  assert.equal(files.length, 2);
+  assert.equal(files[0].name, 'test.zip');
+  assert.equal(files[0].size, 1024);
+  assert.equal(files[0].owner, 'nobody');
+  assert.equal(files[1].folder, true);
+  assert.equal(files[1].size, null);
+});
+
+test('非 Unraid 页面不执行目录读取或插入 UI', () => {
+  const sandbox = {
+    document: { documentElement: { getAttribute: () => null } },
+    location: { pathname: '/Settings' },
+  };
+  assert.doesNotThrow(() => vm.runInNewContext(script, sandbox));
+});
