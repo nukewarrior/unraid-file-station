@@ -642,6 +642,7 @@
     "#ufs-app .ufs-create-buttons .ufs-create-submit{background:var(--ufs-accent);color:#fff;border-color:var(--ufs-accent)}",
     "#ufs-app .ufs-create-buttons .ufs-create-submit:hover:not(:disabled){filter:brightness(.96)}",
     "@media(max-width:560px){#ufs-app .ufs-dialog-overlay{padding:10px}#ufs-app .ufs-create-head{padding:12px 15px}#ufs-app .ufs-create-fields{padding:15px}#ufs-app .ufs-create-buttons{padding:12px 15px 14px}}",
+    '#ufs-app .ufs-rename-original{display:block;min-height:20px;padding:1px 0;color:var(--ufs-text);font-size:13px;line-height:1.5;overflow-wrap:anywhere}',
     // Only the enhanced Browse view is locked; the native view and every other Unraid page scroll normally.
     'html.ufs-active-page,html.ufs-active-page body{overflow-y:hidden!important;overscroll-behavior-y:none}',
     // Unraid adds two fixed global page-scroll arrows; neither applies to our internally scrolling browser.
@@ -1579,6 +1580,9 @@
       if (entry.folder) actions.push(['在新标签页中打开', () => addTab(entry.path)]);
     }
     if (chosen.length) {
+      if (chosen.length === 1 && safeWritePath(chosen[0].path) && !nativeWriteBusy) {
+        actions.push(['重命名', () => showRenameDialog(chosen[0])]);
+      }
       actions.push(['复制路径（' + chosen.length + ' 项）', copySelectedPaths]);
       if (chosen.length === 1 && !chosen[0].folder)
         actions.push(['下载文件', () => downloadEntry(chosen[0])]);
@@ -1610,7 +1614,8 @@
 
   let createFolderBusy = false;
   function showCreateMenu() {
-    if (destroyed || !activeTab() || state.initializing || state.busy || createFolderBusy) return;
+    if (destroyed || !activeTab() || state.initializing || state.busy || createFolderBusy || nativeWriteBusy ||
+        $('.ufs-dialog-overlay', app)) return;
     const trigger = $('.ufs-create-trigger', app);
     if (currentMenu && trigger.getAttribute('aria-expanded') === 'true') {
       closeMenu();
@@ -1632,7 +1637,7 @@
     trigger.setAttribute('aria-expanded', 'true');
   }
   function showCreateFolderDialog() {
-    if (!CREATE_FOLDER_ENABLED || destroyed || !activeTab() || state.busy || createFolderBusy ||
+    if (!CREATE_FOLDER_ENABLED || destroyed || !activeTab() || state.busy || createFolderBusy || nativeWriteBusy ||
         $('.ufs-dialog-overlay', app)) return;
     const parent = currentPath();
     if (!safeWritePath(parent, true)) return notify('当前目录不允许新建文件夹');
@@ -1748,6 +1753,125 @@
     input.select();
   }
 
+
+  function showRenameDialog(entry) {
+    if (!RENAME_ENABLED || destroyed || !entry || !activeTab() ||
+        state.busy || nativeWriteBusy || $('.ufs-dialog-overlay', app) ||
+        !safeWritePath(entry.path) || currentPath() !== parentPath(entry.path)) return;
+    const source = entry.path;
+    const parent = parentPath(source);
+    const overlay = element('div', 'ufs-dialog-overlay');
+    const dialog = element('div', 'ufs-create-dialog ufs-rename-dialog');
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    dialog.setAttribute('aria-label', '重命名');
+    const header = element('div', 'ufs-create-head');
+    header.append(element('h3', '', '重命名'));
+    const dismiss = element('button', 'ufs-create-dismiss ufs-rename-dismiss');
+    dismiss.type = 'button';
+    dismiss.title = '关闭';
+    dismiss.setAttribute('aria-label', '关闭重命名窗口');
+    dismiss.append(icon('close'));
+    header.append(dismiss);
+    const form = element('form', 'ufs-create-form ufs-rename-form');
+    const fields = element('div', 'ufs-create-fields');
+    const where = element('div', 'ufs-create-field');
+    where.append(element('label', 'ufs-create-label', '当前位置'),
+      element('div', 'ufs-create-location', parent));
+    const original = element('div', 'ufs-create-field');
+    original.append(element('label', 'ufs-create-label', '原名称'),
+      element('div', 'ufs-rename-original', entry.name));
+    const nameField = element('div', 'ufs-create-field');
+    const label = element('label', 'ufs-create-label', '新名称');
+    const input = element('input', 'ufs-create-input ufs-rename-input');
+    input.type = 'text';
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    input.value = entry.name;
+    input.maxLength = 255;
+    input.setAttribute('aria-label', '新名称');
+    label.append(input);
+    nameField.append(label);
+    const feedback = element('div', 'ufs-create-feedback ufs-rename-feedback');
+    feedback.setAttribute('role', 'status');
+    feedback.textContent = '同名目标不会主动覆盖；并发变化无法完全阻止';
+    nameField.append(feedback);
+    fields.append(where, original, nameField);
+    const buttons = element('div', 'ufs-create-buttons');
+    const cancel = element('button', 'ufs-create-cancel ufs-rename-cancel', '取消');
+    cancel.type = 'button';
+    const submit = element('button', 'ufs-create-submit ufs-rename-submit', '重命名');
+    submit.type = 'submit';
+    buttons.append(cancel, submit);
+    form.append(fields, buttons);
+    dialog.append(header, form);
+    overlay.append(dialog);
+    app.append(overlay);
+    let busy = false;
+    const close = () => { if (!busy) overlay.remove(); };
+    dismiss.addEventListener('click', close);
+    cancel.addEventListener('click', close);
+    overlay.addEventListener('click', event => { if (event.target === overlay) close(); });
+    dialog.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && !busy) { event.stopPropagation(); close(); }
+    });
+    input.addEventListener('input', () => {
+      if (busy) return;
+      feedback.classList.remove('ufs-error');
+      feedback.textContent = '同名目标不会主动覆盖；并发变化无法完全阻止';
+    });
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      if (busy || submit.disabled || nativeWriteBusy) return;
+      let plan;
+      try {
+        plan = planFileOperation({type:'rename', source, name: input.value, folder:entry.folder});
+      } catch (error) {
+        feedback.textContent = String(error?.message || error);
+        feedback.classList.add('ufs-error');
+        return;
+      }
+      busy = true;
+      input.disabled = true;
+      submit.disabled = true;
+      cancel.disabled = true;
+      dismiss.disabled = true;
+      submit.textContent = '重命名中…';
+      feedback.classList.remove('ufs-error');
+      feedback.textContent = '正在检查文件与目标名称…';
+      try {
+        await renameNativeEntry(plan, message => {
+          if (dialog.isConnected && message) feedback.textContent = message;
+        });
+        if (destroyed) return;
+        overlay.remove();
+        applyRenameToBrowser(plan);
+        notify('重命名成功：' + plan.name);
+      } catch (error) {
+        if (destroyed) return;
+        feedback.textContent = String(error?.message || error);
+        feedback.classList.add('ufs-error');
+        if (feedback.textContent.includes('结果不确定')) {
+          submit.disabled = true;
+          submit.textContent = '请刷新后核实';
+        }
+      } finally {
+        busy = false;
+        if (dialog.isConnected) {
+          input.disabled = false;
+          dismiss.disabled = false;
+          cancel.disabled = false;
+          if (submit.textContent !== '请刷新后核实') {
+            submit.disabled = false;
+            submit.textContent = '重命名';
+          }
+        }
+      }
+    });
+    input.focus();
+    input.setSelectionRange(0, renameSelectionEnd(entry.name, entry.folder));
+  }
+
   function showOperationsMenu() {
     const trigger = $('.ufs-operations', app);
     if (currentMenu && trigger.getAttribute('aria-expanded') === 'true') {
@@ -1810,7 +1934,7 @@
       ['重置文件列表列宽', resetColumnWidths],
       ['返回原生文件管理器（其他写入操作）', nativeMode],
       [state.theme === 'unraid' ? '切换至 DSM 经典主题' : '切换至 Unraid 融合主题', toggleTheme],
-      ['关于 File Station v0.2.1.1', () => notify('File Station v0.2.1.1 · Unraid 7.2.2 · 新建文件夹已开放')]
+      ['关于 File Station v0.2.2', () => notify('File Station v0.2.2 · Unraid 7.2.2 · 新建文件夹与重命名已开放')]
     ];
     actions.forEach(([label, fn]) => {
       const button = element('button', '', label);
@@ -1832,7 +1956,7 @@
       '<div class="ufs-brand"><span data-ufs-icon="folder-open" class="ufs-mark"></span><span class="ufs-heading">File Station</span></div>',
       '<span class="ufs-brand-divider" aria-hidden="true"></span>',
       '<div class="ufs-tabs" aria-label="目录标签页"></div>',
-      '<div class="ufs-app-actions"><span class="ufs-preview-chip">新建文件夹可用</span>',
+      '<div class="ufs-app-actions"><span class="ufs-preview-chip">文件操作可用</span>',
       '<button type="button" class="ufs-ico ufs-refresh" title="刷新目录" aria-label="刷新目录"><span data-ufs-icon="refresh"></span></button>',
       '<button type="button" class="ufs-ico ufs-more" title="更多选项" aria-label="更多选项" aria-haspopup="menu" aria-expanded="false"><span data-ufs-icon="more"></span></button>',
       '</div></div>'
@@ -1888,7 +2012,7 @@
       renderHeaderMarkup(),
       renderWorkspaceMarkup(),
       '<div class="ufs-status"><span class="ufs-count">准备就绪</span>',
-      '<span>支持新建文件夹 · 其他写入请使用原生文件管理器</span></div>'
+      '<span>支持新建文件夹、重命名 · 其他写入请使用原生文件管理器</span></div>'
     ].join('');
     $$('[data-ufs-icon]', app).forEach((placeholder) => {
       placeholder.replaceWith(icon(placeholder.dataset.ufsIcon,
@@ -1964,6 +2088,14 @@
         renderSelection();
       }
       if (event.key === 'Escape') { closeMenu(); state.selection.clear(); renderSelection(); }
+      if (event.key === 'F2' && !event.ctrlKey && !event.metaKey && !event.altKey &&
+          !nativeWriteBusy && !state.busy && !$('.ufs-dialog-overlay', app)) {
+        const selected = selectedEntries();
+        if (selected.length === 1 && safeWritePath(selected[0].path)) {
+          event.preventDefault();
+          showRenameDialog(selected[0]);
+        }
+      }
       if (event.key === 'Backspace' && !event.metaKey && !event.ctrlKey && activeTab()) { event.preventDefault(); stepHistory(-1); }
     }, { signal: lifecycle.signal });
     window.addEventListener('popstate', (event) => {
