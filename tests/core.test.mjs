@@ -184,7 +184,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /renderLocationTags\(entry\)/);
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
-  assert.match(script, /#ufs-app \.ufs-location-trigger/);
+  assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
   assert.match(script, /@version\s+0\.1\.10/);
 });
 
