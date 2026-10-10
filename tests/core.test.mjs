@@ -185,7 +185,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.1\.11/);
+  assert.match(script, /@version\s+0\.1\.12/);
 });
 
 
@@ -242,7 +242,7 @@ test('列表 6 列共用宽度变量，窄屏内部横向滚动，不再隐去 L
   const { api } = createAPI();
   const columns = [...api.COLUMNS].map(x => x.key);
   assert.deepEqual(columns, ['name','size','mtime','owner','permissions','locations']);
-  assert.match(script, /grid-template-columns:var\(--ufs-columns\);width:max\(100%,var\(--ufs-table-min-width\)\)/);
+  assert.match(script, /grid-template-columns:var\(--ufs-columns\);width:100%;min-width:var\(--ufs-table-min-width\);box-sizing:border-box/);
   assert.match(script, /#ufs-app \.ufs-list\{[^']*overflow:auto/);
   assert.doesNotMatch(script, /@media\(max-width:1280px\) and \(min-width:981px\)/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-entry\{[^']*width:auto/);
@@ -489,7 +489,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.1\.11/);
+  assert.match(script, /@version\s+0\.1\.12/);
 });
 
 
@@ -525,3 +525,46 @@ test('仅缩短面包屑箭头两侧空隙，避免 Unraid 全局按钮样式拉
   assert.equal(api.breadcrumbDisplayPaths(paths).hidden.length,0);
 });
 
+
+
+test('v0.1.12 六列总宽只计算必要的 track、gap 和内边距，不叠加额外百分比', () => {
+  const { api } = createAPI();
+  assert.equal(api.columnLayout({}).minWidth, 1069);
+  assert.match(api.columnLayout({}).columns, /^minmax\(280px, 1fr\)/);
+  assert.match(script, /#ufs-app \.ufs-head,#ufs-app \.ufs-entry\{display:grid;grid-template-columns:var\(--ufs-columns\);width:100%;min-width:var\(--ufs-table-min-width\);box-sizing:border-box/);
+  assert.match(script, /#ufs-app \.ufs-entry\{width:100%;min-width:var\(--ufs-table-min-width\)\}/);
+  assert.doesNotMatch(script, /width:max\(100%,var\(--ufs-table-min-width\)\)/);
+  assert.match(script, /#ufs-app \.ufs-grid \.ufs-entry\{[^']*width:auto/);
+});
+
+test('滚动诊断可区分小范围溢出、真实宽度不足和纵向滚动', () => {
+  const { api } = createAPI();
+  const fit = api.inspectListScrollMetrics({clientWidth:1600,scrollWidth:1600,clientHeight:550,scrollHeight:900});
+  assert.equal(fit.horizontalOverflow, 0);
+  assert.equal(fit.verticalOverflow, 350);
+  assert.equal(fit.requiredWidth, 1085); // 1069px table + 16px outer list padding
+  const tooWide = api.inspectListScrollMetrics({clientWidth:950,scrollWidth:1085,clientHeight:550,scrollHeight:550});
+  assert.equal(tooWide.horizontalOverflow, 135);
+  assert.equal(tooWide.verticalOverflow, 0);
+  assert.equal(api.inspectListScrollMetrics(null), null);
+  api.state.columnWidths = {locations:700};
+  const custom = api.inspectListScrollMetrics({clientWidth:1200,scrollWidth:1535,clientHeight:550,scrollHeight:550});
+  assert.equal(custom.horizontalOverflow, 335);
+  assert.equal(custom.requiredWidth, 1535);
+  assert.equal(custom.columns.locations, 700);
+});
+
+test('文件列表使用透明原生细滚动条，悬停或滚动时显示，保留拖动和内部滚动', () => {
+  assert.match(script, /#ufs-app \.ufs-list\{scrollbar-width:thin;scrollbar-color:transparent transparent\}/);
+  assert.match(script, /#ufs-app \.ufs-list:hover,#ufs-app \.ufs-list\.ufs-scroll-active\{scrollbar-color:/);
+  assert.match(script, /#ufs-app \.ufs-list::-webkit-scrollbar\{width:6px;height:6px;background:transparent\}/);
+  assert.match(script, /#ufs-app \.ufs-list:hover::-webkit-scrollbar-thumb,#ufs-app \.ufs-list\.ufs-scroll-active::-webkit-scrollbar-thumb/);
+  assert.match(script, /list\.addEventListener\('scroll', \(\) => \{/);
+  assert.match(script, /clearTimeout\(idleTimer\)/);
+  assert.match(script, /}, 1100\)/);
+  assert.match(script, /}, \{ passive: true \}\)/);
+  assert.match(script, /setupListScrollbars\(\$\('\.ufs-list', app\)\)/);
+  assert.match(script, /#ufs-app \.ufs-list\{min-width:0;min-height:0;overflow:auto;flex:1/);
+  assert.doesNotMatch(script, /#ufs-app \.ufs-list\{[^']*overflow:hidden/);
+  assert.match(script, /html\.ufs-active-page,html\.ufs-active-page body\{overflow-y:hidden!important/);
+});
