@@ -89,6 +89,7 @@
     'folder-open':['M3 7a2 2 0 0 1 2-2h4l2 2h9a2 2 0 0 1 2 2','M3 11h17a2 2 0 0 1 1.9 2.6L20 19H4a2 2 0 0 1-1.9-2.6z'],
     file:['M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z','M14 2v6h6'],
     more:['M5 12h.01','M12 12h.01','M19 12h.01'],
+    more:['M5 12h.01','M12 12h.01','M19 12h.01'],
     archive:['M4 4h16v16H4z','M4 9h16','M12 9v8','M10 13h4'],
     image:['M3 3h18v18H3z','M8 8h.01','m3 13 5-5 5 5'],
     video:['M3 5h18v14H3z','m10 4 5 3-5 3z'],
@@ -429,11 +430,24 @@
     }
     renderSelection();
   }
+  function selectedEntries() {
+    return state.entries.filter((entry) => state.selection.has(entry.path));
+  }
+  function renderSelectionBar() {
+    const bar = $('.ufs-selection-bar', app);
+    if (!bar) return;
+    const chosen = selectedEntries();
+    bar.hidden = chosen.length === 0;
+    if (!chosen.length) return;
+    $('.ufs-selection-count', bar).textContent = '已选择 ' + chosen.length + ' 个项目';
+    $('.ufs-selection-download', bar).hidden = chosen.length !== 1 || chosen[0].folder;
+  }
   function renderSelection() {
     $$('[data-ufs-file]', app).forEach((node) => node.classList.toggle('ufs-selected', state.selection.has(node.dataset.ufsFile)));
     const count = state.selection.size;
     $('.ufs-count', app).textContent = state.busy ? '正在读取目录…' :
       visibleEntries().length + (state.filter ? ' 个匹配项目' : ' 个项目') + (count ? ' · 已选择 ' + count + ' 个项目' : '');
+    renderSelectionBar();
     renderInspector();
   }
   function renderInspector() {
