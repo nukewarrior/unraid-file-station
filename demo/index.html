@@ -33,11 +33,11 @@
       {name:'media',folder:true}, {name:'system',folder:true}
     ],
     '/mnt/user/downloads': [
-      {name:'Movies',folder:true,mtime:1791435600},
-      {name:'Photos',folder:true,mtime:1791349200},
-      {name:'Archives',folder:true,mtime:1791262800},
-      {name:'测试文档.txt',folder:false,size:85312,mtime:1791435600,owner:'nobody',permissions:'-rw-rw-rw-'},
-      {name:'example.zip',folder:false,size:1315333734,mtime:1791435600,owner:'nobody',permissions:'-rw-rw-rw-'}
+      {name:'Movies',folder:true,mtime:1791435600,owner:'nobody',permissions:'drwxrwxrwx',locations:['disk1','disk2']},
+      {name:'Photos',folder:true,mtime:1791349200,owner:'nobody',permissions:'drwxrwxrwx',locations:['cache']},
+      {name:'Archives',folder:true,mtime:1791262800,owner:'root',permissions:'drwxr-xr-x',locations:[]},
+      {name:'测试文档.txt',folder:false,size:85312,mtime:1791435600,owner:'nobody',permissions:'-rw-rw-rw-',locations:['cache']},
+      {name:'example.zip',folder:false,size:1315333734,mtime:1791435600,owner:'root',permissions:'-rw-r--r--',locations:['disk1','disk2','disk3']}
     ],
     '/mnt/user/downloads/Movies': [
       {name:'Movie 01.mkv',folder:false,size:4774887936,mtime:1791262800},
