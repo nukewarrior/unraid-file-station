@@ -2263,7 +2263,19 @@
     }
     startLayoutSync();
     // Native filemonitor.start() is delayed; take ownership before it fires.
-    if (!isDemo) takeOverNativeFileMonitor();
+    if (!isDemo) {
+      if (!takeOverNativeFileMonitor()) {
+        // Normally Browse.page creates filemonitor before document-idle.
+        // Retry briefly if scripts happen to initialize in another order.
+        let monitorAttempts = 0;
+        const retryMonitor = setInterval(() => {
+          if (destroyed || takeOverNativeFileMonitor() || ++monitorAttempts >= 25) {
+            clearInterval(retryMonitor);
+          }
+        }, 100);
+        onCleanup(() => clearInterval(retryMonitor));
+      }
+    }
     // Resolve the root before creating a tab: do not briefly render the
     // "all shares" listing or put the virtual group into tab history.
     void initializeBrowser(start);
@@ -2324,11 +2336,12 @@
     // Guard against an earlier timer firing after the script takes over.
     try {
       native.start = function ufsPausedNativeFileMonitorStart() {};
-      native.stop();
     } catch (_) {
-      native.start = nativeStart;
       return false;
     }
+    // An unstarted native subscriber may throw when stopped: the deferred
+    // start is already blocked, so this must not undo takeover.
+    try { native.stop(); } catch (_) {}
     if (window.timers?.filemonitor) {
       clearTimeout(window.timers.filemonitor);
       window.timers.filemonitor = null;
