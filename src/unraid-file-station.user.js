@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.1.1
+// @version      0.2.2
 // @description  DSM-inspired File Station with native new-folder support for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -172,6 +172,7 @@
   // are enabled only for mkdir in createNativeFolder(), not a security boundary.
   const FILE_WRITES_ENABLED = false;
   const CREATE_FOLDER_ENABLED = true;
+  const RENAME_ENABLED = true;
   const NATIVE_CONTROL_URL = '/webGui/include/Control.php';
   const NATIVE_TASK_EVENTS = '/sub/filemanager';
 
@@ -350,7 +351,15 @@
     return () => { try { subscriber?.stop(); } catch (_) {} };
   }
   function waitNative(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+  let nativeWriteBusy = false;
+  async function withNativeWriteLock(operation) {
+    if (nativeWriteBusy) throw new Error('已有文件操作正在执行，请稍后重试');
+    nativeWriteBusy = true;
+    try { return await operation(); }
+    finally { nativeWriteBusy = false; }
+  }
   async function createNativeFolder(plan, progress = () => {}) {
+    return withNativeWriteLock(async () => {
     if (!CREATE_FOLDER_ENABLED || !plan || plan.type !== 'mkdir' ||
         plan.conflictPolicy !== 'fail' || !safeWritePath(plan.source, true) ||
         !safeWriteName(plan.name) || plan.target !== plan.source + '/' + plan.name) {
@@ -421,6 +430,101 @@
     } finally {
       unwatch();
     }
+    });
+  }
+
+
+  function matchesRenameTask(active, plan) {
+    return active && Number(active.action) === (plan.folder ? 2 : 7) &&
+      active.source === plan.source && active.target === plan.name;
+  }
+  function renameSelectionEnd(name, folder) {
+    if (folder) return name.length;
+    const dot = name.lastIndexOf('.');
+    return dot > 0 ? dot : name.length;
+  }
+  function remapPathPrefix(path, source, target) {
+    return path === source ? target :
+      (typeof path === 'string' && path.startsWith(source + '/') ?
+        target + path.slice(source.length) : path);
+  }
+  async function renameNativeEntry(plan, progress = () => {}) {
+    return withNativeWriteLock(async () => {
+      if (!RENAME_ENABLED || !plan || plan.type !== 'rename' ||
+          plan.conflictPolicy !== 'fail' || !safeWritePath(plan.source) ||
+          !safeWriteName(plan.name) || typeof plan.folder !== 'boolean' ||
+          plan.target !== parentPath(plan.source) + '/' + plan.name ||
+          plan.target === plan.source) {
+        throw new Error('无效的重命名操作');
+      }
+      if (isDemo && window.__UFS_TEST_MODE__ !== true) {
+        throw new Error('演示模式不允许真实写入');
+      }
+      const parent = parentPath(plan.source);
+      // Never rely on the rendered/filtered/virtualized file list for conflicts.
+      const before = await listDirectory(parent);
+      const original = before.find(item => item.path === plan.source);
+      if (!original || original.folder !== plan.folder) {
+        throw new Error('原文件或文件夹已不存在或类型发生变化，请刷新目录');
+      }
+      if (before.some(item => item.path === plan.target || item.name === plan.name)) {
+        throw new Error('目标名称已存在，未执行重命名');
+      }
+      if (await readNativeActive()) throw new Error('Unraid 正在执行其他原生文件任务，请稍后重试');
+      nativeCsrfToken();
+      let afterRequest = false;
+      let eventError = '';
+      let eventDone = false;
+      const unwatch = observeNativeProgress(data => {
+        if (typeof data.status === 'string') {
+          progress(data.status.replace(/<[^>]*>/g, '').slice(0, 130));
+        }
+        if (data.error) eventError = String(data.error).replace(/<[^>]*>/g, '').slice(0, 200);
+        if (data.done === 1) eventDone = true;
+      });
+      try {
+        afterRequest = true;
+        const reply = await postNativeControl({
+          mode: 'file', action: plan.folder ? '2' : '7', title: encodeURIComponent('重命名'),
+          source: encodeURIComponent(plan.source), target: encodeURIComponent(plan.name),
+          hdlink: '', sparse: '', exist: '', zfs: ''
+        });
+        if (reply.trim()) throw new Error('原生接口返回了非预期内容');
+        progress('正在等待 Unraid 确认重命名…');
+        const deadline = Date.now() + 30000;
+        let idleChecks = 0;
+        while (Date.now() < deadline) {
+          await waitNative(500);
+          const active = await readNativeActive();
+          if (active) {
+            if (!matchesRenameTask(active, plan)) {
+              throw new Error('原生任务被其他操作占用，无法确认重命名结果');
+            }
+            idleChecks = 0;
+          } else {
+            idleChecks++;
+            if (idleChecks >= 2 || eventDone) break;
+          }
+        }
+        if (idleChecks === 0) throw new Error('原生重命名仍在进行或无法确认结束');
+        if (eventError) throw new Error('Unraid 报告任务错误：' + eventError);
+        const verified = await listDirectory(parent);
+        const oldItem = verified.find(item => item.path === plan.source);
+        const newItem = verified.find(item => item.path === plan.target);
+        if (oldItem || !newItem || newItem.folder !== plan.folder) {
+          throw new Error('无法确认旧名称消失且新名称出现，请手动检查目录');
+        }
+        return newItem;
+      } catch (error) {
+        if (afterRequest) {
+          throw new Error('重命名请求可能已被 Unraid 接收；结果不确定，请先刷新目录核实。详情：' +
+            String(error?.message || error));
+        }
+        throw error;
+      } finally {
+        unwatch();
+      }
+    });
   }
 
   // Small local SVG set: no external fonts, CDNs or global icon CSS.
@@ -748,6 +852,8 @@
   let nativeElements = [];
   let currentMenu = null;
   const treeLoads = new Map();
+  let renameGeneration = 0;
+  const renamedFolderRedirects = [];
   const cleanupTasks = [];
   const lifecycle = new AbortController();
   let destroyed = false;
@@ -926,14 +1032,59 @@
     navigate(path, false, 'none'); // popstate must never push/replace itself
     return true;
   }
+
+  function resolveRenamedFolderPath(path) {
+    let next = path;
+    for (const redirect of renamedFolderRedirects) {
+      next = remapPathPrefix(next, redirect.source, redirect.target);
+    }
+    return next;
+  }
+  function applyRenameToBrowser(plan) {
+    // Only called after listDirectory has verified a successful rename.
+    const oldPath = plan.source, newPath = plan.target;
+    ++renameGeneration;
+    treeLoads.clear();
+    if (plan.folder) {
+      renamedFolderRedirects.push({source: oldPath, target: newPath});
+      for (const tab of state.tabs) {
+        tab.path = remapPathPrefix(tab.path, oldPath, newPath);
+        tab.history = tab.history.map(path => remapPathPrefix(path, oldPath, newPath));
+      }
+      state.expanded = new Set([...state.expanded].map(path => remapPathPrefix(path, oldPath, newPath)));
+      const transformed = new Map();
+      for (const [path, entries] of state.tree) {
+        transformed.set(remapPathPrefix(path, oldPath, newPath), entries.map(entry => {
+          const replacement = remapPathPrefix(entry.path, oldPath, newPath);
+          return replacement === entry.path ? entry : {...entry, path: replacement, name: fileName(replacement)};
+        }));
+      }
+      state.tree = transformed;
+    }
+    const parent = parentPath(oldPath);
+    // Parent contents may have changed; never keep a potentially stale entry.
+    state.tree.delete(parent);
+    state.selection.clear();
+    state.lastIndex = -1;
+    if (activeTab()) writeUrl(currentPath(), true);
+    renderTabs();
+    renderTree();
+    renderNavigation();
+    if (activeTab()) void refreshDirectory();
+    // The parent may be represented in the sidebar although a different tab
+    // is active. Force a re-read; stale tree loads are generation guarded.
+    if (currentPath() !== parent) void loadTree(parent, true);
+  }
+
   async function loadTree(path, retry = false) {
     if (destroyed || !safePath(path)) return;
     if (!retry && state.tree.has(path)) return;
     if (treeLoads.has(path)) return treeLoads.get(path);
+    const generation = renameGeneration;
     const pending = (async () => {
       try {
         const entries = await listDirectory(path);
-        if (destroyed) return;
+        if (destroyed || generation !== renameGeneration) return;
         if (path === PREFIX) state.rootLoadError = '';
         // An active-directory refresh may already have newer directory data.
         if (retry || !state.tree.has(path)) {
@@ -941,14 +1092,14 @@
         }
         renderTree();
       } catch (error) {
-        if (destroyed) return;
+        if (destroyed || generation !== renameGeneration) return;
         if (path === PREFIX) state.rootLoadError = error.message;
         // Do not cache an unsuccessful read as an empty folder: next click retries.
         if (retry) state.tree.delete(path);
         renderTree();
         notify('目录树读取失败：' + error.message);
       } finally {
-        treeLoads.delete(path);
+        if (treeLoads.get(path) === pending) treeLoads.delete(path);
       }
     })();
     treeLoads.set(path, pending);
@@ -1819,13 +1970,17 @@
       if (!app.isConnected || isDemo || destroyed) return;
       const requested = new URLSearchParams(location.search).get('dir') || PREFIX;
       if (!safePath(requested)) return;
-      const path = requested === PREFIX ? defaultSharePath() : requested;
+      const path = requested === PREFIX ? defaultSharePath() : resolveRenamedFolderPath(requested);
       if (!path) {
         if (activeTab()) writeUrl(currentPath(), true);
         else void initializeBrowser(PREFIX);
         return;
       }
-      if (requested === PREFIX) writeUrl(path, true);
+      if (requested === PREFIX || path !== requested) {
+        const url = new URL(location.href);
+        url.searchParams.set('dir', path);
+        history.replaceState({ufs:true, tabId:event.state?.tabId ?? activeTab()?.id ?? null, path}, '', url);
+      }
       restoreBrowserPath(path, event.state?.ufs ? event.state.tabId : null);
     }, { signal: lifecycle.signal });
     return app;
@@ -2029,7 +2184,7 @@
   }
   // Explicit opt-in hook for pure-function tests; never enabled on production WebGUI.
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
-    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, parseNativeActive, matchesCreateTask, createNativeFolder, availableHeight, visibleEntries, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
+    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, availableHeight, visibleEntries, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();
