@@ -188,7 +188,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.1/);
+  assert.match(script, /@version\s+0\.2\.1\.1\b/);
 });
 
 
@@ -492,7 +492,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.1/);
+  assert.match(script, /@version\s+0\.2\.1\.1\b/);
 });
 
 
@@ -941,4 +941,18 @@ test('v0.2.1 原生任务占用与缺失 CSRF 均在写入前拦截', async () =
   const {api:missing}=createAPI({fetch:mock,csrfToken:null});
   await assert.rejects(missing.createNativeFolder(missing.planFileOperation(plan)),/CSRF Token/);
   assert.deepEqual(modes,['read']);
+});
+
+
+test('v0.2.1.1 弹窗样式分为标题、表单、底部操作区且不影响文件操作', () => {
+  assert.match(script,/ufs-create-fields/);
+  assert.match(script,/form\.append\(fields, buttons\)/);
+  assert.match(script,/nameSection\.append\(feedback\)/);
+  assert.match(script,/#ufs-app \.ufs-create-head\{[^}]*border-bottom:1px/);
+  assert.match(script,/#ufs-app \.ufs-create-location\{[^}]*background:var\(--ufs-panel\)/);
+  assert.match(script,/#ufs-app \.ufs-create-input:focus\{[^}]*border-color:var\(--ufs-accent\)/);
+  assert.match(script,/#ufs-app \.ufs-create-buttons\{[^}]*border-top:1px/);
+  assert.match(script,/input\.select\(\)/);
+  assert.match(script,/await createNativeFolder\(plan/);
+  assert.equal(createAPI().api.CREATE_FOLDER_ENABLED,true);
 });
