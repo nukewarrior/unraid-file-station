@@ -2,7 +2,7 @@
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
 // @version      0.2.2
-// @description  DSM-inspired File Station with native new-folder support for Unraid 7.2.2
+// @description  DSM-inspired File Station with native mkdir and rename for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
 // @grant        none
