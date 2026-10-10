@@ -76,6 +76,9 @@ async function pageFor(t, options = {}) {
   const context = await browser.newContext({viewport: {width: options.width || 1440, height: 900}});
   t.after(()=>context.close());
   await context.addInitScript({content:options.noCsrf ? 'delete window.csrf_token;' : "window.csrf_token = 'test-csrf';"});
+  if(options.nativeMode) {
+    await context.addInitScript({content: "localStorage.setItem('unraid-file-station:v1:native','1');"});
+  }
   if(options.simulateNativeMonitor) {
     await context.addInitScript({content: String.raw`
       (() => {
@@ -657,5 +660,23 @@ test('v0.2.2.1 自身重命名与新建操作的 filemonitor 通知不会整页�
   assert.equal(await page.evaluate(()=>performance.timeOrigin),initialTimeOrigin);
   assert.equal(nativePosts.filter(x=>x.mode==='file').length,2);
   assert.ok(browseRequests.length>=5);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+
+test('v0.2.2.1 返回原生模式后不接管 filemonitor，原生延迟监听正常启动',async t=>{
+  const {page,errors}=await pageFor(t,{simulateNativeMonitor:true,nativeMode:true});
+  await page.locator('#ufs-native-enable').waitFor();
+  assert.equal(await page.locator('#ufs-app').count(),0);
+  await page.waitForTimeout(3250);
+  const native=await page.evaluate(()=>{
+    const obj=window.filemonitor;
+    return {startCalls:obj.startCalls,stopCalls:obj.stopCalls,active:obj.active,
+      extra:window.__ufsMonitorTest.subscribers.length};
+  });
+  assert.ok(native.startCalls>=1,JSON.stringify(native));
+  assert.equal(native.stopCalls,0);
+  assert.equal(native.active,true);
+  assert.equal(native.extra,1);
   assert.equal(errors.length,0,errors.join('\n'));
 });
