@@ -932,6 +932,7 @@
   function createFileRow(entry, index, entries) {
         const row = element('div', 'ufs-entry');
         row.dataset.ufsFile = entry.path;
+        row.classList.toggle('ufs-selected', state.selection.has(entry.path));
         row.tabIndex = 0;
         row.title = entry.path;
         const name = element('div', 'ufs-file-name');
