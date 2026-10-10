@@ -413,7 +413,7 @@
         return direction * nameCompare(a, b);
       });
   }
-  function selectEntry(event, entry, index, visible) {
+  function updateSelection(event, entry, index, visible) {
     if (event.shiftKey && state.lastIndex >= 0) {
       const a = Math.min(state.lastIndex, index);
       const b = Math.max(state.lastIndex, index);
@@ -428,6 +428,9 @@
       state.selection.add(entry.path);
       state.lastIndex = index;
     }
+  }
+  function selectEntry(event, entry, index, visible) {
+    updateSelection(event, entry, index, visible);
     renderSelection();
   }
   function selectedEntries() {
@@ -931,7 +934,7 @@
   }
   // Explicit opt-in hook for pure-function tests; never enabled on production WebGUI.
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
-    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, listDirectory, availableHeight, visibleEntries, selectedEntries, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, selectionStatus, selectEntry, state };
+    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, listDirectory, availableHeight, visibleEntries, selectedEntries, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, selectionStatus, updateSelection, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();
