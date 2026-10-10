@@ -13,6 +13,9 @@ function createAPI() {
       // Minimal DOM for location-chip rendering tests, without browser dependencies.
       createElement: (tagName) => ({
         tagName, className: '', textContent: '', title: '', children: [],
+        attributes: {},
+        setAttribute(name,value) { this.attributes[name] = value; },
+        addEventListener(name,callback) { (this.listeners ||= {})[name] = callback; },
         append(...children) { this.children.push(...children); },
       }),
       documentElement: { getAttribute: () => 'true' },
@@ -181,24 +184,46 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /renderLocationTags\(entry\)/);
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
-  assert.match(script, /#ufs-app \.ufs-location-tag/);
-  assert.match(script, /@version\s+0\.1\.8/);
+  assert.match(script, /#ufs-app \.ufs-location-trigger/);
+  assert.match(script, /@version\s+0\.1\.9/);
 });
 
 
-test('LOCATION 设备标签最多直接展示两个，其余用 +N 且保留完整悬停文本', () => {
+test('LOCATION 连续磁盘自动压缩，非连续及缓存池完整保留', () => {
   const { api } = createAPI();
-  const cells = api.renderLocationTags({locations:['disk1','disk2','cache']});
-  assert.equal(cells.title, 'disk1, disk2, cache');
-  assert.deepEqual(cells.children.map(x => x.textContent), ['disk1','disk2','+1']);
-  assert.equal(cells.children[0].className, 'ufs-location-tag');
+  assert.equal(api.summarizeLocations({ locations:['disk4','disk2','disk3','cache'] }), 'disk2–disk4, cache');
+  assert.equal(api.summarizeLocations({ locations:['disk10','disk2','disk1','disk9','disk20','disk22'] }),
+    'disk1–disk2, disk9–disk10, disk20, disk22');
+  assert.equal(api.summarizeLocations({ locations:['disk1','disk1','cache','cache'] }), 'disk1, cache');
+  assert.equal(api.summarizeLocations({ locations:[] }), '—');
+  assert.equal(api.summarizeLocations({ locations:['disk01','disk1','pool ssd'] }), 'disk1, disk01, pool ssd');
+  assert.equal(api.summarizeLocations({
+    locations: Array.from({length:50},(_,i)=>'disk'+(i+1))
+  }), 'disk1–disk50');
+});
+
+test('LOCATION 行高不变，点击可显示完整设备列表，不再使用 +N', () => {
+  const { api } = createAPI();
+  const cell = api.renderLocationTags({locations:['disk1','disk2','disk3','cache']});
+  assert.equal(cell.children.length, 1);
+  const trigger = cell.children[0];
+  assert.equal(trigger.tagName, 'button');
+  assert.equal(trigger.textContent, 'disk1–disk3, cache');
+  assert.equal(trigger.title, 'disk1, disk2, disk3, cache');
+  assert.equal(trigger.attributes['aria-haspopup'], 'dialog');
+  assert.equal(trigger.attributes['aria-expanded'], 'false');
+  assert.equal(trigger.attributes['aria-label'], '查看全部 4 个存储位置');
+  assert.equal(typeof trigger.listeners.click, 'function');
+  assert.equal(typeof trigger.listeners.dblclick, 'function');
   const empty = api.renderLocationTags({locations:[]});
   assert.equal(empty.title, '存储位置未知');
-  assert.deepEqual(empty.children.map(x => x.textContent), ['—']);
+  assert.deepEqual(empty.children.map(x=>x.textContent), ['—']);
   const raw = '<img src=x onerror=alert(1)>';
   const safe = api.renderLocationTags({locations:[raw]});
-  // Device names are textContent, never interpolated into innerHTML.
-  assert.equal(safe.children[0].textContent, raw);
+  assert.equal(safe.children[0].textContent, raw); // textContent only, no innerHTML
+  assert.match(script, /names\.forEach\(\(name\) => items\.append\(element\('span', 'ufs-location-device', name\)\)\)/);
+  assert.match(script, /max-height:min\(300px,50vh\);overflow-y:auto/);
+  assert.doesNotMatch(script, /ufs-location-more|names\.slice\(0, 2\)/);
 });
 
 test('窄屏保留列表主要列，宽屏 6 列与网格显示规则不冲突', () => {
@@ -411,5 +436,20 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.1\.8/);
+  assert.match(script, /@version\s+0\.1\.9/);
+});
+
+
+test('详细信息切换后鼠标焦点不残留，键盘焦点仍保留', () => {
+  assert.match(script, /event\.detail > 0\) event\.currentTarget\.blur\(\)/);
+  assert.match(script, /#ufs-app button:focus:not\(:focus-visible\)\{outline:none!important;box-shadow:none!important\}/);
+  assert.match(script, /#ufs-app button:focus-visible/);
+  assert.match(script, /classList\.toggle\('ufs-view-active', state\.inspector\)/);
+});
+
+test('表头单元格与排序按钮垂直居中，不受 Unraid 全局 CSS 基线影响', () => {
+  assert.match(script, /#ufs-app \.ufs-head\{align-items:stretch;padding-top:0;padding-bottom:0\}/);
+  assert.match(script, /#ufs-app \.ufs-head>span\{display:flex;align-items:center;min-width:0;height:100%/);
+  assert.match(script, /#ufs-app \.ufs-head \.ufs-sort-button\{display:inline-flex;align-items:center;justify-content:flex-start;width:100%;height:100%/);
+  assert.match(script, /#ufs-app \.ufs-menu \.ufs-location-popover-close\{display:inline-flex/);
 });
