@@ -49,3 +49,5 @@ jobs:
           exit 1
       - name: 浏览器端到端测试
         run: node --test tests/e2e/*.spec.mjs
+      - name: v0.1.15 虚拟列表性能验证（临时）
+        run: node tests/perf/benchmark.mjs
