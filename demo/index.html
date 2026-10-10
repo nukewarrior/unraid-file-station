@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN" data-ufs-demo="true">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Unraid File Station · 交互演示</title>
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;background:#f1f1f1;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;color:#252525}
+    nav{background:#1f1f1f;color:white;padding:0 24px;display:flex;align-items:center;gap:26px;min-height:61px;flex-wrap:wrap}
+    nav span{font-size:13px;letter-spacing:2px;font-weight:700}
+    nav .active{border-bottom:3px solid white;padding:20px 0}
+    header{padding:20px 25px 7px;font-size:15px;color:#4b4b4b;font-weight:600;letter-spacing:2px}
+    #ufs-demo-mount{margin:0 26px}
+    .notice{margin:16px 26px;color:#69717c;font-size:13px}
+    @media(max-width:650px){nav{padding:8px 12px;gap:12px;min-height:45px}nav span{font-size:10px;letter-spacing:0}nav .active{padding:5px 0}#ufs-demo-mount{margin:0 10px}header{padding:12px}}
+  </style>
+</head>
+<body>
+<nav aria-label="模拟 Unraid 导航">
+  <span>DASHBOARD</span><span>MAIN</span><span class="active">SHARES</span><span>SETTINGS</span>
+  <span>PLUGINS</span><span>DOCKER</span><span>APPS</span><span>STATS</span><span>TOOLS</span>
+</nav>
+<header>SHARES / FILE STATION</header>
+<div id="ufs-demo-mount"></div>
+<p class="notice">这是本地演示模式：目录数据为模拟数据，所有写入和下载均不会触及 NAS。Unraid 顶部导航在演示中仅供展示。</p>
+<script>
+  window.__UFS_DEMO__ = {
+    '/mnt/user': [
+      {name:'appdata',folder:true}, {name:'backup',folder:true},
+      {name:'domains',folder:true}, {name:'downloads',folder:true},
+      {name:'file',folder:true}, {name:'isos',folder:true},
+      {name:'media',folder:true}, {name:'system',folder:true}
+    ],
+    '/mnt/user/downloads': [
+      {name:'Movies',folder:true,mtime:1791435600},
+      {name:'Photos',folder:true,mtime:1791349200},
+      {name:'Archives',folder:true,mtime:1791262800},
+      {name:'测试文档.txt',folder:false,size:85312,mtime:1791435600,owner:'nobody',permissions:'-rw-rw-rw-'},
+      {name:'example.zip',folder:false,size:1315333734,mtime:1791435600,owner:'nobody',permissions:'-rw-rw-rw-'}
+    ],
+    '/mnt/user/downloads/Movies': [
+      {name:'Movie 01.mkv',folder:false,size:4774887936,mtime:1791262800},
+      {name:'Movie 02.mp4',folder:false,size:2474887936,mtime:1791349200},
+      {name:'Subtitles',folder:true}
+    ],
+    '/mnt/user/downloads/Photos': [
+      {name:'旅行照片 001.jpg',folder:false,size:5273920,mtime:1791262800},
+      {name:'旅行照片 002.jpg',folder:false,size:4314289,mtime:1791262800}
+    ],
+    '/mnt/user/media': [
+      {name:'Movies',folder:true}, {name:'Music',folder:true}, {name:'TV Shows',folder:true}
+    ],
+    '/mnt/user/file': [
+      {name:'Projects',folder:true}, {name:'README.pdf',folder:false,size:123456,mtime:1791262800}
+    ],
+    '/mnt/user/backup': [{name:'2026-10',folder:true}],
+    '/mnt/user/isos': [{name:'ubuntu-24.04.iso',folder:false,size:5717462374}],
+    '/mnt/user/appdata': [{name:'docker',folder:true}, {name:'config',folder:true}],
+    '/mnt/user/domains': [{name:'ubuntu-vm',folder:true}],
+    '/mnt/user/system': [{name:'docker',folder:true},{name:'libvirt',folder:true}]
+  };
+</script>
+<script src="../src/unraid-file-station.user.js"></script>
+</body>
+</html>
