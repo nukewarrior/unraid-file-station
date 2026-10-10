@@ -592,6 +592,10 @@
       if (setupBrowser() || ++attempts >= 25) clearInterval(timer);
     }, 200);
   }
+  // Explicit opt-in hook for pure-function tests; never enabled on production WebGUI.
+  if (isDemo && window.__UFS_TEST_MODE__ === true) {
+    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, listDirectory };
+  }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();
 })();
