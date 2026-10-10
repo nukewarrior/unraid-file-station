@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.2
+// @version      0.2.2.1
 // @description  DSM-inspired File Station with native mkdir and rename for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -175,6 +175,7 @@
   const RENAME_ENABLED = true;
   const NATIVE_CONTROL_URL = '/webGui/include/Control.php';
   const NATIVE_TASK_EVENTS = '/sub/filemanager';
+  const NATIVE_CHANGE_EVENTS = '/sub/filemonitor';
 
   function safeWriteName(name) {
     // Control.php performs an additional rawurldecode; reject '%' until its
@@ -352,11 +353,17 @@
   }
   function waitNative(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
   let nativeWriteBusy = false;
+  let ownFileChangeQuietUntil = 0;
   async function withNativeWriteLock(operation) {
     if (nativeWriteBusy) throw new Error('已有文件操作正在执行，请稍后重试');
     nativeWriteBusy = true;
     try { return await operation(); }
-    finally { nativeWriteBusy = false; }
+    finally {
+      // filemonitor is published at one-second intervals, even after the
+      // Control.php reply. Avoid treating trailing own events as external.
+      ownFileChangeQuietUntil = Date.now() + 3000;
+      nativeWriteBusy = false;
+    }
   }
   async function createNativeFolder(plan, progress = () => {}) {
     return withNativeWriteLock(async () => {
@@ -1934,7 +1941,7 @@
       ['重置文件列表列宽', resetColumnWidths],
       ['返回原生文件管理器（其他写入操作）', nativeMode],
       [state.theme === 'unraid' ? '切换至 DSM 经典主题' : '切换至 Unraid 融合主题', toggleTheme],
-      ['关于 File Station v0.2.2', () => notify('File Station v0.2.2 · Unraid 7.2.2 · 新建文件夹与重命名已开放')]
+      ['关于 File Station v0.2.2.1', () => notify('File Station v0.2.2.1 · Unraid 7.2.2 · 已修复文件操作整页刷新')]
     ];
     actions.forEach(([label, fn]) => {
       const button = element('button', '', label);
@@ -2255,6 +2262,8 @@
       native.parentNode.insertBefore(root, native);
     }
     startLayoutSync();
+    // Native filemonitor.start() is delayed; take ownership before it fires.
+    if (!isDemo) takeOverNativeFileMonitor();
     // Resolve the root before creating a tab: do not briefly render the
     // "all shares" listing or put the virtual group into tab history.
     void initializeBrowser(start);
@@ -2297,6 +2306,90 @@
       }
     }
   }
+
+  // Browse.page has its own subscriber. It treats a running native file task
+  // as an *external* change whenever dfm.running=false, and calls global
+  // refresh() -> location.replace(location.href). That reloads File Station.
+  // Take over only this Browse instance while the enhanced UI is mounted.
+  // In particular, Browse.page schedules filemonitor.start() three seconds
+  // after page load: stop() alone is insufficient without gating start().
+  function takeOverNativeFileMonitor() {
+    if (isDemo || !browsePage || !app?.isConnected || destroyed ||
+        typeof window.NchanSubscriber !== 'function') return false;
+    const native = window.filemonitor;
+    if (!native || typeof native.start !== 'function' || typeof native.stop !== 'function') {
+      return false;
+    }
+    const nativeStart = native.start;
+    // Guard against an earlier timer firing after the script takes over.
+    try {
+      native.start = function ufsPausedNativeFileMonitorStart() {};
+      native.stop();
+    } catch (_) {
+      native.start = nativeStart;
+      return false;
+    }
+    if (window.timers?.filemonitor) {
+      clearTimeout(window.timers.filemonitor);
+      window.timers.filemonitor = null;
+    }
+    let ownMonitor;
+    let alive = true;
+    let sawExternalTask = false;
+    let pendingTimer = null;
+    const clearPending = () => {
+      if (pendingTimer !== null) {
+        clearTimeout(pendingTimer);
+        pendingTimer = null;
+      }
+    };
+    const localWriteInProgress = () => nativeWriteBusy || Date.now() < ownFileChangeQuietUntil;
+    const scheduleLocalRefresh = () => {
+      clearPending();
+      pendingTimer = setTimeout(() => {
+        pendingTimer = null;
+        if (!alive || destroyed || !app?.isConnected) return;
+        if (localWriteInProgress()) return;
+        // The native full-page refresh would discard all tabs and selection.
+        // Only refresh the active directory and its tree entries.
+        if (activeTab() && !state.initializing && !state.busy) void refreshDirectory();
+      }, 350);
+    };
+    try {
+      ownMonitor = new window.NchanSubscriber(NATIVE_CHANGE_EVENTS, { subscriber: 'websocket' });
+      ownMonitor.on('message', raw => {
+        if (!alive || destroyed || !app?.isConnected) return;
+        const value = String(raw).trim();
+        if (value === '1') {
+          if (localWriteInProgress()) {
+            sawExternalTask = false;
+            clearPending();
+          } else {
+            sawExternalTask = true;
+          }
+        } else if (value === '0' && sawExternalTask) {
+          sawExternalTask = false;
+          if (!localWriteInProgress()) scheduleLocalRefresh();
+        }
+      });
+      ownMonitor.start();
+    } catch (_) {
+      alive = false;
+      clearPending();
+      try { ownMonitor?.stop(); } catch (_) {}
+      native.start = nativeStart;
+      try { native.start(); } catch (_) {}
+      return false;
+    }
+    onCleanup(() => {
+      alive = false;
+      clearPending();
+      try { ownMonitor.stop(); } catch (_) {}
+      native.start = nativeStart;
+    });
+    return true;
+  }
+
   function begin() {
     if (sharesPage && !isDemo) {
       addSharesEntry();
@@ -2316,7 +2409,7 @@
   }
   // Explicit opt-in hook for pure-function tests; never enabled on production WebGUI.
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
-    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, availableHeight, visibleEntries, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
+    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, takeOverNativeFileMonitor, availableHeight, visibleEntries, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();
