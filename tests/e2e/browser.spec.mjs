@@ -76,17 +76,62 @@ async function pageFor(t, options = {}) {
   const context = await browser.newContext({viewport: {width: options.width || 1440, height: 900}});
   t.after(()=>context.close());
   await context.addInitScript({content:options.noCsrf ? 'delete window.csrf_token;' : "window.csrf_token = 'test-csrf';"});
+  if(options.simulateNativeMonitor) {
+    await context.addInitScript({content: String.raw`
+      (() => {
+        const subscribers = [];
+        class MockNchanSubscriber {
+          constructor(url) {
+            this.url = url;
+            this.active = false;
+            this.startCalls = 0;
+            this.stopCalls = 0;
+            this.handlers = [];
+            subscribers.push(this);
+          }
+          on(type, callback) {
+            if (type === 'message') this.handlers.push(callback);
+          }
+          start() { this.startCalls++; this.active = true; }
+          stop() { this.stopCalls++; this.active = false; }
+        }
+        window.NchanSubscriber = MockNchanSubscriber;
+        window.timers = {filemonitor: null};
+        window.dfm = {running: false};
+        window.filemonitor = new MockNchanSubscriber('/sub/filemonitor');
+        window.filemonitor.on('message', state => {
+          if (state == 1 && !window.dfm.running && !window.timers.filemonitor) {
+            window.timers.filemonitor = setTimeout(() => {
+              if (window.dfm.running) clearTimeout(window.timers.filemonitor);
+              else location.replace(location.href);
+            }, 1500);
+          }
+        });
+        setTimeout(() => window.filemonitor.start(), 3000);
+        window.__ufsMonitorTest = {
+          subscribers,
+          emit(value) {
+            subscribers.filter(s => s.url === '/sub/filemonitor' && s.active)
+              .forEach(s => s.handlers.forEach(fn => fn(value)));
+          }
+        };
+      })();
+    `});
+  }
+
   const page = await context.newPage();
   const errors = [];
   const nativePosts = [];
   const created = [];
   const renamed = [];
+  const browseRequests = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.route('**/Shares/Browse?*',route=>route.fulfill({status:200,contentType:'text/html',body:html}));
   let rootFailures = options.rootFailures || 0;
   await page.route('**/webGui/include/Browse.php?*', async route => {
     const query = new URL(route.request().url()).searchParams;
     const path = decodeURIComponent(query.get('dir') || '');
+    browseRequests.push(path);
     if (path === '/mnt/user' && rootFailures-- > 0) {
       await route.fulfill({status:500,body:'temporary root error'}).catch(()=>{});
       return;
@@ -139,7 +184,7 @@ async function pageFor(t, options = {}) {
     await route.fulfill({status:400,body:'Unexpected native operation'});
   });
   await page.goto(base + '/Shares/Browse?dir=%2Fmnt%2Fuser');
-  return {page,errors,nativePosts,created,renamed};
+  return {page,errors,nativePosts,created,renamed,browseRequests};
 }
 
 const currentLabel = page => page.locator('.ufs-tab.ufs-active .ufs-tab-name');
@@ -545,5 +590,64 @@ test('v0.2.2 请求已接受但目标没出现时不误报成功、不自动重�
   await page.locator('.ufs-rename-feedback',{hasText:'结果不确定'}).waitFor();
   assert.equal(await page.locator('.ufs-rename-submit').isDisabled(),true);
   assert.equal(nativePosts.filter(x=>x.mode==='file').length,1);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+
+test('v0.2.2.1 增强模式暂停原生 filemonitor 延迟启动，外部变更只局部刷新',async t=>{
+  const {page,errors,browseRequests}=await pageFor(t,{simulateNativeMonitor:true});
+  await page.locator('.ufs-entry').first().waitFor();
+  let loads=0;
+  page.on('framenavigated',frame=>{if(frame===page.mainFrame()) loads++;});
+  // Browse.page starts its native filemonitor three seconds after load.
+  await page.waitForTimeout(3350);
+  const states=await page.evaluate(()=>{
+    const {subscribers}=window.__ufsMonitorTest;
+    const native=window.filemonitor;
+    return {
+      nativeStartCalls:native.startCalls,
+      nativeStopCalls:native.stopCalls,
+      nativeActive:native.active,
+      ownedActive:subscribers.filter(s=>s!==native && s.url==='/sub/filemonitor' && s.active).length
+    };
+  });
+  assert.equal(states.nativeStartCalls,0,JSON.stringify(states));
+  assert.ok(states.nativeStopCalls>=1,JSON.stringify(states));
+  assert.equal(states.nativeActive,false);
+  assert.equal(states.ownedActive,1);
+  const before=browseRequests.length;
+  await page.evaluate(()=>{
+    window.__ufsMonitorTest.emit('1');
+    window.__ufsMonitorTest.emit('0');
+  });
+  await page.waitForFunction(()=>document.querySelector('.ufs-count')?.textContent?.includes('个项目'));
+  await page.waitForTimeout(1900);
+  assert.ok(browseRequests.length>before,'外部操作后应局部刷新目录');
+  assert.equal(loads,0,'增强模式禁止原生 filemonitor 触发整页导航');
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.2.1 自身重命名与新建操作的 filemonitor 通知不会整页刷新',async t=>{
+  const {page,errors,nativePosts,browseRequests}=await pageFor(t,{simulateNativeMonitor:true});
+  let loads=0;
+  page.on('framenavigated',frame=>{if(frame===page.mainFrame()) loads++;});
+  await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).first().click();
+  await page.keyboard.press('F2');
+  await page.locator('.ufs-rename-input').fill('rename-no-reload.txt');
+  await page.locator('.ufs-rename-submit').click();
+  await page.evaluate(()=>window.__ufsMonitorTest.emit('1'));
+  await page.locator('.ufs-entry').filter({hasText:'rename-no-reload.txt'}).first().waitFor();
+  await page.evaluate(()=>window.__ufsMonitorTest.emit('0'));
+  await page.locator('.ufs-create-trigger').click();
+  await page.getByRole('menuitem',{name:'新建文件夹'}).click();
+  await page.locator('.ufs-create-input').fill('create-no-reload');
+  await page.locator('.ufs-create-submit').click();
+  await page.evaluate(()=>window.__ufsMonitorTest.emit('1'));
+  await page.locator('.ufs-entry').filter({hasText:'create-no-reload'}).first().waitFor();
+  await page.evaluate(()=>window.__ufsMonitorTest.emit('0'));
+  await page.waitForTimeout(2000);
+  assert.equal(loads,0,'操作过程中不应整页重载');
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,2);
+  assert.ok(browseRequests.length>=5);
   assert.equal(errors.length,0,errors.join('\n'));
 });
