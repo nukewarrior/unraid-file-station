@@ -82,6 +82,61 @@
     return parseBrowse(html, path);
   }
 
+
+  // Small local SVG set: no external fonts, CDNs or global icon CSS.
+  const ICONS = {
+    folder:['M3 7a2 2 0 0 1 2-2h4l2 2h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'],
+    'folder-open':['M3 7a2 2 0 0 1 2-2h4l2 2h9a2 2 0 0 1 2 2','M3 11h17a2 2 0 0 1 1.9 2.6L20 19H4a2 2 0 0 1-1.9-2.6z'],
+    file:['M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z','M14 2v6h6'],
+    archive:['M4 4h16v16H4z','M4 9h16','M12 9v8','M10 13h4'],
+    image:['M3 3h18v18H3z','M8 8h.01','m3 13 5-5 5 5'],
+    video:['M3 5h18v14H3z','m10 4 5 3-5 3z'],
+    disc:['M4 5h16v14H4z','M7 9h10','M7 13h10'],
+    drive:['M5 5h14l3 11v3H2v-3z','M2 16h20','M17 18h.01'],
+    'chevron-right':['m9 18 6-6-6-6'],
+    'chevron-down':['m6 9 6 6 6-6'],
+    'chevron-left':['m15 18-6-6 6-6'],
+    'arrow-left':['M19 12H5','m12 19-7-7 7-7'],
+    'arrow-right':['M5 12h14','m12 5 7 7-7 7'],
+    'arrow-up':['M12 19V5','m5 12 7-7 7 7'],
+    refresh:['M20 7v5h-5','M4 17v-5h5','M5.6 9A7 7 0 0 1 18 6l2 1','M18.4 15A7 7 0 0 1 6 18l-2-1'],
+    theme:['M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13z'],
+    list:['M8 6h13','M8 12h13','M8 18h13','M3 6h.01','M3 12h.01','M3 18h.01'],
+    grid:['M3 3h7v7H3z','M14 3h7v7h-7z','M3 14h7v7H3z','M14 14h7v7h-7z'],
+    panel:['M3 3h18v18H3z','M15 3v18'],
+    plus:['M12 5v14','M5 12h14'],
+    upload:['M12 16V3','m5 10 7-7 7 7','M4 17v3h16v-3'],
+    copy:['M8 4h11a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z','M4 16H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v1'],
+    move:['M4 7h16','m15 3 5 4-5 4','M20 17H4','m9 13-5 4 5 4'],
+    trash:['M3 6h18','M8 6V4h8v2','M5 6l1 15h12l1-15','M10 10v7','M14 10v7'],
+    search:['M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z','m17 17 4 4'],
+    close:['M6 6l12 12','M18 6 6 18'],
+    download:['M12 3v13','m5 10 7 7 7-7','M4 18v3h16v-3'],
+    info:['M12 17v-5','M12 8h.01','M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z'],
+    'external-link':['M14 3h7v7','M21 3l-9 9','M20 13v7H4V4h7']
+  };
+  function icon(name, className = '') {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.classList.add('ufs-svg');
+    if (className) svg.classList.add(className);
+    (ICONS[name] || ICONS.file).forEach((d) => {
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', d);
+      svg.append(path);
+    });
+    return svg;
+  }
+  function fileIcon(entry) {
+    if (entry.folder) return icon('folder', 'ufs-folder-icon');
+    const ext = entry.name.split('.').pop().toLowerCase();
+    const kind = ['jpg','jpeg','png','webp','gif','svg','heic','raw'].includes(ext) ? 'image' :
+      ['mp4','mov','mkv','webm','avi'].includes(ext) ? 'video' :
+      ['zip','7z','rar','tar','gz'].includes(ext) ? 'archive' : 'file';
+    return icon(kind, 'ufs-file-icon');
+  }
+
   const css = [
     '#ufs-app{--ufs-accent:#eb7825;--ufs-accent-soft:#fff1e4;--ufs-bg:#fff;--ufs-panel:#f7f8fa;--ufs-text:#252a30;--ufs-muted:#727a85;--ufs-border:#e1e5eb;--ufs-hover:#f2f5f8;--ufs-sel:#fff0e2;--ufs-sidebar-width:245px;color:var(--ufs-text);background:var(--ufs-bg);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;border:1px solid var(--ufs-border);border-radius:7px;overflow:hidden;display:flex;flex-direction:column;height:var(--ufs-available-height,65vh);min-height:260px;margin:0 0 8px;line-height:1.45;font-size:13px;position:relative}',
     '#ufs-app.ufs-dsm{--ufs-accent:#318bd2;--ufs-accent-soft:#e8f3ff;--ufs-panel:#f4f7fa;--ufs-hover:#edf4fc;--ufs-sel:#e7f2ff}',
@@ -121,7 +176,8 @@
     expanded: new Set([PREFIX]), selection: new Set(), lastIndex: -1,
     view: localStorage.getItem(STORE + 'view') || 'list',
     theme: localStorage.getItem(STORE + 'theme') || 'unraid',
-    inspector: false, filter: '', busy: false, requestId: 0
+    inspector: false, filter: '', busy: false, requestId: 0,
+    sortKey: 'name', sortDirection: 1
   };
   let app;
   let nativeElements = [];
@@ -245,16 +301,19 @@
     state.tabs.forEach((tab) => {
       const node = element('button', 'ufs-tab' + (tab.id === state.activeId ? ' ufs-active' : ''));
       node.title = tab.path;
-      node.append(element('span', '', '📁'));
+      node.append(icon('folder', 'ufs-folder-icon'));
       node.append(element('span', 'ufs-tab-name', tab.path === PREFIX ? '共享文件夹' : tab.path.split('/').pop()));
-      const close = element('span', 'ufs-tab-close', '×');
+      const close = element('span', 'ufs-tab-close');
+      close.append(icon('close'));
       close.title = '关闭标签';
       close.addEventListener('click', (event) => { event.stopPropagation(); closeTab(tab.id); });
       node.append(close);
       node.addEventListener('click', () => { if (state.activeId !== tab.id) switchTab(tab.id); });
       target.append(node);
     });
-    const add = element('button', 'ufs-ico', '+');
+    const add = element('button', 'ufs-ico');
+    add.append(icon('plus'));
+    add.setAttribute('aria-label', '新建标签页');
     add.title = '新建标签页';
     add.addEventListener('click', () => addTab(PREFIX));
     target.append(add);
@@ -267,14 +326,19 @@
       const wrapper = element('div', 'ufs-tree-node');
       const row = element('div', 'ufs-tree-row' + (currentPath() === path ? ' ufs-current' : ''));
       row.style.paddingLeft = (6 + level * 14) + 'px';
-      const toggler = element('button', 'ufs-tree-toggle', state.expanded.has(path) ? '▾' : '▸');
+      const children = state.tree.get(path);
+      const hasKnownChildren = children && children.length > 0;
+      const toggler = element('button', 'ufs-tree-toggle');
+      toggler.append(icon(state.expanded.has(path) ? 'chevron-down' : 'chevron-right'));
+      if (children && !hasKnownChildren) toggler.style.visibility = 'hidden';
       toggler.title = '展开或折叠';
       toggler.addEventListener('click', async () => {
         if (state.expanded.has(path)) state.expanded.delete(path);
         else { state.expanded.add(path); await loadTree(path); }
         renderTree();
       });
-      row.append(toggler, element('span', 'ufs-folder-icon', '📁'));
+      row.append(toggler, icon(state.expanded.has(path) ? 'folder-open' : 'folder', 'ufs-folder-icon'));
+      if (path === PREFIX) row.lastChild.replaceWith(icon('drive', 'ufs-file-icon'));
       row.append(element('span', 'ufs-tree-name', path === PREFIX ? '所有共享文件夹' : path.split('/').pop()));
       row.title = path;
       row.addEventListener('click', (event) => { if (event.target === toggler) return; navigate(path); });
@@ -293,7 +357,7 @@
     const paths = [PREFIX];
     for (let i = 3; i <= parts.length; i++) paths.push('/' + parts.slice(0, i).join('/'));
     [...new Set(paths)].forEach((path, index) => {
-      if (index) address.append(element('span', 'ufs-muted', '›'));
+      if (index) address.append(icon('chevron-right', 'ufs-muted'));
       const crumb = element('button', 'ufs-crumb', path === PREFIX ? '共享文件夹' : path.split('/').pop());
       crumb.title = path;
       crumb.addEventListener('click', () => navigate(path));
@@ -358,8 +422,8 @@
     const list = $('.ufs-list', app);
     list.replaceChildren();
     list.classList.toggle('ufs-grid', state.view === 'grid');
-    $('.ufs-list-button', app).classList.toggle('ufs-primary', state.view === 'list');
-    $('.ufs-grid-button', app).classList.toggle('ufs-primary', state.view === 'grid');
+    $('.ufs-list-button', app).classList.toggle('ufs-view-active', state.view === 'list');
+    $('.ufs-grid-button', app).classList.toggle('ufs-view-active', state.view === 'grid');
     if (state.view === 'list') {
       const head = element('div', 'ufs-head');
       ['名称', '大小', '修改日期', '权限'].forEach((name, index) =>
@@ -377,8 +441,8 @@
         row.tabIndex = 0;
         row.title = entry.path;
         const name = element('div', 'ufs-file-name');
-        name.append(element('span', entry.folder ? 'ufs-folder-icon' : 'ufs-file-icon', entry.folder ? '📁' : '📄'));
-        name.append(element('span', '', entry.name));
+        name.append(fileIcon(entry));
+        name.append(element('span', 'ufs-filename', entry.name));
         row.append(name,
           element('span', 'ufs-extra', formatSize(entry.size)),
           element('span', 'ufs-extra ufs-date', formattedDate(entry.mtime)),
@@ -450,32 +514,42 @@
     app.className = state.theme === 'dsm' ? 'ufs-dsm' : '';
     app.setAttribute('aria-label', 'Unraid File Station');
     app.innerHTML = [
-      '<div class="ufs-top"><span class="ufs-mark">▣</span><span class="ufs-heading">File Station</span>',
-      '<span class="ufs-muted">Unraid 7.2.2 · 预览版</span><span class="ufs-spacer"></span>',
-      '<button class="ufs-ico ufs-theme">◐ 主题</button><button class="ufs-ico ufs-refresh">↻ 刷新</button>',
-      '<button class="ufs-ico ufs-native">返回原生</button></div>',
+      '<div class="ufs-top"><span data-ufs-icon="folder-open" class="ufs-mark"></span><span class="ufs-heading">File Station</span>',
+      '<span class="ufs-version">Unraid 7.2.2 · 只读预览</span><span class="ufs-spacer"></span>',
+      '<button type="button" class="ufs-ico ufs-theme" title="切换主题"><span data-ufs-icon="theme"></span><span>主题</span></button>',
+      '<button type="button" class="ufs-ico ufs-refresh" title="刷新目录"><span data-ufs-icon="refresh"></span><span>刷新</span></button>',
+      '<button type="button" class="ufs-ico ufs-native"><span data-ufs-icon="external-link"></span><span>返回原生</span></button></div>',
       '<div class="ufs-tabs"></div>',
-      '<div class="ufs-toolbar"><button class="ufs-ico ufs-primary ufs-write">＋ 新建</button>',
-      '<button class="ufs-ico ufs-write">↑ 上传</button><button class="ufs-ico ufs-write">复制</button>',
-      '<button class="ufs-ico ufs-write">移动</button><button class="ufs-ico ufs-write">删除</button>',
-      '<span class="ufs-spacer"></span><button class="ufs-ico ufs-list-button" title="列表视图">☷</button>',
-      '<button class="ufs-ico ufs-grid-button" title="网格视图">▦</button>',
-      '<button class="ufs-ico ufs-details-button" title="详细信息">◫</button></div>',
-      '<div class="ufs-navigation"><button class="ufs-ico ufs-back" title="后退">←</button>',
-      '<button class="ufs-ico ufs-next" title="前进">→</button>',
-      '<button class="ufs-ico ufs-up" title="上一级">↑</button>',
-      '<div class="ufs-address"></div><input class="ufs-search" type="search" placeholder="筛选当前文件夹" aria-label="筛选文件"></div>',
+      '<div class="ufs-toolbar" role="toolbar" aria-label="文件工具栏">',
+      '<button type="button" class="ufs-ico ufs-write" disabled title="只读预览版不支持新建"><span data-ufs-icon="plus"></span>新建</button>',
+      '<button type="button" class="ufs-ico ufs-write" disabled title="只读预览版不支持上传"><span data-ufs-icon="upload"></span>上传</button>',
+      '<span class="ufs-separator"></span>',
+      '<button type="button" class="ufs-ico ufs-write" disabled title="只读预览版不支持复制"><span data-ufs-icon="copy"></span>复制</button>',
+      '<button type="button" class="ufs-ico ufs-write" disabled title="只读预览版不支持移动"><span data-ufs-icon="move"></span>移动</button>',
+      '<button type="button" class="ufs-ico ufs-write" disabled title="只读预览版不支持删除"><span data-ufs-icon="trash"></span>删除</button>',
+      '<span class="ufs-spacer"></span>',
+      '<button type="button" class="ufs-ico ufs-list-button" title="列表视图" aria-label="列表视图"><span data-ufs-icon="list"></span></button>',
+      '<button type="button" class="ufs-ico ufs-grid-button" title="网格视图" aria-label="网格视图"><span data-ufs-icon="grid"></span></button>',
+      '<button type="button" class="ufs-ico ufs-details-button" title="显示或隐藏详细信息" aria-label="显示或隐藏详细信息"><span data-ufs-icon="panel"></span></button></div>',
+      '<div class="ufs-navigation"><button type="button" class="ufs-ico ufs-back" title="后退" aria-label="后退"><span data-ufs-icon="arrow-left"></span></button>',
+      '<button type="button" class="ufs-ico ufs-next" title="前进" aria-label="前进"><span data-ufs-icon="arrow-right"></span></button>',
+      '<button type="button" class="ufs-ico ufs-up" title="上一级" aria-label="上一级"><span data-ufs-icon="arrow-up"></span></button>',
+      '<div class="ufs-address"></div><input class="ufs-search" type="search" placeholder="筛选当前文件夹" aria-label="筛选当前文件夹"></div>',
       '<div class="ufs-workspace"><aside class="ufs-sidebar"><div class="ufs-tree"></div></aside>',
+      '<div class="ufs-resizer" role="separator" aria-label="调整目录树宽度" aria-orientation="vertical"></div>',
       '<main class="ufs-main"><div class="ufs-list" tabindex="0"></div></main>',
       '<aside class="ufs-inspector" hidden></aside></div>',
       '<div class="ufs-status"><span class="ufs-count">准备就绪</span>',
-      '<span>只读预览 · 写入操作仍由原生管理器处理</span></div>'
+      '<span>只读预览 · 写入操作请使用原生文件管理器</span></div>'
     ].join('');
+    $$('[data-ufs-icon]', app).forEach((placeholder) => {
+      placeholder.replaceWith(icon(placeholder.dataset.ufsIcon,
+        placeholder.classList.contains('ufs-mark') ? 'ufs-mark' : ''));
+    });
     $('.ufs-refresh', app).addEventListener('click', refreshDirectory);
     $('.ufs-theme', app).addEventListener('click', toggleTheme);
     $('.ufs-native', app).addEventListener('click', nativeMode);
-    $$('.ufs-write', app).forEach((button) =>
-      button.addEventListener('click', () => notify('当前为只读预览版。请点击右上角「返回原生」执行写入操作。')));
+    // Writes remain disabled in v0.1; native Unraid is the only write surface.
     $('.ufs-back', app).addEventListener('click', () => stepHistory(-1));
     $('.ufs-next', app).addEventListener('click', () => stepHistory(1));
     $('.ufs-up', app).addEventListener('click', () => navigate(currentPath().split('/').slice(0, -1).join('/') || PREFIX));
