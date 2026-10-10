@@ -393,6 +393,8 @@
       crumb.addEventListener('click', () => navigate(path));
       address.append(crumb);
     });
+    // Long paths should keep the current (right-most) folder visible.
+    address.scrollLeft = address.scrollWidth;
     const tab = activeTab();
     $('.ufs-back', app).disabled = !tab || tab.cursor <= 0;
     $('.ufs-next', app).disabled = !tab || tab.cursor >= tab.history.length - 1;
@@ -711,7 +713,8 @@
       }
     });
     document.addEventListener('pointerdown', (event) => {
-      if (currentMenu && !currentMenu.contains(event.target)) closeMenu();
+      const more = $('.ufs-more', app);
+      if (currentMenu && !currentMenu.contains(event.target) && !(more && more.contains(event.target))) closeMenu();
     });
     document.addEventListener('keydown', (event) => {
       if (!app.isConnected || !app.contains(event.target)) return;
