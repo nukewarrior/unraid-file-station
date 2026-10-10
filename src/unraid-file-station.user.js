@@ -464,6 +464,8 @@
       !path.slice(PREFIX.length + 1).includes('/');
   }
   async function addDefaultTab() {
+    // A previous root read failure must not permanently cache an empty tree.
+    if (state.rootLoadError) state.tree.delete(PREFIX);
     if (!state.tree.has(PREFIX)) await loadTree(PREFIX);
     const home = defaultSharePath();
     if (!home) return notify(state.rootLoadError ? '无法读取共享文件夹，请稍后重试' : '没有可访问的共享文件夹');
@@ -577,9 +579,10 @@
   }
   async function refreshDirectory() {
     if (!activeTab()) {
-      state.busy = false;
-      renderFiles(state.rootLoadError || '没有可访问的共享文件夹');
-      renderNavigation();
+      // Empty/error state has no working directory; Refresh retries discovery.
+      state.tree.delete(PREFIX);
+      state.rootLoadError = '';
+      await initializeBrowser(PREFIX);
       return;
     }
     const path = currentPath();
@@ -622,6 +625,7 @@
       target.append(node);
     });
     const add = element('button', 'ufs-ico');
+    add.disabled = state.busy && !activeTab();
     add.append(icon('plus'));
     add.setAttribute('aria-label', '新建标签页');
     add.title = '新建标签页';
