@@ -522,6 +522,8 @@
   function closeMenu() {
     if (currentMenu) currentMenu.remove();
     currentMenu = null;
+    const trigger = app && $('.ufs-more', app);
+    if (trigger) trigger.setAttribute('aria-expanded', 'false');
   }
   function showMenu(x, y, entry) {
     closeMenu();
@@ -544,6 +546,34 @@
     menu.style.left = Math.max(8, Math.min(x, innerWidth - menu.offsetWidth - 8)) + 'px';
     menu.style.top = Math.max(8, Math.min(y, innerHeight - menu.offsetHeight - 8)) + 'px';
     currentMenu = menu;
+  }
+  function showAppMenu() {
+    const trigger = $('.ufs-more', app);
+    if (currentMenu && trigger.getAttribute('aria-expanded') === 'true') {
+      closeMenu();
+      return;
+    }
+    closeMenu();
+    const menu = element('div', 'ufs-menu');
+    menu.setAttribute('role', 'menu');
+    const actions = [
+      ['返回原生文件管理器（写入操作）', nativeMode],
+      [state.theme === 'unraid' ? '切换至 DSM 经典主题' : '切换至 Unraid 融合主题', toggleTheme],
+      ['关于 File Station v0.1.4', () => notify('File Station v0.1.4 · Unraid 7.2.2 · 只读预览')]
+    ];
+    actions.forEach(([label, fn]) => {
+      const button = element('button', '', label);
+      button.type = 'button';
+      button.setAttribute('role', 'menuitem');
+      button.addEventListener('click', () => { closeMenu(); fn(); });
+      menu.append(button);
+    });
+    const rect = trigger.getBoundingClientRect();
+    app.append(menu);
+    menu.style.left = Math.max(8, Math.min(rect.right - menu.offsetWidth, innerWidth - menu.offsetWidth - 8)) + 'px';
+    menu.style.top = Math.max(8, Math.min(rect.bottom + 5, innerHeight - menu.offsetHeight - 8)) + 'px';
+    currentMenu = menu;
+    trigger.setAttribute('aria-expanded', 'true');
   }
   function renderHeaderMarkup() {
     return [
