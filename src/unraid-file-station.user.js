@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.1.13
+// @version      0.1.14
 // @description  DSM-inspired read-only file browser inside Unraid WebGUI 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -440,12 +440,31 @@
     view: localStorage.getItem(STORE + 'view') || 'list',
     theme: localStorage.getItem(STORE + 'theme') || 'unraid',
     inspector: false, filter: '', searchOpen: false, busy: false, requestId: 0,
+    initializing: false, initGeneration: 0, directoryController: null,
     sortKey: 'name', sortDirection: 1,
     columnWidths: readColumnWidths(localStorage.getItem(STORE + 'columns'))
   };
   let app;
   let nativeElements = [];
   let currentMenu = null;
+  const treeLoads = new Map();
+  const cleanupTasks = [];
+  const lifecycle = new AbortController();
+  let destroyed = false;
+  function onCleanup(fn) { cleanupTasks.push(fn); }
+  function cleanupApp() {
+    if (destroyed) return;
+    destroyed = true;
+    ++state.initGeneration;
+    ++state.requestId;
+    lifecycle.abort();
+    state.directoryController?.abort();
+    for (const task of cleanupTasks.splice(0)) {
+      try { task(); } catch (_) { /* Cleanup must never interrupt page unload. */ }
+    }
+    document.documentElement.classList.remove('ufs-active-page');
+  }
+  window.addEventListener('pagehide', (event) => { if (!event.persisted) cleanupApp(); });
   function activeTab() { return state.tabs.find((tab) => tab.id === state.activeId); }
   function currentPath() { return activeTab() ? activeTab().path : PREFIX; }
   // A share group is not a browsable file location. Preserve the server's order:
@@ -505,14 +524,18 @@
     }
   }
   function writeUrl(path, replace) {
-    if (isDemo) return;
+    if (isDemo || destroyed) return;
     const url = new URL(location.href);
     url.searchParams.set('dir', path);
-    history[replace ? 'replaceState' : 'pushState']({ ufs: true }, '', url);
+    const tab = activeTab();
+    // Snapshot tab cursor in the actual browser entry. This avoids generating
+    // new browser entries while traversing a tab's internal history.
+    const stateValue = { ufs: true, tabId: tab?.id ?? null, path };
+    history[replace ? 'replaceState' : 'pushState'](stateValue, '', url);
   }
   function addTab(path, activate = true) {
     if (path === PREFIX) { void addDefaultTab(); return; }
-    if (!safePath(path)) return;
+    if (!safePath(path) || destroyed) return;
     const tab = { id: state.nextId++, path, history: [path], cursor: 0 };
     state.tabs.push(tab);
     if (activate) switchTab(tab.id);
@@ -527,6 +550,7 @@
     else renderTabs();
   }
   function switchTab(id) {
+    if (destroyed || !state.tabs.some(tab => tab.id === id)) return;
     state.activeId = id;
     state.selection.clear();
     state.filter = '';
@@ -535,13 +559,13 @@
     if (search) search.value = '';
     writeUrl(currentPath(), true);
     renderTabs();
-    refreshDirectory();
+    void refreshDirectory();
   }
-  function navigate(path, addHistory = true) {
+  function navigate(path, addHistory = true, urlMode = addHistory ? 'push' : 'replace') {
     if (path === PREFIX) return notify('请选择左侧的具体共享文件夹');
     if (!safePath(path)) return notify('此版本仅支持访问 User Shares');
     const tab = activeTab();
-    if (!tab || tab.path === path) return;
+    if (!tab || tab.path === path || destroyed) return;
     tab.path = path;
     if (addHistory) {
       tab.history = tab.history.slice(0, tab.cursor + 1);
@@ -552,16 +576,36 @@
     state.lastIndex = -1;
     state.filter = '';
     $('.ufs-search', app).value = '';
-    writeUrl(path, false);
+    if (urlMode !== 'none') writeUrl(path, urlMode === 'replace');
     renderTabs();
-    refreshDirectory();
+    void refreshDirectory();
   }
   function stepHistory(amount) {
     const tab = activeTab();
+    if (!tab || destroyed) return;
     const next = tab.cursor + amount;
     if (next < 0 || next >= tab.history.length) return;
     tab.cursor = next;
-    navigate(tab.history[next], false);
+    // The browser entry represents the current tab location, not each click
+    // inside the tab's own Back/Forward timeline.
+    navigate(tab.history[next], false, 'replace');
+  }
+  function restoreBrowserPath(path, preferredTabId) {
+    if (!safePath(path) || path === PREFIX || destroyed) return false;
+    let tab = state.tabs.find((item) => item.id === preferredTabId);
+    if (!tab) tab = activeTab();
+    if (!tab) { addTab(path); return true; }
+    if (state.activeId !== tab.id) state.activeId = tab.id;
+    if (tab.path === path) { renderTabs(); renderNavigation(); return true; }
+    let index = tab.history.lastIndexOf(path);
+    if (index === -1) {
+      tab.history = tab.history.slice(0, tab.cursor + 1);
+      tab.history.push(path);
+      index = tab.history.length - 1;
+    }
+    tab.cursor = index;
+    navigate(path, false, 'none'); // popstate must never push/replace itself
+    return true;
   }
   async function loadTree(path) {
     if (state.tree.has(path)) return;
@@ -625,7 +669,7 @@
       target.append(node);
     });
     const add = element('button', 'ufs-ico');
-    add.disabled = state.busy && !activeTab();
+    add.disabled = state.initializing || (state.busy && !activeTab());
     add.append(icon('plus'));
     add.setAttribute('aria-label', '新建标签页');
     add.title = '新建标签页';
@@ -728,10 +772,10 @@
     // Long names still scroll horizontally inside the compact breadcrumb.
     address.scrollLeft = address.scrollWidth;
     const tab = activeTab();
-    $('.ufs-back', app).disabled = !tab || tab.cursor <= 0;
-    $('.ufs-next', app).disabled = !tab || tab.cursor >= tab.history.length - 1;
-    $('.ufs-up', app).disabled = !tab || currentPath() === PREFIX || isShareRoot(currentPath());
-    $('.ufs-refresh', app).disabled = state.busy;
+    $('.ufs-back', app).disabled = !tab || state.initializing || tab.cursor <= 0;
+    $('.ufs-next', app).disabled = !tab || state.initializing || tab.cursor >= tab.history.length - 1;
+    $('.ufs-up', app).disabled = !tab || state.initializing || currentPath() === PREFIX || isShareRoot(currentPath());
+    $('.ufs-refresh', app).disabled = state.busy || state.initializing;
   }
   function visibleEntries() {
     const q = state.filter.trim().toLocaleLowerCase();
@@ -1191,27 +1235,21 @@
         renderSelection();
       }
       if (event.key === 'Escape') { closeMenu(); state.selection.clear(); renderSelection(); }
-      if (event.key === 'Backspace' && !event.metaKey && !event.ctrlKey) { event.preventDefault(); stepHistory(-1); }
+      if (event.key === 'Backspace' && !event.metaKey && !event.ctrlKey && activeTab()) { event.preventDefault(); stepHistory(-1); }
     });
-    window.addEventListener('popstate', () => {
-      if (!app.isConnected || isDemo) return;
+    window.addEventListener('popstate', (event) => {
+      if (!app.isConnected || isDemo || destroyed) return;
       const requested = new URLSearchParams(location.search).get('dir') || PREFIX;
       if (!safePath(requested)) return;
       const path = requested === PREFIX ? defaultSharePath() : requested;
       if (!path) {
-        // If discovery failed, keep a valid deep-linked directory and repair
-        // the Back/Forward URL rather than leaving the address at virtual root.
         if (activeTab()) writeUrl(currentPath(), true);
-        else void refreshDirectory();
+        else void initializeBrowser(PREFIX);
         return;
       }
       if (requested === PREFIX) writeUrl(path, true);
-      if (path === currentPath()) return;
-      const tab = activeTab();
-      if (!tab) { addTab(path); return; }
-      tab.path = path; tab.history = [path]; tab.cursor = 0;
-      state.selection.clear(); renderTabs(); refreshDirectory();
-    });
+      restoreBrowserPath(path, event.state?.ufs ? event.state.tabId : null);
+    }, { signal: lifecycle.signal });
     return app;
   }
 
