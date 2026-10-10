@@ -160,3 +160,29 @@ test('可调整列宽并保持记忆；根目录读取失败时可以重试', as
   assert.equal(retained.size,saved.size);
   assert.equal(errors.length,0,errors.join('\n'));
 });
+
+
+test('浏览器历史恢复到另一已有标签的相同路径时仍正确刷新列表', async t => {
+  const {page,errors} = await pageFor(t);
+  await page.locator('.ufs-tab.ufs-active .ufs-tab-name', {hasText:'TimeMachine'}).waitFor();
+  await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).first().waitFor();
+  // Create a second tab; switch its content to appdata.
+  await page.locator('.ufs-tabs > .ufs-ico[aria-label="新建标签页"]').click();
+  await page.locator('.ufs-tab').nth(1).waitFor();
+  await page.locator('.ufs-tree-row').filter({has:page.locator('.ufs-tree-name', {hasText:'appdata'})}).first().click();
+  await page.locator('.ufs-entry').filter({hasText:'new.ini'}).first().waitFor();
+  // Reproduce Chrome restoring an older history entry for the first tab:
+  // that tab already points to TimeMachine, but the visible rows are appdata.
+  await page.evaluate(() => {
+    const path='/mnt/user/TimeMachine';
+    const state={ufs:true,tabId:1,path};
+    const url=new URL(location.href);
+    url.searchParams.set('dir',path);
+    history.replaceState(state,'',url);
+    window.dispatchEvent(new PopStateEvent('popstate',{state}));
+  });
+  await page.locator('.ufs-tab.ufs-active .ufs-tab-name', {hasText:'TimeMachine'}).waitFor();
+  await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).first().waitFor();
+  assert.equal(await page.locator('.ufs-entry').filter({hasText:'new.ini'}).count(),0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
