@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.1.16
-// @description  DSM-inspired read-only file browser inside Unraid WebGUI 7.2.2
+// @version      0.2.0
+// @description  DSM-inspired File Station (read-only v0.2.0 operation previews) for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
 // @grant        none
@@ -165,6 +165,134 @@
     return parseBrowse(html, path);
   }
 
+
+
+  // v0.2.0: browser-only preparation for native file operations.
+  // IMPORTANT: no production writer is registered. This is a dry-run contract,
+  // not an authorization boundary or proof that a filesystem path is safe.
+  const FILE_WRITES_ENABLED = false;
+  const NATIVE_CONTROL_URL = '/webGui/include/Control.php';
+  const NATIVE_TASK_EVENTS = '/sub/filemanager';
+
+  function safeWriteName(name) {
+    // Control.php performs an additional rawurldecode; reject '%' until its
+    // complete encoding behavior is exercised against a real test share.
+    // Reject CR/LF because the native task file separates sources with CR.
+    return typeof name === 'string' && name.length > 0 && name.length <= 255 &&
+      name !== '.' && name !== '..' && name.trim() === name &&
+      !/[\/\\%\u0000-\u001f\u007f]/.test(name);
+  }
+  function safeWritePath(path, allowShareRoot = false) {
+    if (!safePath(path) || path === PREFIX || path.endsWith('/') || path.includes('//')) return false;
+    const parts = path.slice(PREFIX.length + 1).split('/');
+    return parts.length >= (allowShareRoot ? 1 : 2) && parts.every(safeWriteName);
+  }
+  function parentPath(path) { return path.slice(0, path.lastIndexOf('/')); }
+  function fileName(path) { return path.slice(path.lastIndexOf('/') + 1); }
+
+  function planFileOperation(input) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+      throw new Error('文件操作参数无效');
+    }
+    const { type, source, parent, name, destinationDir, folder, conflictPolicy = 'fail' } = input;
+    if (conflictPolicy !== 'fail') throw new Error('当前不允许覆盖目标文件');
+    if (!['mkdir', 'rename', 'copy', 'move', 'delete'].includes(type)) {
+      throw new Error('不支持的文件操作');
+    }
+
+    if (type === 'mkdir') {
+      if (!safeWritePath(parent, true) || !safeWriteName(name)) {
+        throw new Error('新建文件夹名称或父目录不安全');
+      }
+      return Object.freeze({
+        type, source: parent, target: parent + '/' + name, name,
+        folder: true, conflictPolicy, previewOnly: true
+      });
+    }
+
+    // Shared-folder roots cannot be renamed, moved, copied or deleted here.
+    if (!safeWritePath(source)) throw new Error('只能操作共享文件夹内的文件或子目录');
+    if (typeof folder !== 'boolean') throw new Error('必须明确文件或目录类型');
+
+    if (type === 'rename') {
+      if (!safeWriteName(name) || name === fileName(source)) {
+        throw new Error('重命名目标无效或与原名称相同');
+      }
+      const target = parentPath(source) + '/' + name;
+      if (!safeWritePath(target)) throw new Error('重命名目标路径无效');
+      return Object.freeze({ type, source, target, name, folder, conflictPolicy, previewOnly: true });
+    }
+    if (type === 'copy' || type === 'move') {
+      if (!safeWritePath(destinationDir, true)) throw new Error('目标文件夹路径无效');
+      const target = destinationDir + '/' + fileName(source);
+      if (!safeWritePath(target) || target === source) throw new Error('源和目标不能相同');
+      if (folder && (destinationDir === source || destinationDir.startsWith(source + '/'))) {
+        throw new Error('不能将目录复制或移动到其内部');
+      }
+      return Object.freeze({ type, source, target, destinationDir, folder, conflictPolicy, previewOnly: true });
+    }
+    return Object.freeze({ type, source, target: '', folder, conflictPolicy, previewOnly: true });
+  }
+
+  // This descriptor documents 7.2.2's native contract but never sends POST.
+  // Existing-path conflicts and symlink resolution require further preflight;
+  // the native task slot is shared across all WebGUI tabs.
+  function previewNativeOperationRequest(plan) {
+    if (!plan || plan.previewOnly !== true || !['mkdir', 'rename', 'copy', 'move', 'delete'].includes(plan.type)) {
+      throw new Error('请先生成有效的操作预览');
+    }
+    const actions = {
+      mkdir: 0,
+      rename: plan.folder ? 2 : 7,
+      copy: plan.folder ? 3 : 8,
+      move: plan.folder ? 4 : 9,
+      delete: plan.folder ? 1 : 6
+    };
+    return Object.freeze({
+      endpoint: NATIVE_CONTROL_URL, method: 'POST', mode: 'file',
+      action: actions[plan.type], source: plan.source,
+      target: plan.type === 'mkdir' || plan.type === 'rename' ? plan.name :
+        plan.type === 'delete' ? '' : plan.destinationDir,
+      requiresCsrfToken: true, taskEvents: NATIVE_TASK_EVENTS,
+      globallySharedTask: true, previewOnly: true
+    });
+  }
+
+  // Only the isolated VM demo may inject a mock executor. Production cannot
+  // call confirm(): v0.2.0 has no network writer, upload or filesystem mutation.
+  function createFileOperationCoordinator(mockExecutor) {
+    let task = { status: 'idle', plan: null, result: null, error: '' };
+    const snapshot = () => Object.freeze({ ...task });
+    function review(input) {
+      if (task.status === 'running') throw new Error('已有文件任务正在执行');
+      const plan = planFileOperation(input);
+      task = { status: 'awaiting-confirmation', plan, result: null, error: '' };
+      return snapshot();
+    }
+    function cancel() {
+      if (task.status !== 'awaiting-confirmation') return false;
+      task = { status: 'idle', plan: null, result: null, error: '' };
+      return true;
+    }
+    async function confirm(acknowledged) {
+      if (task.status !== 'awaiting-confirmation') throw new Error('没有等待确认的文件操作');
+      if (acknowledged !== true) throw new Error('请先明确确认文件操作');
+      if (FILE_WRITES_ENABLED || !isDemo || window.__UFS_TEST_MODE__ !== true ||
+          typeof mockExecutor !== 'function') {
+        throw new Error('v0.2.0 禁止向真实 NAS 提交文件写入');
+      }
+      const plan = task.plan;
+      task = { status: 'running', plan, result: null, error: '' };
+      try {
+        const result = await mockExecutor(plan);
+        task = { status: 'completed', plan, result, error: '' };
+      } catch (error) {
+        task = { status: 'failed', plan, result: null, error: String(error?.message || error) };
+      }
+      return snapshot();
+    }
+    return Object.freeze({ review, confirm, cancel, snapshot });
+  }
 
   // Small local SVG set: no external fonts, CDNs or global icon CSS.
   const ICONS = {
@@ -1605,7 +1733,7 @@
   }
   // Explicit opt-in hook for pure-function tests; never enabled on production WebGUI.
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
-    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, availableHeight, visibleEntries, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
+    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, availableHeight, visibleEntries, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();
