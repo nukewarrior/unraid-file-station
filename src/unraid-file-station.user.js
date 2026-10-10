@@ -56,28 +56,50 @@
   function locationNames(entry) {
     return Array.isArray(entry.locations) ? entry.locations.filter((name) => typeof name === 'string' && name.trim()) : [];
   }
-  function summarizeLocations(entry) {
-    const names = locationNames(entry);
-    if (!names.length) return '—';
-    const disks = [];
-    const other = [];
-    const seen = new Set();
-    for (const name of names) {
-      if (seen.has(name)) continue;
-      seen.add(name);
-      const match = /^disk(0|[1-9]\d*)$/.exec(name);
-      if (match) disks.push(Number(match[1]));
-      else other.push(name);
+  function fitLocationNames(names, availablePx, measure = (text) => String(text).length * 7) {
+    const unique = [...new Set(names.filter((name) => typeof name === 'string' && name.trim()))];
+    if (!unique.length) return { visible: [], hidden: 0 };
+    const total = unique.join(', ');
+    if (measure(total) <= availablePx) return { visible: unique, hidden: 0 };
+    // Keep a visible, explicit "view all" affordance whenever names do not fit.
+    const more = '查看全部' + unique.length + '处';
+    const budget = Math.max(0, availablePx - measure(more) - 16);
+    const visible = [];
+    for (const name of unique) {
+      const candidate = [...visible, name].join(', ');
+      if (measure(candidate) > budget) break;
+      visible.push(name);
     }
-    disks.sort((a, b) => a - b);
-    const compact = [];
-    for (let i = 0; i < disks.length;) {
-      let end = i;
-      while (end + 1 < disks.length && disks[end + 1] === disks[end] + 1) end++;
-      compact.push(end > i ? 'disk' + disks[i] + '–disk' + disks[end] : 'disk' + disks[i]);
-      i = end + 1;
-    }
-    return [...compact, ...other].join(', ');
+    return { visible, hidden: unique.length - visible.length };
+  }
+  let locationUpdatePending = false;
+  function scheduleLocationDisplay() {
+    if (!app || locationUpdatePending) return;
+    locationUpdatePending = true;
+    requestAnimationFrame(() => {
+      locationUpdatePending = false;
+      if (!app || !app.isConnected) return;
+      const list = $('.ufs-list', app);
+      if (!list || state.view !== 'list') return;
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext && canvas.getContext('2d');
+      if (ctx) ctx.font = getComputedStyle(list).font || '13px sans-serif';
+      const measure = (text) => ctx ? ctx.measureText(text).width : String(text).length * 7;
+      $$('.ufs-location-trigger', list).forEach((button) => {
+        const names = button._ufsNames || [];
+        const available = button.parentElement?.clientWidth || 0;
+        if (available <= 0) return;
+        const result = fitLocationNames(names, Math.max(0, available - 2), measure);
+        const shown = result.visible.join(', ');
+        const label = result.hidden ? '查看全部' + names.length + '处' : '';
+        button.replaceChildren();
+        if (shown) button.append(element('span', 'ufs-location-text', shown));
+        if (result.hidden) {
+          if (shown) button.append(element('span', 'ufs-location-ellipsis', '…'));
+          button.append(element('span', 'ufs-location-more-link', label));
+        }
+      });
+    });
   }
   function renderLocationTags(entry) {
     const names = locationNames(entry);
@@ -87,16 +109,15 @@
       cell.title = '存储位置未知';
       return cell;
     }
-    // Compact sequential disks while retaining the complete source list.
-    // The popover is scrollable for NAS configurations with dozens of disks.
-    const trigger = element('button', 'ufs-location-trigger', summarizeLocations(entry));
+    const trigger = element('button', 'ufs-location-trigger', names.join(', '));
     trigger.type = 'button';
+    trigger._ufsNames = names;
     trigger.title = names.join(', ');
     trigger.setAttribute('aria-label', '查看全部 ' + names.length + ' 个存储位置');
     trigger.setAttribute('aria-haspopup', 'dialog');
     trigger.setAttribute('aria-expanded', 'false');
     trigger.addEventListener('click', (event) => {
-      event.stopPropagation(); // A location detail click must not change file selection.
+      event.stopPropagation();
       showLocationPopover(trigger, names);
     });
     trigger.addEventListener('dblclick', (event) => event.stopPropagation());
@@ -238,6 +259,7 @@
     // Scope to this mode because Unraid's periodic jQuery fadeIn() may change inline display styles.
     'html.ufs-active-page .move_to_end,html.ufs-active-page .back_to_top{display:none!important}',
     '#ufs-app .ufs-list,#ufs-app .ufs-sidebar,#ufs-app .ufs-inspector{overscroll-behavior:contain}',
+    '#ufs-app .ufs-menu .ufs-location-copy{width:auto;flex:0 0 auto;white-space:nowrap;padding:4px 9px;font-size:12px;color:var(--ufs-accent);border:1px solid var(--ufs-border)}',
     '.ufs-hide-native{display:none!important}#ufs-native-enable{margin:8px;padding:7px 12px;background:#e87526;color:#fff;border:0;border-radius:5px;cursor:pointer}',
     // Pointer focus should not leave a colored ring after details is closed.
     // Preserve the visible outline for keyboard navigation using :focus-visible.
@@ -245,7 +267,7 @@
     // Unraid styles can shift button baselines; stretch table-header cells then
     // center the sort button's contents explicitly inside the header's fixed height.
     '#ufs-app .ufs-head{align-items:stretch;padding-top:0;padding-bottom:0}#ufs-app .ufs-head>span{display:flex;align-items:center;min-width:0;height:100%;margin:0;padding:0;vertical-align:middle}#ufs-app .ufs-head .ufs-sort-button{display:inline-flex;align-items:center;justify-content:flex-start;width:100%;height:100%;min-height:0;margin:0;padding:0;line-height:1.3;vertical-align:middle}',
-    '#ufs-app .ufs-location-col{display:flex;align-items:center;min-width:0;overflow:hidden;white-space:nowrap}#ufs-app .ufs-location-trigger{display:block;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:1px solid transparent;border-radius:4px;background:var(--ufs-panel);padding:3px 7px;text-align:left;color:var(--ufs-text);font-size:11px;line-height:1.35;cursor:pointer!important}#ufs-app .ufs-location-trigger:hover{border-color:var(--ufs-border);background:var(--ufs-hover)}#ufs-app .ufs-location-popover{width:min(420px,calc(100vw - 20px));max-width:none;padding:0;overflow:hidden}#ufs-app .ufs-location-popover-header{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--ufs-border);font-weight:600}#ufs-app .ufs-menu .ufs-location-popover-close{display:inline-flex;align-items:center;justify-content:center;flex:0 0 28px;width:28px;height:28px;min-width:28px;padding:0;border:0;background:transparent;color:var(--ufs-muted);text-align:center}#ufs-app .ufs-location-popover-items{display:grid;grid-template-columns:repeat(auto-fill,minmax(85px,1fr));gap:6px;padding:12px;max-height:min(300px,50vh);overflow-y:auto;overscroll-behavior:contain}#ufs-app .ufs-location-device{padding:6px 8px;border-radius:4px;background:var(--ufs-panel);font-size:12px;overflow-wrap:anywhere}#ufs-app .ufs-owner{min-width:0;overflow:hidden;text-overflow:ellipsis}',
+    '#ufs-app .ufs-location-col{display:flex;align-items:center;min-width:0;overflow:hidden;white-space:nowrap}#ufs-app .ufs-entry .ufs-location-trigger{display:inline-flex;align-items:center;gap:4px;width:100%;min-width:0;max-width:100%;height:30px;min-height:0;overflow:hidden;padding:0;border:0;background:transparent;border-radius:0;text-align:left;color:var(--ufs-text);font-size:12px;font-weight:400;line-height:1.4;cursor:pointer!important}#ufs-app .ufs-entry .ufs-location-trigger:hover{color:var(--ufs-accent);background:transparent}#ufs-app .ufs-location-text{white-space:nowrap;overflow:hidden;text-overflow:clip;flex:0 1 auto;min-width:0}#ufs-app .ufs-location-ellipsis{white-space:nowrap;flex-shrink:0;color:var(--ufs-muted)}#ufs-app .ufs-location-more-link{color:var(--ufs-accent);font-size:11px;flex:0 0 auto;white-space:nowrap;text-decoration:underline;text-underline-offset:2px}#ufs-app .ufs-location-popover{width:min(440px,calc(100vw - 20px));max-width:none;padding:0;overflow:hidden}#ufs-app .ufs-location-popover-header{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--ufs-border);font-weight:600}#ufs-app .ufs-menu .ufs-location-popover-close{display:inline-flex;align-items:center;justify-content:center;flex:0 0 28px;width:28px;height:28px;min-width:28px;padding:0;border:0;background:transparent;color:var(--ufs-muted);text-align:center}#ufs-app .ufs-location-popover-items{display:grid;grid-template-columns:repeat(auto-fill,minmax(85px,1fr));gap:6px;padding:12px;max-height:min(300px,50vh);overflow-y:auto;overscroll-behavior:contain}#ufs-app .ufs-location-device{padding:6px 8px;border-radius:4px;background:var(--ufs-panel);font-size:12px;overflow-wrap:anywhere}#ufs-app .ufs-owner{min-width:0;overflow:hidden;text-overflow:ellipsis}',
     '@media(max-width:720px){#ufs-app .ufs-sidebar{width:42px;flex-basis:42px;padding:4px}#ufs-app .ufs-resizer{display:none}#ufs-app .ufs-sidebar .ufs-tree-name,#ufs-app .ufs-tree-label,#ufs-app .ufs-tree-toggle,#ufs-app .ufs-sidebar .ufs-tree-spacer{display:none}#ufs-app .ufs-search{width:90px}}',
     '#ufs-app .ufs-top{height:46px;gap:9px;padding:0 12px}#ufs-app .ufs-brand{display:flex;align-items:center;gap:7px;flex-shrink:0;white-space:nowrap}#ufs-app .ufs-heading{font-size:15px}#ufs-app .ufs-brand-divider{height:19px;width:1px;background:var(--ufs-border);flex-shrink:0}#ufs-app .ufs-preview-chip{font-size:11px;color:var(--ufs-muted);white-space:nowrap}#ufs-app .ufs-app-actions{display:flex;align-items:center;gap:3px;flex-shrink:0}',
     '#ufs-app .ufs-top .ufs-tabs{display:flex;align-items:center;flex:1;min-width:0;height:100%;gap:4px;padding:0;background:transparent;border:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}#ufs-app .ufs-top .ufs-tabs::-webkit-scrollbar{display:none}#ufs-app .ufs-top .ufs-tab{flex-shrink:0;height:31px;min-width:85px;max-width:195px;padding:4px 8px}#ufs-app .ufs-top .ufs-tabs>.ufs-ico{flex:0 0 auto}',
@@ -738,6 +760,7 @@
       });
     }
     renderSelection();
+    scheduleLocationDisplay();
   }
   function openEntry(entry) {
     if (entry.folder) return navigate(entry.path);
@@ -852,6 +875,16 @@
     header.append(close);
     const items = element('div', 'ufs-location-popover-items');
     names.forEach((name) => items.append(element('span', 'ufs-location-device', name)));
+    const copy = element('button', 'ufs-location-copy', '复制位置');
+    copy.type = 'button';
+    copy.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      try {
+        await navigator.clipboard.writeText(names.join(', '));
+        notify('已复制 ' + names.length + ' 个存储位置');
+      } catch (_) { notify('无法访问剪贴板，请检查浏览器权限'); }
+    });
+    header.insertBefore(copy, close);
     popup.append(header, items);
     // Reuse the same outside-click and Escape handling as the file action menu.
     popup._ufsTrigger = trigger;
@@ -984,6 +1017,9 @@
     });
     $('.ufs-operations', app).addEventListener('click', showOperationsMenu);
     setupSidebarResizer();
+    if (typeof ResizeObserver !== 'undefined') {
+      new ResizeObserver(() => scheduleLocationDisplay()).observe($('.ufs-list', app));
+    }
     $('.ufs-list', app).addEventListener('click', (event) => {
       // Clicking on blank space clears selection, but clicking headers/entries does not.
       if (event.target === $('.ufs-list', app) || event.target.classList.contains('ufs-empty')) {
@@ -1181,7 +1217,7 @@
   }
   // Explicit opt-in hook for pure-function tests; never enabled on production WebGUI.
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
-    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, summarizeLocations, renderLocationTags, listDirectory, availableHeight, visibleEntries, selectedEntries, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
+    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, availableHeight, visibleEntries, selectedEntries, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();
