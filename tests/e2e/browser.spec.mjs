@@ -598,7 +598,10 @@ test('v0.2.2.1 增强模式暂停原生 filemonitor 延迟启动，外部变更�
   const {page,errors,browseRequests}=await pageFor(t,{simulateNativeMonitor:true});
   await page.locator('.ufs-entry').first().waitFor();
   let loads=0;
-  page.on('framenavigated',frame=>{if(frame===page.mainFrame()) loads++;});
+  const initialTimeOrigin=await page.evaluate(()=>performance.timeOrigin);
+  page.on('request',request=>{
+    if(request.isNavigationRequest() && request.frame()===page.mainFrame()) loads++;
+  });
   // Browse.page starts its native filemonitor three seconds after load.
   await page.waitForTimeout(3350);
   const states=await page.evaluate(()=>{
@@ -624,13 +627,17 @@ test('v0.2.2.1 增强模式暂停原生 filemonitor 延迟启动，外部变更�
   await page.waitForTimeout(1900);
   assert.ok(browseRequests.length>before,'外部操作后应局部刷新目录');
   assert.equal(loads,0,'增强模式禁止原生 filemonitor 触发整页导航');
+  assert.equal(await page.evaluate(()=>performance.timeOrigin),initialTimeOrigin);
   assert.equal(errors.length,0,errors.join('\n'));
 });
 
 test('v0.2.2.1 自身重命名与新建操作的 filemonitor 通知不会整页刷新',async t=>{
   const {page,errors,nativePosts,browseRequests}=await pageFor(t,{simulateNativeMonitor:true});
   let loads=0;
-  page.on('framenavigated',frame=>{if(frame===page.mainFrame()) loads++;});
+  const initialTimeOrigin=await page.evaluate(()=>performance.timeOrigin);
+  page.on('request',request=>{
+    if(request.isNavigationRequest() && request.frame()===page.mainFrame()) loads++;
+  });
   await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).first().click();
   await page.keyboard.press('F2');
   await page.locator('.ufs-rename-input').fill('rename-no-reload.txt');
@@ -647,6 +654,7 @@ test('v0.2.2.1 自身重命名与新建操作的 filemonitor 通知不会整页�
   await page.evaluate(()=>window.__ufsMonitorTest.emit('0'));
   await page.waitForTimeout(2000);
   assert.equal(loads,0,'操作过程中不应整页重载');
+  assert.equal(await page.evaluate(()=>performance.timeOrigin),initialTimeOrigin);
   assert.equal(nativePosts.filter(x=>x.mode==='file').length,2);
   assert.ok(browseRequests.length>=5);
   assert.equal(errors.length,0,errors.join('\n'));
