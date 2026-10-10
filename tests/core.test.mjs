@@ -622,7 +622,7 @@ test('根目录不能通过上一级、新标签、面包屑和历史回退被�
   assert.match(script, /currentPath\(\) === PREFIX \|\| isShareRoot\(currentPath\(\)\)/);
   assert.match(script, /const crumb = element\(path === PREFIX \? 'span' : 'button'/);
   assert.match(script, /if \(path !== PREFIX\) crumb\.addEventListener\('click'/);
-  assert.match(script, /const path = requested === PREFIX \? defaultSharePath\(\) : requested/);
+  assert.match(script, /const path = requested === PREFIX \? defaultSharePath\(\) : resolveRenamedFolderPath\(requested\)/);
   assert.match(script, /if \(requested === PREFIX\) writeUrl\(path, true\)/);
   assert.match(script, /restoreBrowserPath\(path, event\.state\?\.ufs \? event\.state\.tabId : null\)/);
 });
@@ -971,7 +971,7 @@ test('v0.2.2 重命名仅允许单个 Share 内项目，默认禁止覆盖与非
     {source:'/mnt/user/downloads/old',folder:true,name:'old'},
     {source:'/mnt/user/downloads/old',folder:true,name:'../outside'},
     {source:'/mnt/user/downloads/old',folder:true,name:'x"bad'},
-  ]) assert.throws(()=>api.planFileOperation({type:'rename',...spec}),/不能|无效|相同|不安全/);
+  ]) assert.throws(()=>api.planFileOperation({type:'rename',...spec}),/只能|不能|无效|相同|不安全/);
   assert.throws(()=>api.planFileOperation({type:'rename',source:'/mnt/user/downloads/a.txt',
     name:'b.txt',folder:false,conflictPolicy:'overwrite'}),/不允许覆盖/);
 });
