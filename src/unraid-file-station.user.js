@@ -972,8 +972,12 @@
     if (!list || !list.isConnected || data.list !== list) return;
     const cols = data.view === 'grid' ? virtualGridColumns(list.clientWidth) : 1;
     const gridResized = data.view === 'grid' && data.columns > 0 && data.columns !== cols;
-    const nearBottom = gridResized &&
-      list.scrollHeight - list.clientHeight - list.scrollTop <= 6;
+    const currentlyAtBottom = list.scrollHeight - list.clientHeight - list.scrollTop <= 6;
+    // Viewport resize changes clientHeight before ResizeObserver runs, making an
+    // otherwise bottom-anchored scroll appear above the bottom. Remember the
+    // last position from before the resize instead of relying only on the new
+    // clientHeight.
+    const nearBottom = gridResized && (currentlyAtBottom || data.atBottom === true);
     const anchorIndex = gridResized ?
       Math.floor(Math.max(0, list.scrollTop - 14) / VIRTUAL_GRID_STEP) * data.columns : 0;
     const gridTotalHeight = 28 + Math.ceil(data.entries.length / cols) * VIRTUAL_GRID_STEP;
@@ -985,7 +989,10 @@
     // resized grid never renders a stale middle slice for one animation frame.
     const range = virtualWindow(data.entries.length,desiredScrollTop,list.clientHeight,data.view,cols);
     if (!force && data.start === range.start && data.end === range.end &&
-        data.columns === cols) return;
+        data.columns === cols) {
+      data.atBottom = currentlyAtBottom;
+      return;
+    }
     data.start = range.start;
     data.end = range.end;
     data.columns = cols;
@@ -998,6 +1005,7 @@
     }
     data.body.replaceChildren(fragment);
     if (gridResized) list.scrollTop = desiredScrollTop;
+    data.atBottom = list.scrollHeight - list.clientHeight - list.scrollTop <= 6;
     scheduleLocationDisplay();
   }
   function scheduleVirtualWindow() {
