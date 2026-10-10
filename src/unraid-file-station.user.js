@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.1.10
+// @version      0.1.11
 // @description  DSM-inspired read-only file browser inside Unraid WebGUI 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -232,8 +232,9 @@
     '#ufs-app .ufs-ico.ufs-primary{background:var(--ufs-accent);border-color:var(--ufs-accent);color:#fff}#ufs-app .ufs-ico.ufs-primary:hover{filter:brightness(.96)}#ufs-app .ufs-ico.ufs-view-active{background:var(--ufs-accent-soft);color:var(--ufs-accent);border-color:var(--ufs-accent-soft)}#ufs-app .ufs-ico.ufs-view-active:hover{background:var(--ufs-accent-soft)}',
     '#ufs-app .ufs-tab{display:inline-flex;align-items:center;gap:6px;border:1px solid transparent;min-width:0;max-width:195px;background:transparent;color:var(--ufs-muted)}#ufs-app .ufs-tab.ufs-active{background:var(--ufs-bg);border-color:var(--ufs-border);color:var(--ufs-text);font-weight:600}',
     '#ufs-app .ufs-tab-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#ufs-app .ufs-tab-close{display:flex;align-items:center;border:0;background:transparent;color:var(--ufs-muted);height:19px;width:19px;padding:0;justify-content:center}#ufs-app .ufs-tab-close:hover{background:var(--ufs-hover)}',
-    '#ufs-app .ufs-navigation{height:38px;min-height:38px;max-height:38px;width:100%;max-width:100%;margin:0;padding:0 10px;overflow:hidden;gap:5px;align-items:center;border-radius:0;background:var(--ufs-bg)}#ufs-app .ufs-navigation>.ufs-ico{flex:0 0 auto;min-height:0;height:28px}#ufs-app .ufs-address{display:inline-flex;align-items:center;flex:0 1 auto;width:max-content;min-width:0;max-width:65%;height:28px;min-height:28px;max-height:28px;align-self:center;padding:0 8px;margin:0;border:1px solid var(--ufs-border);border-radius:4px;background:var(--ufs-panel);box-shadow:none;line-height:26px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;white-space:nowrap}#ufs-app .ufs-address::-webkit-scrollbar{display:none}',
-    '#ufs-app .ufs-crumb{border:0;background:none;color:var(--ufs-muted);padding:2px;white-space:nowrap;flex-shrink:0}#ufs-app .ufs-crumb:hover{color:var(--ufs-accent)}#ufs-app .ufs-crumb:last-child{color:var(--ufs-text);font-weight:600}#ufs-app .ufs-search{height:29px;border:1px solid var(--ufs-border);background:var(--ufs-bg);color:var(--ufs-text);border-radius:4px;padding:4px 9px;width:150px;min-width:0;max-width:none}',
+    '#ufs-app .ufs-navigation{height:42px;min-height:42px;max-height:42px;width:100%;max-width:100%;margin:0;padding:0 11px;overflow:hidden;gap:5px;align-items:center;border-radius:0;background:var(--ufs-bg)}#ufs-app .ufs-navigation>.ufs-ico{flex:0 0 auto;min-height:0;height:30px}#ufs-app .ufs-address{display:flex;align-items:center;gap:2px;flex:1 1 auto;width:auto;min-width:0;max-width:none;height:30px;min-height:30px;max-height:30px;align-self:center;padding:0 10px;margin:0;border:1px solid var(--ufs-border);border-radius:4px;background:var(--ufs-bg);box-shadow:none;line-height:28px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;white-space:nowrap}#ufs-app .ufs-address::-webkit-scrollbar{display:none}',
+    '#ufs-app .ufs-crumb{border:0;background:none;color:var(--ufs-muted);display:inline-flex;align-items:center;justify-content:flex-start;width:auto;min-width:0;max-width:none;min-height:0;height:auto;margin:0;padding:0 2px;white-space:nowrap;flex:0 0 auto}#ufs-app .ufs-crumb:hover{color:var(--ufs-accent)}#ufs-app .ufs-crumb:last-child{color:var(--ufs-text);font-weight:600}#ufs-app .ufs-search{height:29px;border:1px solid var(--ufs-border);background:var(--ufs-bg);color:var(--ufs-text);border-radius:4px;padding:4px 9px;width:150px;min-width:0;max-width:none}',
+    '#ufs-app .ufs-address>.ufs-svg{width:12px;height:12px;min-width:12px;flex:0 0 12px}',
     '#ufs-app .ufs-workspace{display:flex;flex:1;min-height:0;overflow:hidden}#ufs-app .ufs-sidebar{background:var(--ufs-panel);width:var(--ufs-sidebar-width);flex:0 0 var(--ufs-sidebar-width);min-width:0;overflow:auto;padding:8px 7px}#ufs-app .ufs-resizer{width:5px;flex:0 0 5px;background:var(--ufs-border);cursor:col-resize;touch-action:none;opacity:.7}#ufs-app .ufs-resizer:hover{background:var(--ufs-accent)}',
     '#ufs-app .ufs-tree-label{padding:7px 8px;color:var(--ufs-muted);font-size:12px;font-weight:600;letter-spacing:0}#ufs-app .ufs-tree-row{display:flex;align-items:center;gap:7px;width:100%;height:31px;min-height:31px;padding:0 7px;border:0;background:transparent;text-align:left;color:var(--ufs-text);border-radius:5px;min-width:0}',
     '#ufs-app .ufs-tree-row:hover{background:var(--ufs-hover)}#ufs-app .ufs-tree-row.ufs-current{background:var(--ufs-tree-sel);color:var(--ufs-accent);font-weight:600}#ufs-app .ufs-tree-toggle{display:inline-flex;align-items:center;justify-content:center;width:16px;min-width:16px;height:24px;min-height:0;padding:0!important;margin:0;border:0;background:transparent;color:var(--ufs-muted);flex:0 0 16px;line-height:1}',
@@ -970,7 +971,7 @@
       ['重置文件列表列宽', resetColumnWidths],
       ['返回原生文件管理器（写入操作）', nativeMode],
       [state.theme === 'unraid' ? '切换至 DSM 经典主题' : '切换至 Unraid 融合主题', toggleTheme],
-      ['关于 File Station v0.1.10', () => notify('File Station v0.1.10 · Unraid 7.2.2 · 只读预览')]
+      ['关于 File Station v0.1.11', () => notify('File Station v0.1.11 · Unraid 7.2.2 · 只读预览')]
     ];
     actions.forEach(([label, fn]) => {
       const button = element('button', '', label);
