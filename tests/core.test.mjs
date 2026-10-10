@@ -10,6 +10,11 @@ function createAPI() {
   const sandbox = {
     location: { pathname: '/demo/', search: '' },
     document: {
+      // Minimal DOM for location-chip rendering tests, without browser dependencies.
+      createElement: (tagName) => ({
+        tagName, className: '', textContent: '', title: '', children: [],
+        append(...children) { this.children.push(...children); },
+      }),
       documentElement: { getAttribute: () => 'true' },
       readyState: 'loading',
       addEventListener() {},
@@ -178,6 +183,29 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-location-tag/);
   assert.match(script, /@version\s+0\.1\.8/);
+});
+
+
+test('LOCATION 设备标签最多直接展示两个，其余用 +N 且保留完整悬停文本', () => {
+  const { api } = createAPI();
+  const cells = api.renderLocationTags({locations:['disk1','disk2','cache']});
+  assert.equal(cells.title, 'disk1, disk2, cache');
+  assert.deepEqual(cells.children.map(x => x.textContent), ['disk1','disk2','+1']);
+  assert.equal(cells.children[0].className, 'ufs-location-tag');
+  const empty = api.renderLocationTags({locations:[]});
+  assert.equal(empty.title, '存储位置未知');
+  assert.deepEqual(empty.children.map(x => x.textContent), ['—']);
+  const raw = '<img src=x onerror=alert(1)>';
+  const safe = api.renderLocationTags({locations:[raw]});
+  // Device names are textContent, never interpolated into innerHTML.
+  assert.equal(safe.children[0].textContent, raw);
+});
+
+test('窄屏保留列表主要列，宽屏 6 列与网格显示规则不冲突', () => {
+  assert.match(script, /grid-template-columns:minmax\(210px,2\.6fr\) minmax\(72px,\.65fr\) minmax\(135px,1\.15fr\) minmax\(85px,\.7fr\) minmax\(105px,\.9fr\) minmax\(115px,1fr\)/);
+  assert.match(script, /@media\(max-width:1280px\) and \(min-width:981px\)/);
+  assert.match(script, /#ufs-app \.ufs-location-col\{display:flex/);
+  assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
 });
 
 test('非 Unraid 页面不执行目录读取或插入 UI', () => {
