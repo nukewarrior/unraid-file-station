@@ -45,20 +45,38 @@ try {
     await page.goto(ORIGIN+'/Shares/Browse?dir=%2Fmnt%2Fuser%2Fbenchmark');
     await page.waitForFunction(count => {
       const app=document.querySelector('#ufs-app');
-      return app && app.querySelectorAll('.ufs-entry').length===count &&
-        !app.querySelector('.ufs-count')?.textContent?.includes('正在读取');
+      const mounted=app?.querySelectorAll('.ufs-entry').length || 0;
+      const label=app?.querySelector('.ufs-count')?.textContent || '';
+      return label.startsWith(count + ' 个项目') && mounted > 0 &&
+        (count <= 200 ? mounted === count : mounted < count);
     },count,{timeout:120000});
     const elapsedMs=Date.now()-start;
     const metrics=await page.evaluate(()=>{
       const list=document.querySelector('.ufs-list');
       return {
         rowCount:document.querySelectorAll('.ufs-entry').length,
+        totalCount:document.querySelector('.ufs-count')?.textContent,
+        virtualized:document.querySelector('.ufs-list')?.classList.contains('ufs-virtualized'),
         domNodes:document.querySelectorAll('#ufs-app *').length,
         heapMB:performance.memory ? Number((performance.memory.usedJSHeapSize/1024/1024).toFixed(1)) : null,
         horizontalOverflow:Math.max(0,list.scrollWidth-list.clientWidth),
         verticalOverflow:Math.max(0,list.scrollHeight-list.clientHeight)
       };
     });
+    if (count>200) {
+      if (metrics.rowCount >= count || metrics.rowCount > 300) {
+        throw new Error('Virtual list mounted excessive DOM rows: ' + metrics.rowCount);
+      }
+      await page.evaluate(() => {
+        const list=document.querySelector('.ufs-list');
+        list.scrollTop=list.scrollHeight;
+      });
+      const last='file-'+String(count-1).padStart(5,'0')+'.txt';
+      await page.waitForFunction(last => {
+        return [...document.querySelectorAll('.ufs-entry .ufs-filename')]
+          .some(node => node.textContent === last);
+      },last,{timeout:15000});
+    }
     console.log(JSON.stringify({files:count,elapsedMs,...metrics,errors:failures}));
     if(failures.length)throw new Error('浏览器脚本异常: '+failures.join('; '));
     await context.close();
