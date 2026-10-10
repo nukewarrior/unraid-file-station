@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 const script = readFileSync(new URL('../src/unraid-file-station.user.js', import.meta.url), 'utf8');
 
-function createAPI() {
+function createAPI(options = {}) {
   const rows = [];
   const sandbox = {
     location: { pathname: '/demo/', search: '' },
@@ -25,6 +25,7 @@ function createAPI() {
     window: {
       addEventListener() {},
       __UFS_TEST_MODE__: true,
+      csrf_token: options.csrfToken === undefined ? 'test-csrf' : options.csrfToken,
       __UFS_DEMO__: {
         '/mnt/user': [
           { name: 'downloads', folder: true },
@@ -42,6 +43,7 @@ function createAPI() {
       }
     },
     URL, URLSearchParams, setTimeout, clearTimeout, AbortController, DOMException, console,
+    ...(options.fetch ? { fetch: options.fetch } : {}),
   };
   vm.runInNewContext(script, sandbox, { filename: 'unraid-file-station.user.js' });
   return { api: sandbox.window.__UFS_TEST_API__, rows };
@@ -186,7 +188,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.0/);
+  assert.match(script, /@version\s+0\.2\.1/);
 });
 
 
@@ -490,7 +492,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.0/);
+  assert.match(script, /@version\s+0\.2\.1/);
 });
 
 
@@ -875,4 +877,66 @@ test('v0.2.0 模拟失败可恢复，且没有模拟执行器时拒绝确认', a
   assert.match(failed.error,/模拟任务失败/);
   assert.equal(runner.review({type:'mkdir',parent:'/mnt/user/downloads',name:'retry'}).status,
     'awaiting-confirmation');
+});
+
+
+test('v0.2.1 文件名限制危险字符和 UTF-8 字节边界', () => {
+  const {api}=createAPI();
+  assert.equal(api.FILE_WRITES_ENABLED,false);
+  assert.equal(api.CREATE_FOLDER_ENABLED,true);
+  assert.equal(api.safeWriteName('中'.repeat(85)),true);
+  assert.equal(api.safeWriteName('中'.repeat(86)),false);
+  for (const name of ['a"b',"a'b",'a&b','a<b','a>b','a;b','x%20','x\rtask','folder/child','\ud800']) {
+    assert.equal(api.safeWriteName(name),false,JSON.stringify(name));
+  }
+  assert.equal(api.safeWritePath('/mnt/user/TimeMachine/新建文件夹'),true);
+  assert.equal(api.safeWritePath('/mnt/user/TimeMachine/a"b'),false);
+});
+
+test('v0.2.1 原生任务读取格式及任务身份匹配', () => {
+  const {api}=createAPI();
+  assert.equal(api.parseNativeActive(''),null);
+  assert.throws(()=>api.parseNativeActive('<html>login</html>'),/状态格式异常/);
+  assert.throws(()=>api.parseNativeActive('{"action":0}'),/状态不完整/);
+  const task=api.parseNativeActive('{"action":"0","source":"/mnt/user/downloads","target":"新目录"}');
+  assert.equal(api.matchesCreateTask(task,{source:'/mnt/user/downloads',name:'新目录'}),true);
+  assert.equal(api.matchesCreateTask(task,{source:'/mnt/user/downloads',name:'other'}),false);
+  assert.equal(api.matchesCreateTask({...task,action:6},{source:'/mnt/user/downloads',name:'新目录'}),false);
+});
+
+test('v0.2.1 未经列表验证即使 HTTP 200 也不报告成功', async () => {
+  const modes=[];
+  const {api}=createAPI({fetch:async(url,opts)=>{
+    assert.equal(url,'/webGui/include/Control.php');
+    assert.equal(opts.method,'POST');
+    assert.equal(opts.credentials,'same-origin');
+    const body=new URLSearchParams(opts.body);
+    modes.push(body.get('mode'));
+    assert.equal(body.get('csrf_token'),'test-csrf');
+    if(body.get('mode')==='file') {
+      assert.equal(body.get('action'),'0');
+      assert.equal(decodeURIComponent(body.get('source')),'/mnt/user/downloads');
+      assert.equal(decodeURIComponent(body.get('target')),'测试文件夹');
+    }
+    return {ok:true,text:async()=>''};
+  }});
+  const plan=api.planFileOperation({type:'mkdir',parent:'/mnt/user/downloads',name:'测试文件夹'});
+  await assert.rejects(api.createNativeFolder(plan),/结果不确定.*无法在目标目录确认/);
+  assert.deepEqual(modes,['read','file','read','read']);
+});
+
+test('v0.2.1 原生任务占用与缺失 CSRF 均在写入前拦截', async () => {
+  const modes=[];
+  const mock=async(_url,opts)=>{
+    const mode=new URLSearchParams(opts.body).get('mode');
+    modes.push(mode);
+    return {ok:true,text:async()=>JSON.stringify({action:'6',source:'/mnt/user/downloads/a',target:''})};
+  };
+  const plan={type:'mkdir',parent:'/mnt/user/downloads',name:'test'};
+  const {api}=createAPI({fetch:mock});
+  await assert.rejects(api.createNativeFolder(api.planFileOperation(plan)),/正在执行其他原生文件任务/);
+  assert.deepEqual(modes,['read']);
+  const {api:missing}=createAPI({fetch:mock,csrfToken:null});
+  await assert.rejects(missing.createNativeFolder(missing.planFileOperation(plan)),/CSRF Token/);
+  assert.deepEqual(modes,['read']);
 });
