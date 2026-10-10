@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.0
-// @description  DSM-inspired File Station (read-only v0.2.0 operation previews) for Unraid 7.2.2
+// @version      0.2.1
+// @description  DSM-inspired File Station with native new-folder support for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
 // @grant        none
@@ -167,10 +167,11 @@
 
 
 
-  // v0.2.0: browser-only preparation for native file operations.
+  // v0.2.1: create-folder is separately enabled; all other writes remain previews.
   // IMPORTANT: no production writer is registered. This is a dry-run contract,
   // not an authorization boundary or proof that a filesystem path is safe.
   const FILE_WRITES_ENABLED = false;
+  const CREATE_FOLDER_ENABLED = true;
   const NATIVE_CONTROL_URL = '/webGui/include/Control.php';
   const NATIVE_TASK_EVENTS = '/sub/filemanager';
 
@@ -178,9 +179,12 @@
     // Control.php performs an additional rawurldecode; reject '%' until its
     // complete encoding behavior is exercised against a real test share.
     // Reject CR/LF because the native task file separates sources with CR.
-    return typeof name === 'string' && name.length > 0 && name.length <= 255 &&
-      name !== '.' && name !== '..' && name.trim() === name &&
-      !/[\/\\%\u0000-\u001f\u007f]/.test(name);
+    if (typeof name !== 'string' || !name || name === '.' || name === '..' ||
+        name.trim() !== name || /[\/\\%"'&<>;\u0000-\u001f\u007f]/.test(name)) return false;
+    try {
+      // EncodeURIComponent counts Unicode as UTF-8 bytes, unlike name.length.
+      return encodeURIComponent(name).replace(/%[0-9a-f]{2}/gi, 'x').length <= 255;
+    } catch (_) { return false; }
   }
   function safeWritePath(path, allowShareRoot = false) {
     if (!safePath(path) || path === PREFIX || path.endsWith('/') || path.includes('//')) return false;
@@ -292,6 +296,131 @@
       return snapshot();
     }
     return Object.freeze({ review, confirm, cancel, snapshot });
+  }
+
+
+  // Unraid 7.2.2 is a shared global task slot. No API here can reserve it
+  // atomically across tabs. The user must accept this residual race.
+  function nativeCsrfToken() {
+    const token = window.csrf_token;
+    if (typeof token !== 'string' || !token) throw new Error('无法取得 Unraid CSRF Token，请刷新 WebGUI');
+    return token;
+  }
+  async function postNativeControl(fields) {
+    const body = new URLSearchParams({ ...fields, csrf_token: nativeCsrfToken() });
+    const response = await fetch(NATIVE_CONTROL_URL, {
+      method: 'POST', credentials: 'same-origin', cache: 'no-store',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+      body: body.toString(), signal: lifecycle.signal
+    });
+    if (!response.ok) throw new Error('原生文件接口 HTTP ' + response.status);
+    return response.text();
+  }
+  function parseNativeActive(raw) {
+    if (!raw || !String(raw).trim()) return null;
+    let data;
+    try { data = JSON.parse(raw); } catch (_) { throw new Error('原生任务状态格式异常，无法安全操作'); }
+    if (!data || typeof data !== 'object' || Array.isArray(data) ||
+        !Number.isInteger(Number(data.action)) || typeof data.source !== 'string' ||
+        typeof data.target !== 'string') {
+      throw new Error('原生任务状态不完整，无法安全操作');
+    }
+    return data;
+  }
+  async function readNativeActive() {
+    return parseNativeActive(await postNativeControl({ mode: 'read' }));
+  }
+  function matchesCreateTask(active, plan) {
+    return active && Number(active.action) === 0 &&
+      active.source === plan.source && active.target === plan.name;
+  }
+  function observeNativeProgress(onProgress) {
+    if (typeof window.NchanSubscriber !== 'function') return () => {};
+    let subscriber;
+    try {
+      subscriber = new window.NchanSubscriber(NATIVE_TASK_EVENTS, { subscriber: 'websocket' });
+      subscriber.on('message', (raw) => {
+        try {
+          const data = JSON.parse(raw);
+          if (data && typeof data === 'object') onProgress(data);
+        } catch (_) { /* Malformed progress events cannot authorize success. */ }
+      });
+      subscriber.start();
+    } catch (_) { /* Read-only task polling remains available. */ }
+    return () => { try { subscriber?.stop(); } catch (_) {} };
+  }
+  function waitNative(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+  async function createNativeFolder(plan, progress = () => {}) {
+    if (!CREATE_FOLDER_ENABLED || !plan || plan.type !== 'mkdir' ||
+        plan.conflictPolicy !== 'fail' || !safeWritePath(plan.source, true) ||
+        !safeWriteName(plan.name) || plan.target !== plan.source + '/' + plan.name) {
+      throw new Error('无效的新建文件夹计划');
+    }
+    if (isDemo && window.__UFS_TEST_MODE__ !== true) {
+      throw new Error('演示模式不允许真实写入');
+    }
+    // Preflight must be fresh; state.entries might be filtered, sorted or stale.
+    const entries = await listDirectory(plan.source);
+    if (entries.some(entry => entry.path === plan.target || entry.name === plan.name)) {
+      throw new Error('同名文件或文件夹已存在，未执行创建');
+    }
+    if (await readNativeActive()) throw new Error('Unraid 正在执行其他原生文件任务，请稍后重试');
+    // Verify CSRF before starting the subscriber or attempting any write.
+    nativeCsrfToken();
+    let afterRequest = false;
+    let eventError = '';
+    let eventDone = false;
+    const unwatch = observeNativeProgress(data => {
+      if (typeof data.status === 'string') {
+        progress(data.status.replace(/<[^>]*>/g, '').slice(0, 130));
+      }
+      if (data.error) eventError = String(data.error).replace(/<[^>]*>/g, '').slice(0, 200);
+      if (data.done === 1) eventDone = true;
+    });
+    try {
+      // Like Unraid's native Browse.page, values are inner URL-encoded because
+      // Control.php applies rawurldecode again after parsing the form body.
+      afterRequest = true;
+      const reply = await postNativeControl({
+        mode: 'file', action: '0', title: encodeURIComponent('新建文件夹'),
+        source: encodeURIComponent(plan.source), target: encodeURIComponent(plan.name),
+        hdlink: '', sparse: '', exist: '', zfs: ''
+      });
+      if (reply.trim()) throw new Error('原生接口返回了非预期内容');
+      progress('正在等待 Unraid 确认任务…');
+      const deadline = Date.now() + 30000;
+      let idleChecks = 0;
+      while (Date.now() < deadline) {
+        await waitNative(500);
+        const active = await readNativeActive();
+        if (active) {
+          if (!matchesCreateTask(active, plan)) {
+            throw new Error('原生任务被其他操作占用，无法确认创建结果');
+          }
+          idleChecks = 0;
+        } else {
+          idleChecks++;
+          // Two consecutive idle checks avoid checking before the native
+          // daemon has observed the task file. No status event is proof alone.
+          if (idleChecks >= 2 || eventDone) break;
+        }
+      }
+      if (idleChecks === 0) throw new Error('原生创建任务仍在进行或无法确认结束');
+      if (eventError) throw new Error('Unraid 报告任务错误：' + eventError);
+      // A status event / HTTP 200 is never the success criterion.
+      const verified = await listDirectory(plan.source);
+      const created = verified.find(entry => entry.path === plan.target);
+      if (!created || !created.folder) throw new Error('无法在目标目录确认新建文件夹，请先手动刷新检查');
+      return created;
+    } catch (error) {
+      if (afterRequest) {
+        throw new Error('创建请求可能已被 Unraid 接收；结果不确定，请刷新目录核实后再操作。详情：' +
+          String(error?.message || error));
+      }
+      throw error;
+    } finally {
+      unwatch();
+    }
   }
 
   // Small local SVG set: no external fonts, CDNs or global icon CSS.
