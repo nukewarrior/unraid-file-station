@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.1.0
+// @version      0.1.1
 // @description  DSM-inspired read-only file browser inside Unraid WebGUI 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
