@@ -186,7 +186,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.1\.15/);
+  assert.match(script, /@version\s+0\.1\.16/);
 });
 
 
@@ -490,7 +490,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.1\.15/);
+  assert.match(script, /@version\s+0\.1\.16/);
 });
 
 
@@ -725,4 +725,15 @@ test('v0.1.15 虚拟渲染保留全量 Shift 选择索引及原有位置和列�
   assert.match(script,/ufs-virtual-grid/);
   assert.match(script,/scheduleVirtualWindow\(\)/);
   assert.match(script,/visibleCache && visibleCache\.entries === state\.entries/);
+});
+
+
+test('v0.1.16 只禁用虚拟文件区的滚动锚定，保留原生滚动与正常列表', () => {
+  assert.match(script, /#ufs-app \.ufs-list\.ufs-virtualized\{overflow-anchor:none\}/);
+  assert.match(script, /#ufs-app \.ufs-list\{min-width:0;min-height:0;overflow:auto;flex:1/);
+  assert.match(script, /#ufs-app \.ufs-list,#ufs-app \.ufs-sidebar,#ufs-app \.ufs-inspector\{overscroll-behavior:contain\}/);
+  assert.match(script, /list\.addEventListener\('scroll', \(\) => \{/);
+  assert.match(script, /'\#ufs-app \.ufs-virtual-spacer\{height:0/);
+  assert.doesNotMatch(script, /#ufs-app \.ufs-sidebar\{overflow-anchor:none/);
+  assert.doesNotMatch(script, /addEventListener\('wheel'/);
 });
