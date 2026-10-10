@@ -138,14 +138,24 @@ test('文件排序保持文件夹在前并能切换大小、时间和名称顺�
   assert.equal(api.visibleEntries().length, 2);
 });
 
-test('只读工具栏全部显式禁用且文件图标不使用 emoji', () => {
-  assert.match(script, /class="ufs-ico ufs-write" disabled/);
-  assert.doesNotMatch(script, /'📁'|'📄'/);
+test('只读版本默认只包含两条工具行，移除长期禁用的写入栏', () => {
+  const { api } = createAPI();
+  const header = api.renderHeaderMarkup();
+  const navigation = api.renderBrowserBarMarkup();
+  const selection = api.renderSelectionBarMarkup();
+  assert.match(header, /class="ufs-top"/);
+  assert.match(header, /class="ufs-tabs"/);
+  assert.match(header, /ufs-more/);
+  assert.match(navigation, /class="ufs-navigation"/);
+  assert.match(navigation, /ufs-search-trigger/);
+  assert.match(navigation, /ufs-grid-button/);
+  assert.match(selection, /class="ufs-selection-bar"[^>]*hidden/);
+  assert.doesNotMatch(header + navigation + selection, /ufs-toolbar|ufs-write/);
   assert.match(script, /const ICONS =/);
+  assert.doesNotMatch(script, /'📁'|'📄'/);
   assert.match(script, /nativeBreadcrumb = \$\('\.title \.left'\)/);
   assert.match(script, /footer = isDemo \? null : document\.querySelector\('#footer'\)/);
 });
-
 
 test('回归：滚动页面不能让 File Station 的高度不断增长', () => {
   const { api } = createAPI();
@@ -168,13 +178,29 @@ test('只锁定增强版 Browse 外层滚动，不再监听 body 尺寸变化', 
 });
 
 
-test('工具栏只允许横向内容溢出，不绘制多余滚动条', () => {
-  assert.match(script, /#ufs-app \.ufs-toolbar\{height:44px;[^']*overflow-x:auto;overflow-y:hidden;scrollbar-width:none/);
-  assert.match(script, /#ufs-app \.ufs-toolbar::-webkit-scrollbar\{display:none\}/);
-  assert.match(script, /#ufs-app \.ufs-tabs::-webkit-scrollbar\{height:4px\}/);
-  // The file list and tree must retain their own scrollable surfaces.
+test('统一导航栏保留内部滚动，且选中操作栏默认隐藏', () => {
+  const { api } = createAPI();
+  assert.match(api.renderBrowserBarMarkup(), /ufs-search[^"]*"[^>]*hidden/);
+  assert.match(api.renderSelectionBarMarkup(), /ufs-selection-count/);
+  assert.match(script, /#ufs-app \.ufs-navigation\{height:44px/);
+  assert.match(script, /#ufs-app \[hidden\]\{display:none!important/);
   assert.match(script, /#ufs-app \.ufs-sidebar\{[^']*overflow:auto/);
   assert.match(script, /#ufs-app \.ufs-list\{[^']*overflow:auto/);
+});
+
+test('选中操作栏根据已选项目提供可用操作', () => {
+  const { api } = createAPI();
+  api.state.entries = [
+    {path:'/mnt/user/downloads/Photos', name:'Photos', folder:true},
+    {path:'/mnt/user/downloads/one.zip', name:'one.zip', folder:false}
+  ];
+  assert.equal(api.selectedEntries().length, 0);
+  api.state.selection.add('/mnt/user/downloads/one.zip');
+  assert.equal(api.selectedEntries().length, 1);
+  api.state.selection.add('/mnt/user/downloads/Photos');
+  assert.equal(api.selectedEntries().length, 2);
+  assert.match(script, /chosen\.length !== 1 \|\| chosen\[0\]\.folder/);
+  assert.match(script, /setSearchOpen\(false\)/);
 });
 
 test('原生上下滚动浮动按钮仅在增强版 File Station 页面隐藏', () => {
