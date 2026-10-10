@@ -103,6 +103,83 @@ test('7.2.2 Browse 表格解析映射目录元信息并过滤越界行', () => {
   assert.equal(files[1].size, null);
 });
 
+test('LOCATION 仅从 Unraid device_* 节点提取，不混入加密状态提示或重复设备', () => {
+  const { api } = createAPI();
+  const cell = {
+    textContent: 'Not encrypted disk1 Locked: unknown error cache disk1',
+    querySelectorAll: selector => {
+      assert.equal(selector, 'span[id^="device_"]');
+      return [
+        { textContent: 'disk1' },
+        { textContent: ' cache ' },
+        { textContent: 'disk1' },
+        { textContent: '---' },
+        { textContent: ' ' }
+      ];
+    }
+  };
+  assert.deepEqual([...api.extractLocations(cell)], ['disk1', 'cache']);
+  assert.deepEqual([...api.extractLocations(null)], []);
+  assert.deepEqual([...api.extractLocations({ textContent: 'Not encrypted disk1' })], []);
+  assert.deepEqual([...api.locationNames({})], []);
+});
+
+test('真实 Browse 行同时解析 owner 与 LOCATION：单磁盘、多设备、空位置与路径限制', () => {
+  const { api, rows } = createAPI();
+  const entries = [
+    { path:'/mnt/user/media/movie.mkv', type:'f', owner:'nobody', devices:['disk1','disk2'] },
+    { path:'/mnt/user/media/photos', type:'d', owner:'root', devices:['cache'] },
+    { path:'/mnt/user/media/unknown.iso', type:'f', owner:'root', devices:[] },
+    { path:'/mnt/disk1/secret.txt', type:'f', owner:'root', devices:['disk1'] }
+  ];
+  for (const e of entries) {
+    const icon = makeIcon(e.path, e.type);
+    const cells = icon.closest().cells;
+    cells[3].textContent = e.owner;
+    cells[7].querySelectorAll = () => e.devices.map(textContent => ({ textContent }));
+    // makeIcon.closest() creates a fresh row each time: retain one row for the stub.
+    icon.closest = () => ({ cells });
+    rows.push(icon);
+  }
+  const parsed = api.parseBrowse('<tbody>test</tbody>', '/mnt/user/media');
+  assert.equal(parsed.length, 3);
+  assert.deepEqual([...parsed[0].locations], ['disk1','disk2']);
+  assert.equal(parsed[0].owner, 'nobody');
+  assert.deepEqual([...parsed[1].locations], ['cache']);
+  assert.equal(parsed[1].owner, 'root');
+  assert.deepEqual([...parsed[2].locations], []);
+});
+
+test('OWNER 和 LOCATION 列可分别升序降序排列，仍保持目录在文件之前', () => {
+  const { api } = createAPI();
+  api.state.entries = [
+    { name:'z.zip', folder:false, owner:'root', locations:['disk2'] },
+    { name:'a.zip', folder:false, owner:'nobody', locations:['cache','disk1'] },
+    { name:'dir', folder:true, owner:'root', locations:['disk1'] },
+    { name:'unknown.zip', folder:false, owner:'root', locations:[] }
+  ];
+  api.state.sortKey = 'owner';
+  api.state.sortDirection = 1;
+  assert.equal(api.visibleEntries().map(x=>x.name).join(','), 'dir,a.zip,unknown.zip,z.zip');
+  api.state.sortDirection = -1;
+  assert.equal(api.visibleEntries().map(x=>x.name).join(','), 'dir,unknown.zip,z.zip,a.zip');
+  api.state.sortKey = 'locations';
+  api.state.sortDirection = 1;
+  assert.equal(api.visibleEntries().map(x=>x.name).join(','), 'dir,unknown.zip,a.zip,z.zip');
+  api.state.sortDirection = -1;
+  assert.equal(api.visibleEntries().map(x=>x.name).join(','), 'dir,z.zip,a.zip,unknown.zip');
+});
+
+test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格视图继续隐藏详情', () => {
+  assert.match(script, /'owner', 'OWNER'/);
+  assert.match(script, /'locations', 'LOCATION'/);
+  assert.match(script, /renderLocationTags\(entry\)/);
+  assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
+  assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
+  assert.match(script, /#ufs-app \.ufs-location-tag/);
+  assert.match(script, /@version\s+0\.1\.8/);
+});
+
 test('非 Unraid 页面不执行目录读取或插入 UI', () => {
   const sandbox = {
     document: { documentElement: { getAttribute: () => null } },
