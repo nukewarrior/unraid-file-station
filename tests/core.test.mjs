@@ -166,3 +166,21 @@ test('只锁定增强版 Browse 外层滚动，不再监听 body 尺寸变化', 
   assert.doesNotMatch(script, /window\.addEventListener\('scroll', schedule/);
   assert.match(script, /overscroll-behavior:contain/);
 });
+
+
+test('工具栏只允许横向内容溢出，不绘制多余滚动条', () => {
+  assert.match(script, /#ufs-app \.ufs-toolbar\{height:44px;[^']*overflow-x:auto;overflow-y:hidden;scrollbar-width:none/);
+  assert.match(script, /#ufs-app \.ufs-toolbar::-webkit-scrollbar\{display:none\}/);
+  assert.match(script, /#ufs-app \.ufs-tabs::-webkit-scrollbar\{height:4px\}/);
+  // The file list and tree must retain their own scrollable surfaces.
+  assert.match(script, /#ufs-app \.ufs-sidebar\{[^']*overflow:auto/);
+  assert.match(script, /#ufs-app \.ufs-list\{[^']*overflow:auto/);
+});
+
+test('原生上下滚动浮动按钮仅在增强版 File Station 页面隐藏', () => {
+  assert.match(script, /html\.ufs-active-page \.move_to_end,html\.ufs-active-page \.back_to_top\{display:none!important\}/);
+  assert.match(script, /document\.documentElement\.classList\.add\('ufs-active-page'\)/);
+  assert.match(script, /document\.documentElement\.classList\.remove\('ufs-active-page'\)/);
+  // Avoid broad selectors that would disable global arrows on other Unraid pages.
+  assert.doesNotMatch(script, /'\.move_to_end,\.back_to_top\{display:none!important\}'/);
+});
