@@ -516,6 +516,7 @@
     '#ufs-app .ufs-status{height:30px;border-top:1px solid var(--ufs-border);border-bottom:0;background:var(--ufs-panel);justify-content:space-between;padding:0 12px;color:var(--ufs-muted);font-size:12px;gap:14px}#ufs-app .ufs-status span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}',
     '#ufs-app .ufs-empty{padding:48px 20px;text-align:center;color:var(--ufs-muted)}#ufs-app .ufs-error{color:#c13d37}#ufs-app .ufs-menu{position:fixed;z-index:2147483647;background:var(--ufs-bg);border:1px solid var(--ufs-border);border-radius:7px;box-shadow:0 10px 32px #0002;min-width:190px;padding:5px}',
     '#ufs-app .ufs-menu button{background:transparent;border:0;display:block;width:100%;text-align:left;padding:8px 12px;color:var(--ufs-text)}#ufs-app .ufs-menu button:hover{background:var(--ufs-hover)}#ufs-app .ufs-toast{position:absolute;bottom:42px;right:25px;background:#30363c;color:#fff;padding:10px 14px;border-radius:6px;box-shadow:0 5px 18px #0003;max-width:360px}',
+    '#ufs-app .ufs-dialog-overlay{position:absolute;inset:0;z-index:2147483640;display:flex;align-items:center;justify-content:center;background:rgba(18,25,34,.35);padding:16px}#ufs-app .ufs-create-dialog{width:min(420px,100%);max-height:calc(100% - 20px);overflow:auto;background:var(--ufs-bg);border:1px solid var(--ufs-border);border-radius:9px;padding:17px;box-shadow:0 18px 55px #0003;display:flex;flex-direction:column;gap:13px}#ufs-app .ufs-create-head{display:flex;align-items:center;justify-content:space-between}#ufs-app .ufs-create-head h3{font-size:15px;margin:0;font-weight:650}#ufs-app .ufs-create-dialog .ufs-create-label{display:block;font-size:12px;color:var(--ufs-muted);margin:0 0 5px}#ufs-app .ufs-create-location{font-size:12px;overflow-wrap:anywhere;color:var(--ufs-muted)}#ufs-app .ufs-create-form{display:flex;flex-direction:column;gap:13px;margin:0}#ufs-app .ufs-create-input{width:100%;height:34px;min-height:34px;border:1px solid var(--ufs-border);color:var(--ufs-text);background:var(--ufs-bg);padding:6px 9px}#ufs-app .ufs-create-feedback{min-height:17px;font-size:12px;color:var(--ufs-muted);overflow-wrap:anywhere}#ufs-app .ufs-create-feedback.ufs-error{color:#c13d37}#ufs-app .ufs-create-buttons{display:flex;justify-content:flex-end;gap:8px}#ufs-app .ufs-create-buttons button{padding:6px 15px;border-radius:5px;border:1px solid var(--ufs-border);background:var(--ufs-bg);color:var(--ufs-text)}#ufs-app .ufs-create-buttons .ufs-create-submit{background:var(--ufs-accent);color:#fff;border-color:var(--ufs-accent)}#ufs-app .ufs-create-head .ufs-create-dismiss{border:0;background:transparent;color:var(--ufs-muted);padding:3px;display:flex}',
     // Only the enhanced Browse view is locked; the native view and every other Unraid page scroll normally.
     'html.ufs-active-page,html.ufs-active-page body{overflow-y:hidden!important;overscroll-behavior-y:none}',
     // Unraid adds two fixed global page-scroll arrows; neither applies to our internally scrolling browser.
@@ -1355,7 +1356,7 @@
     if (currentMenu?._ufsTrigger) currentMenu._ufsTrigger.setAttribute('aria-expanded', 'false');
     if (currentMenu) currentMenu.remove();
     currentMenu = null;
-    for (const selector of ['.ufs-more', '.ufs-operations']) {
+    for (const selector of ['.ufs-more', '.ufs-operations', '.ufs-create-trigger']) {
       const trigger = app && $(selector, app);
       if (trigger) trigger.setAttribute('aria-expanded', 'false');
     }
@@ -1518,7 +1519,7 @@
       '<div class="ufs-brand"><span data-ufs-icon="folder-open" class="ufs-mark"></span><span class="ufs-heading">File Station</span></div>',
       '<span class="ufs-brand-divider" aria-hidden="true"></span>',
       '<div class="ufs-tabs" aria-label="目录标签页"></div>',
-      '<div class="ufs-app-actions"><span class="ufs-preview-chip">只读预览</span>',
+      '<div class="ufs-app-actions"><span class="ufs-preview-chip">新建文件夹可用</span>',
       '<button type="button" class="ufs-ico ufs-refresh" title="刷新目录" aria-label="刷新目录"><span data-ufs-icon="refresh"></span></button>',
       '<button type="button" class="ufs-ico ufs-more" title="更多选项" aria-label="更多选项" aria-haspopup="menu" aria-expanded="false"><span data-ufs-icon="more"></span></button>',
       '</div></div>'
@@ -1540,7 +1541,8 @@
     return [
       '<div class="ufs-file-actions" role="toolbar" aria-label="文件内容和视图">',
       '<span class="ufs-section-label">文件</span>',
-      '<button type="button" class="ufs-ico ufs-operations" title="文件操作" aria-label="文件操作" aria-haspopup="menu" aria-expanded="false">操作 <span data-ufs-icon="chevron-down"></span></button>',
+      '<button type="button" class="ufs-ico ufs-create-trigger" title="新建" aria-label="新建" aria-haspopup="menu" aria-expanded="false"><span data-ufs-icon="plus"></span> 新建 <span data-ufs-icon="chevron-down"></span></button>',
+       '<button type="button" class="ufs-ico ufs-operations" title="文件操作" aria-label="文件操作" aria-haspopup="menu" aria-expanded="false">操作 <span data-ufs-icon="chevron-down"></span></button>',
       '<span class="ufs-spacer"></span>',
       '<div class="ufs-view-controls" role="group" aria-label="文件视图">',
       '<button type="button" class="ufs-ico ufs-list-button" title="列表视图" aria-label="列表视图"><span data-ufs-icon="list"></span></button>',
@@ -1573,7 +1575,7 @@
       renderHeaderMarkup(),
       renderWorkspaceMarkup(),
       '<div class="ufs-status"><span class="ufs-count">准备就绪</span>',
-      '<span>只读预览 · 写入操作请使用原生文件管理器</span></div>'
+      '<span>支持新建文件夹 · 其他写入请使用原生文件管理器</span></div>'
     ].join('');
     $$('[data-ufs-icon]', app).forEach((placeholder) => {
       placeholder.replaceWith(icon(placeholder.dataset.ufsIcon,
@@ -1581,7 +1583,7 @@
     });
     $('.ufs-refresh', app).addEventListener('click', refreshDirectory);
     $('.ufs-more', app).addEventListener('click', showAppMenu);
-    // Writes remain disabled in v0.1; native Unraid is the only write surface.
+    // Only create-folder is writable in v0.2.1; other native actions remain disabled.
     $('.ufs-back', app).addEventListener('click', () => stepHistory(-1));
     $('.ufs-next', app).addEventListener('click', () => stepHistory(1));
     $('.ufs-up', app).addEventListener('click', () => {
@@ -1605,6 +1607,7 @@
       if (event.detail > 0) event.currentTarget.blur(); // pointer click only; keyboard focus stays visible
     });
     $('.ufs-operations', app).addEventListener('click', showOperationsMenu);
+    $('.ufs-create-trigger', app).addEventListener('click', showCreateMenu);
     setupSidebarResizer();
     onCleanup(setupListScrollbars($('.ufs-list', app)));
     $('.ufs-list', app).addEventListener('scroll', scheduleVirtualWindow, {passive:true});
@@ -1631,10 +1634,12 @@
       if (destroyed || !app.isConnected) return;
       const more = $('.ufs-more', app);
       const operations = $('.ufs-operations', app);
+      const create = $('.ufs-create-trigger', app);
       const currentTrigger = currentMenu && currentMenu._ufsTrigger;
       if (currentMenu && !currentMenu.contains(event.target) &&
           !(more && more.contains(event.target)) &&
           !(operations && operations.contains(event.target)) &&
+          !(create && create.contains(event.target)) &&
           !(currentTrigger && currentTrigger.contains(event.target))) closeMenu();
     }, { signal: lifecycle.signal });
     document.addEventListener('keydown', (event) => {
@@ -1862,7 +1867,7 @@
   }
   // Explicit opt-in hook for pure-function tests; never enabled on production WebGUI.
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
-    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, availableHeight, visibleEntries, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
+    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, parseNativeActive, matchesCreateTask, createNativeFolder, availableHeight, visibleEntries, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();
