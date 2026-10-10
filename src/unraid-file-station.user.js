@@ -599,8 +599,23 @@
     let tab = state.tabs.find((item) => item.id === preferredTabId);
     if (!tab) tab = activeTab();
     if (!tab) { addTab(path); return true; }
-    if (state.activeId !== tab.id) state.activeId = tab.id;
-    if (tab.path === path) { renderTabs(); renderNavigation(); return true; }
+    const switchedTab = state.activeId !== tab.id;
+    if (switchedTab) state.activeId = tab.id;
+    if (tab.path === path) {
+      if (switchedTab) {
+        state.selection.clear();
+        state.lastIndex = -1;
+        state.filter = '';
+        const search = $('.ufs-search', app);
+        if (search) search.value = '';
+        renderTabs();
+        void refreshDirectory(); // A matching path on another tab still needs its content.
+      } else {
+        renderTabs();
+        renderNavigation();
+      }
+      return true;
+    }
     let index = tab.history.lastIndexOf(path);
     if (index === -1) {
       tab.history = tab.history.slice(0, tab.cursor + 1);
