@@ -145,3 +145,24 @@ test('只读工具栏全部显式禁用且文件图标不使用 emoji', () => {
   assert.match(script, /nativeBreadcrumb = \$\('\.title \.left'\)/);
   assert.match(script, /footer = isDemo \? null : document\.querySelector\('#footer'\)/);
 });
+
+
+test('回归：滚动页面不能让 File Station 的高度不断增长', () => {
+  const { api } = createAPI();
+  // The app remains at document position 280, but its viewport top moves
+  // upward as the browser scrolls. Height MUST stay unchanged.
+  const base = api.availableHeight(280, 895, 960, 0);
+  assert.equal(base, 603);
+  for (const scrollY of [20, 120, 350, 700, 1800]) {
+    assert.equal(api.availableHeight(280 - scrollY, 895, 960, scrollY), base);
+  }
+});
+
+test('只锁定增强版 Browse 外层滚动，不再监听 body 尺寸变化', () => {
+  assert.match(script, /html\.ufs-active-page,html\.ufs-active-page body\{overflow-y:hidden!important/);
+  assert.match(script, /document\.documentElement\.classList\.add\('ufs-active-page'\)/);
+  assert.match(script, /document\.documentElement\.classList\.remove\('ufs-active-page'\)/);
+  assert.doesNotMatch(script, /const targets = \[document\.body,/);
+  assert.doesNotMatch(script, /window\.addEventListener\('scroll', schedule/);
+  assert.match(script, /overscroll-behavior:contain/);
+});
