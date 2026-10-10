@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.1.1
+// @version      0.1.2
 // @description  DSM-inspired read-only file browser inside Unraid WebGUI 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -166,6 +166,9 @@
     '#ufs-app .ufs-status{height:30px;border-top:1px solid var(--ufs-border);border-bottom:0;background:var(--ufs-panel);justify-content:space-between;padding:0 12px;color:var(--ufs-muted);font-size:12px;gap:14px}#ufs-app .ufs-status span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}',
     '#ufs-app .ufs-empty{padding:48px 20px;text-align:center;color:var(--ufs-muted)}#ufs-app .ufs-error{color:#c13d37}#ufs-app .ufs-menu{position:fixed;z-index:2147483647;background:var(--ufs-bg);border:1px solid var(--ufs-border);border-radius:7px;box-shadow:0 10px 32px #0002;min-width:190px;padding:5px}',
     '#ufs-app .ufs-menu button{background:transparent;border:0;display:block;width:100%;text-align:left;padding:8px 12px;color:var(--ufs-text)}#ufs-app .ufs-menu button:hover{background:var(--ufs-hover)}#ufs-app .ufs-toast{position:absolute;bottom:42px;right:25px;background:#30363c;color:#fff;padding:10px 14px;border-radius:6px;box-shadow:0 5px 18px #0003;max-width:360px}',
+    // Only the enhanced Browse view is locked; the native view and every other Unraid page scroll normally.
+    'html.ufs-active-page,html.ufs-active-page body{overflow-y:hidden!important;overscroll-behavior-y:none}',
+    '#ufs-app .ufs-list,#ufs-app .ufs-sidebar,#ufs-app .ufs-inspector{overscroll-behavior:contain}',
     '.ufs-hide-native{display:none!important}#ufs-native-enable{margin:8px;padding:7px 12px;background:#e87526;color:#fff;border:0;border-radius:5px;cursor:pointer}',
     '@media(max-width:980px){#ufs-app .ufs-inspector{display:none}#ufs-app .ufs-entry,#ufs-app .ufs-head{grid-template-columns:minmax(140px,1fr) 85px 150px}#ufs-app .ufs-permission{display:none}}',
     '@media(max-width:720px){#ufs-app .ufs-sidebar{width:42px;flex-basis:42px;padding:4px}#ufs-app .ufs-resizer{display:none}#ufs-app .ufs-sidebar .ufs-tree-name,#ufs-app .ufs-tree-label,#ufs-app .ufs-tree-toggle,#ufs-app .ufs-sidebar .ufs-tree-spacer{display:none}#ufs-app .ufs-toolbar{overflow-x:auto}#ufs-app .ufs-entry,#ufs-app .ufs-head{grid-template-columns:minmax(120px,1fr) 80px}#ufs-app .ufs-date{display:none}#ufs-app .ufs-search{width:90px}}'
@@ -194,6 +197,7 @@
   function nativeMode() {
     if (isDemo) { notify('演示模式没有原生文件管理器'); return; }
     localStorage.setItem(STORE + 'native', '1');
+    document.documentElement.classList.remove('ufs-active-page');
     location.reload();
   }
   function toggleTheme() {
@@ -615,12 +619,22 @@
     return app;
   }
 
-  function availableHeight(appTop, footerTop, viewportHeight) {
-    const bottom = Number.isFinite(footerTop) && footerTop > appTop ? Math.min(footerTop, viewportHeight) : viewportHeight;
-    return Math.max(260, Math.floor(bottom - appTop - 12));
+  function availableHeight(appTop, footerTop, viewportHeight, scrollOffset = 0) {
+    // getBoundingClientRect().top is viewport-relative and becomes negative on page scroll.
+    // Convert to a document-relative anchor before calculating height, preventing the
+    // scroll -> taller app -> more scroll feedback loop seen in Unraid 7.2.2.
+    const documentTop = appTop + Math.max(0, scrollOffset);
+    const bottom = Number.isFinite(footerTop) && footerTop > 0
+      ? Math.min(footerTop, viewportHeight) : viewportHeight;
+    return Math.max(260, Math.floor(bottom - documentTop - 12));
   }
   function startLayoutSync() {
-    // Unraid's collapsible masthead and fixed footer alter usable space without changing window.innerHeight.
+    // The enhanced Browse view scrolls inside the file panes, not the document.
+    // Disable root scrolling only here; leaving other Unraid pages untouched.
+    if (!isDemo) {
+      document.documentElement.classList.add('ufs-active-page');
+      if (window.scrollY) window.scrollTo(0, 0);
+    }
     let scheduled = false;
     const measure = () => {
       scheduled = false;
@@ -628,7 +642,7 @@
       const top = app.getBoundingClientRect().top;
       const footer = isDemo ? null : document.querySelector('#footer');
       const footerTop = footer ? footer.getBoundingClientRect().top : NaN;
-      const height = availableHeight(top, footerTop, window.innerHeight);
+      const height = availableHeight(top, footerTop, window.innerHeight, window.scrollY);
       if (app.style.height !== height + 'px') app.style.height = height + 'px';
     };
     const schedule = () => {
@@ -637,15 +651,17 @@
       requestAnimationFrame(measure);
     };
     window.addEventListener('resize', schedule);
-    window.addEventListener('scroll', schedule, { passive: true });
     if (window.visualViewport) window.visualViewport.addEventListener('resize', schedule);
+    // Never observe document.body: resizing #ufs-app would trigger that observer
+    // and form a self-sustaining layout feedback cycle.
     if (typeof ResizeObserver !== 'undefined') {
       const observer = new ResizeObserver(schedule);
-      const targets = [document.body, document.querySelector('#header'),
-        document.querySelector('header'), document.querySelector('#footer')];
+      const targets = [document.querySelector('#header'),
+        document.querySelector('header'), document.querySelector('nav'), document.querySelector('#footer')];
       [...new Set(targets.filter(Boolean))].forEach((node) => observer.observe(node));
     }
-    // Also handle the WebGUI masthead collapsing after its animation completes.
+    // Recalculate after Unraid's masthead transitions (including collapsed state).
+    document.addEventListener('transitionend', schedule);
     document.addEventListener('click', () => { setTimeout(schedule, 120); setTimeout(schedule, 400); });
     schedule();
   }
