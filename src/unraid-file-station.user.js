@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.1.8
+// @version      0.1.9
 // @description  DSM-inspired read-only file browser inside Unraid WebGUI 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -56,16 +56,51 @@
   function locationNames(entry) {
     return Array.isArray(entry.locations) ? entry.locations.filter((name) => typeof name === 'string' && name.trim()) : [];
   }
+  function summarizeLocations(entry) {
+    const names = locationNames(entry);
+    if (!names.length) return '—';
+    const disks = [];
+    const other = [];
+    const seen = new Set();
+    for (const name of names) {
+      if (seen.has(name)) continue;
+      seen.add(name);
+      const match = /^disk(0|[1-9]\d*)$/.exec(name);
+      if (match) disks.push(Number(match[1]));
+      else other.push(name);
+    }
+    disks.sort((a, b) => a - b);
+    const compact = [];
+    for (let i = 0; i < disks.length;) {
+      let end = i;
+      while (end + 1 < disks.length && disks[end + 1] === disks[end] + 1) end++;
+      compact.push(end > i ? 'disk' + disks[i] + '–disk' + disks[end] : 'disk' + disks[i]);
+      i = end + 1;
+    }
+    return [...compact, ...other].join(', ');
+  }
   function renderLocationTags(entry) {
     const names = locationNames(entry);
     const cell = element('span', 'ufs-extra ufs-location-col');
-    cell.title = names.length ? names.join(', ') : '存储位置未知';
     if (!names.length) {
       cell.append(element('span', 'ufs-muted', '—'));
+      cell.title = '存储位置未知';
       return cell;
     }
-    names.slice(0, 2).forEach((name) => cell.append(element('span', 'ufs-location-tag', name)));
-    if (names.length > 2) cell.append(element('span', 'ufs-location-more', '+' + (names.length - 2)));
+    // Compact sequential disks while retaining the complete source list.
+    // The popover is scrollable for NAS configurations with dozens of disks.
+    const trigger = element('button', 'ufs-location-trigger', summarizeLocations(entry));
+    trigger.type = 'button';
+    trigger.title = names.join(', ');
+    trigger.setAttribute('aria-label', '查看全部 ' + names.length + ' 个存储位置');
+    trigger.setAttribute('aria-haspopup', 'dialog');
+    trigger.setAttribute('aria-expanded', 'false');
+    trigger.addEventListener('click', (event) => {
+      event.stopPropagation(); // A location detail click must not change file selection.
+      showLocationPopover(trigger, names);
+    });
+    trigger.addEventListener('dblclick', (event) => event.stopPropagation());
+    cell.append(trigger);
     return cell;
   }
   function parseBrowse(html, directory) {
@@ -203,8 +238,14 @@
     'html.ufs-active-page .move_to_end,html.ufs-active-page .back_to_top{display:none!important}',
     '#ufs-app .ufs-list,#ufs-app .ufs-sidebar,#ufs-app .ufs-inspector{overscroll-behavior:contain}',
     '.ufs-hide-native{display:none!important}#ufs-native-enable{margin:8px;padding:7px 12px;background:#e87526;color:#fff;border:0;border-radius:5px;cursor:pointer}',
+    // Pointer focus should not leave a colored ring after details is closed.
+    // Preserve the visible outline for keyboard navigation using :focus-visible.
+    '#ufs-app button:focus:not(:focus-visible){outline:none!important;box-shadow:none!important}#ufs-app .ufs-details-button:focus:not(:focus-visible){outline:none!important;box-shadow:none!important}',
+    // Unraid styles can shift button baselines; stretch table-header cells then
+    // center the sort button's contents explicitly inside the header's fixed height.
+    '#ufs-app .ufs-head{align-items:stretch;padding-top:0;padding-bottom:0}#ufs-app .ufs-head>span{display:flex;align-items:center;min-width:0;height:100%;margin:0;padding:0;vertical-align:middle}#ufs-app .ufs-head .ufs-sort-button{display:inline-flex;align-items:center;justify-content:flex-start;width:100%;height:100%;min-height:0;margin:0;padding:0;line-height:1.3;vertical-align:middle}',
     '@media(max-width:1280px) and (min-width:981px){#ufs-app .ufs-entry,#ufs-app .ufs-head{grid-template-columns:minmax(180px,1fr) 85px 155px 105px}#ufs-app .ufs-permission,#ufs-app .ufs-location-col{display:none!important}}',
-    '#ufs-app .ufs-location-col{display:flex;align-items:center;gap:4px;min-width:0;overflow:hidden;white-space:nowrap}#ufs-app .ufs-location-tag,#ufs-app .ufs-location-more{display:inline-block;max-width:100%;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;border-radius:3px;background:var(--ufs-panel);padding:2px 6px;color:var(--ufs-text);font-size:11px;line-height:1.4}#ufs-app .ufs-location-more{flex:0 0 auto;color:var(--ufs-muted)}#ufs-app .ufs-owner{min-width:0;overflow:hidden;text-overflow:ellipsis}',
+    '#ufs-app .ufs-location-col{display:flex;align-items:center;min-width:0;overflow:hidden;white-space:nowrap}#ufs-app .ufs-location-trigger{display:block;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:1px solid transparent;border-radius:4px;background:var(--ufs-panel);padding:3px 7px;text-align:left;color:var(--ufs-text);font-size:11px;line-height:1.35;cursor:pointer!important}#ufs-app .ufs-location-trigger:hover{border-color:var(--ufs-border);background:var(--ufs-hover)}#ufs-app .ufs-location-popover{width:min(420px,calc(100vw - 20px));max-width:none;padding:0;overflow:hidden}#ufs-app .ufs-location-popover-header{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--ufs-border);font-weight:600}#ufs-app .ufs-location-popover-close{width:28px;height:28px;border:0;background:transparent;color:var(--ufs-muted)}#ufs-app .ufs-location-popover-items{display:grid;grid-template-columns:repeat(auto-fill,minmax(85px,1fr));gap:6px;padding:12px;max-height:min(300px,50vh);overflow-y:auto;overscroll-behavior:contain}#ufs-app .ufs-location-device{padding:6px 8px;border-radius:4px;background:var(--ufs-panel);font-size:12px;overflow-wrap:anywhere}#ufs-app .ufs-owner{min-width:0;overflow:hidden;text-overflow:ellipsis}',
     '@media(max-width:980px){#ufs-app .ufs-inspector{display:none}#ufs-app .ufs-entry,#ufs-app .ufs-head{grid-template-columns:minmax(140px,1fr) 85px 150px}#ufs-app .ufs-permission,#ufs-app .ufs-owner,#ufs-app .ufs-location-col{display:none!important}}',
     '@media(max-width:720px){#ufs-app .ufs-sidebar{width:42px;flex-basis:42px;padding:4px}#ufs-app .ufs-resizer{display:none}#ufs-app .ufs-sidebar .ufs-tree-name,#ufs-app .ufs-tree-label,#ufs-app .ufs-tree-toggle,#ufs-app .ufs-sidebar .ufs-tree-spacer{display:none}#ufs-app .ufs-entry,#ufs-app .ufs-head{grid-template-columns:minmax(120px,1fr) 80px}#ufs-app .ufs-date{display:none}#ufs-app .ufs-search{width:90px}}',
     '#ufs-app .ufs-top{height:46px;gap:9px;padding:0 12px}#ufs-app .ufs-brand{display:flex;align-items:center;gap:7px;flex-shrink:0;white-space:nowrap}#ufs-app .ufs-heading{font-size:15px}#ufs-app .ufs-brand-divider{height:19px;width:1px;background:var(--ufs-border);flex-shrink:0}#ufs-app .ufs-preview-chip{font-size:11px;color:var(--ufs-muted);white-space:nowrap}#ufs-app .ufs-app-actions{display:flex;align-items:center;gap:3px;flex-shrink:0}',
@@ -596,6 +637,7 @@
     link.remove();
   }
   function closeMenu() {
+    if (currentMenu?._ufsTrigger) currentMenu._ufsTrigger.setAttribute('aria-expanded', 'false');
     if (currentMenu) currentMenu.remove();
     currentMenu = null;
     for (const selector of ['.ufs-more', '.ufs-operations']) {
@@ -668,6 +710,37 @@
     }
     const rect = trigger.getBoundingClientRect();
     showFileActionMenu(rect.left, rect.bottom + 4, null);
+    trigger.setAttribute('aria-expanded', 'true');
+  }
+  function showLocationPopover(trigger, names) {
+    if (currentMenu && currentMenu.classList.contains('ufs-location-popover') &&
+        currentMenu._ufsTrigger === trigger) {
+      closeMenu();
+      return;
+    }
+    closeMenu();
+    const popup = element('div', 'ufs-menu ufs-location-popover');
+    popup.setAttribute('role', 'dialog');
+    popup.setAttribute('aria-label', '完整存储位置列表');
+    const header = element('div', 'ufs-location-popover-header');
+    header.append(element('span', '', '存储位置（' + names.length + '）'));
+    const close = element('button', 'ufs-location-popover-close', '×');
+    close.type = 'button';
+    close.setAttribute('aria-label', '关闭位置列表');
+    close.addEventListener('click', (event) => { event.stopPropagation(); closeMenu(); });
+    header.append(close);
+    const items = element('div', 'ufs-location-popover-items');
+    names.forEach((name) => items.append(element('span', 'ufs-location-device', name)));
+    popup.append(header, items);
+    // Reuse the same outside-click and Escape handling as the file action menu.
+    popup._ufsTrigger = trigger;
+    app.append(popup);
+    const rect = trigger.getBoundingClientRect();
+    popup.style.left = Math.max(8, Math.min(rect.left, innerWidth - popup.offsetWidth - 8)) + 'px';
+    const below = rect.bottom + 6;
+    popup.style.top = (below + popup.offsetHeight > innerHeight - 8 ?
+      Math.max(8, rect.top - popup.offsetHeight - 6) : below) + 'px';
+    currentMenu = popup;
     trigger.setAttribute('aria-expanded', 'true');
   }
   function showAppMenu() {
@@ -782,7 +855,10 @@
       $('.ufs-details-button', app).classList.toggle('ufs-view-active', state.inspector);
       renderInspector();
     }
-    $('.ufs-details-button', app).addEventListener('click', showDetails);
+    $('.ufs-details-button', app).addEventListener('click', (event) => {
+      showDetails();
+      if (event.detail > 0) event.currentTarget.blur(); // pointer click only; keyboard focus stays visible
+    });
     $('.ufs-operations', app).addEventListener('click', showOperationsMenu);
     setupSidebarResizer();
     $('.ufs-list', app).addEventListener('click', (event) => {
@@ -982,7 +1058,7 @@
   }
   // Explicit opt-in hook for pure-function tests; never enabled on production WebGUI.
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
-    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, renderLocationTags, listDirectory, availableHeight, visibleEntries, selectedEntries, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
+    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, summarizeLocations, renderLocationTags, listDirectory, availableHeight, visibleEntries, selectedEntries, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();
