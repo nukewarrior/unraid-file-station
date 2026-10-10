@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.1.12
+// @version      0.1.13
 // @description  DSM-inspired read-only file browser inside Unraid WebGUI 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -237,6 +237,7 @@
     '#ufs-app .ufs-address>.ufs-svg{width:12px;height:12px;min-width:12px;flex:0 0 12px}',
     '#ufs-app .ufs-workspace{display:flex;flex:1;min-height:0;overflow:hidden}#ufs-app .ufs-sidebar{background:var(--ufs-panel);width:var(--ufs-sidebar-width);flex:0 0 var(--ufs-sidebar-width);min-width:0;overflow:auto;padding:8px 7px}#ufs-app .ufs-resizer{width:5px;flex:0 0 5px;background:var(--ufs-border);cursor:col-resize;touch-action:none;opacity:.7}#ufs-app .ufs-resizer:hover{background:var(--ufs-accent)}',
     '#ufs-app .ufs-tree-label{padding:7px 8px;color:var(--ufs-muted);font-size:12px;font-weight:600;letter-spacing:0}#ufs-app .ufs-tree-row{display:flex;align-items:center;gap:7px;width:100%;height:31px;min-height:31px;padding:0 7px;border:0;background:transparent;text-align:left;color:var(--ufs-text);border-radius:5px;min-width:0}',
+    '#ufs-app .ufs-tree-row.ufs-tree-group:hover{background:transparent!important}#ufs-app .ufs-tree-row.ufs-tree-group{cursor:default}' ,
     '#ufs-app .ufs-tree-row:hover{background:var(--ufs-hover)}#ufs-app .ufs-tree-row.ufs-current{background:var(--ufs-tree-sel);color:var(--ufs-accent);font-weight:600}#ufs-app .ufs-tree-toggle{display:inline-flex;align-items:center;justify-content:center;width:16px;min-width:16px;height:24px;min-height:0;padding:0!important;margin:0;border:0;background:transparent;color:var(--ufs-muted);flex:0 0 16px;line-height:1}',
     '#ufs-app .ufs-tree-spacer{width:16px;flex:0 0 16px}#ufs-app .ufs-tree-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;text-transform:none;letter-spacing:normal}',
     // Browser text selection and I-beam cursors conflict with desktop-style file picking.
@@ -435,7 +436,7 @@
 
   const state = {
     tabs: [], activeId: 0, nextId: 1, entries: [], tree: new Map(),
-    expanded: new Set([PREFIX]), selection: new Set(), lastIndex: -1,
+    expanded: new Set([PREFIX]), selection: new Set(), lastIndex: -1, rootLoadError: '',
     view: localStorage.getItem(STORE + 'view') || 'list',
     theme: localStorage.getItem(STORE + 'theme') || 'unraid',
     inspector: false, filter: '', searchOpen: false, busy: false, requestId: 0,
@@ -447,6 +448,27 @@
   let currentMenu = null;
   function activeTab() { return state.tabs.find((tab) => tab.id === state.activeId); }
   function currentPath() { return activeTab() ? activeTab().path : PREFIX; }
+  // A share group is not a browsable file location. Preserve the server's order:
+  // the sidebar shows TimeMachine first if it is first in Browse.php's response.
+  function firstSharePath(entries) {
+    const first = (entries || []).find((entry) => entry.folder && safePath(entry.path) &&
+      entry.path.startsWith(PREFIX + '/') &&
+      !entry.path.slice(PREFIX.length + 1).includes('/'));
+    return first ? first.path : null;
+  }
+  function defaultSharePath() {
+    return firstSharePath(state.tree.get(PREFIX) || []);
+  }
+  function isShareRoot(path) {
+    return typeof path === 'string' && path.startsWith(PREFIX + '/') &&
+      !path.slice(PREFIX.length + 1).includes('/');
+  }
+  async function addDefaultTab() {
+    if (!state.tree.has(PREFIX)) await loadTree(PREFIX);
+    const home = defaultSharePath();
+    if (!home) return notify(state.rootLoadError ? '无法读取共享文件夹，请稍后重试' : '没有可访问的共享文件夹');
+    addTab(home);
+  }
   function notify(message) {
     const previous = $('.ufs-toast', app);
     if (previous) previous.remove();
@@ -487,6 +509,7 @@
     history[replace ? 'replaceState' : 'pushState']({ ufs: true }, '', url);
   }
   function addTab(path, activate = true) {
+    if (path === PREFIX) { void addDefaultTab(); return; }
     if (!safePath(path)) return;
     const tab = { id: state.nextId++, path, history: [path], cursor: 0 };
     state.tabs.push(tab);
@@ -513,6 +536,7 @@
     refreshDirectory();
   }
   function navigate(path, addHistory = true) {
+    if (path === PREFIX) return notify('请选择左侧的具体共享文件夹');
     if (!safePath(path)) return notify('此版本仅支持访问 User Shares');
     const tab = activeTab();
     if (!tab || tab.path === path) return;
@@ -541,15 +565,23 @@
     if (state.tree.has(path)) return;
     try {
       const entries = await listDirectory(path);
+      if (path === PREFIX) state.rootLoadError = '';
       state.tree.set(path, entries.filter((entry) => entry.folder));
       renderTree();
     } catch (error) {
+      if (path === PREFIX) state.rootLoadError = error.message;
       state.tree.set(path, []);
       renderTree();
       notify('目录树读取失败：' + error.message);
     }
   }
   async function refreshDirectory() {
+    if (!activeTab()) {
+      state.busy = false;
+      renderFiles(state.rootLoadError || '没有可访问的共享文件夹');
+      renderNavigation();
+      return;
+    }
     const path = currentPath();
     const request = ++state.requestId;
     state.busy = true;
@@ -593,7 +625,7 @@
     add.append(icon('plus'));
     add.setAttribute('aria-label', '新建标签页');
     add.title = '新建标签页';
-    add.addEventListener('click', () => addTab(PREFIX));
+    add.addEventListener('click', () => { void addDefaultTab(); });
     target.append(add);
   }
   function renderTree() {
@@ -602,7 +634,8 @@
     target.append(element('div', 'ufs-tree-label', '共享文件夹'));
     function appendNode(path, level) {
       const wrapper = element('div', 'ufs-tree-node');
-      const row = element('div', 'ufs-tree-row' + (currentPath() === path ? ' ufs-current' : ''));
+      const row = element('div', 'ufs-tree-row' +
+        (path === PREFIX ? ' ufs-tree-group' : currentPath() === path ? ' ufs-current' : ''));
       row.style.paddingLeft = (7 + level * 16) + 'px';
       const children = state.tree.get(path);
       const hasKnownChildren = children && children.length > 0;
@@ -619,7 +652,7 @@
       if (path === PREFIX) row.lastChild.replaceWith(icon('drive', 'ufs-file-icon'));
       row.append(element('span', 'ufs-tree-name', path === PREFIX ? '所有共享文件夹' : path.split('/').pop()));
       row.title = path;
-      row.addEventListener('click', (event) => { if (event.target === toggler) return; navigate(path); });
+      if (path !== PREFIX) row.addEventListener('click', (event) => { if (event.target === toggler) return; navigate(path); });
       wrapper.append(row);
       target.append(wrapper);
       if (state.expanded.has(path)) {
@@ -680,9 +713,11 @@
         });
         address.append(ellipsis);
       } else {
-        const crumb = element('button', 'ufs-crumb', path === PREFIX ? '共享文件夹' : path.split('/').pop());
+        // The top group is a location label, not a clickable directory.
+        const crumb = element(path === PREFIX ? 'span' : 'button', 'ufs-crumb',
+          path === PREFIX ? '共享文件夹' : path.split('/').pop());
         crumb.title = path;
-        crumb.addEventListener('click', () => navigate(path));
+        if (path !== PREFIX) crumb.addEventListener('click', () => navigate(path));
         address.append(crumb);
       }
     });
@@ -691,7 +726,7 @@
     const tab = activeTab();
     $('.ufs-back', app).disabled = !tab || tab.cursor <= 0;
     $('.ufs-next', app).disabled = !tab || tab.cursor >= tab.history.length - 1;
-    $('.ufs-up', app).disabled = currentPath() === PREFIX;
+    $('.ufs-up', app).disabled = !tab || currentPath() === PREFIX || isShareRoot(currentPath());
     $('.ufs-refresh', app).disabled = state.busy;
   }
   function visibleEntries() {
@@ -1006,7 +1041,7 @@
       ['重置文件列表列宽', resetColumnWidths],
       ['返回原生文件管理器（写入操作）', nativeMode],
       [state.theme === 'unraid' ? '切换至 DSM 经典主题' : '切换至 Unraid 融合主题', toggleTheme],
-      ['关于 File Station v0.1.12', () => notify('File Station v0.1.12 · Unraid 7.2.2 · 只读预览')]
+      ['关于 File Station v0.1.13', () => notify('File Station v0.1.13 · Unraid 7.2.2 · 只读预览')]
     ];
     actions.forEach(([label, fn]) => {
       const button = element('button', '', label);
@@ -1094,7 +1129,10 @@
     // Writes remain disabled in v0.1; native Unraid is the only write surface.
     $('.ufs-back', app).addEventListener('click', () => stepHistory(-1));
     $('.ufs-next', app).addEventListener('click', () => stepHistory(1));
-    $('.ufs-up', app).addEventListener('click', () => navigate(currentPath().split('/').slice(0, -1).join('/') || PREFIX));
+    $('.ufs-up', app).addEventListener('click', () => {
+      if (!activeTab() || isShareRoot(currentPath())) return;
+      navigate(currentPath().split('/').slice(0, -1).join('/') || PREFIX);
+    });
     $('.ufs-search-trigger', app).addEventListener('click', () => setSearchOpen(!state.searchOpen));
     $('.ufs-search', app).addEventListener('input', (event) => { state.filter = event.target.value; renderFiles(); });
     $('.ufs-search', app).addEventListener('keydown', (event) => {
@@ -1153,9 +1191,14 @@
     });
     window.addEventListener('popstate', () => {
       if (!app.isConnected || isDemo) return;
-      const path = new URLSearchParams(location.search).get('dir') || PREFIX;
-      if (!safePath(path) || path === currentPath()) return;
+      const requested = new URLSearchParams(location.search).get('dir') || PREFIX;
+      if (!safePath(requested)) return;
+      const path = requested === PREFIX ? defaultSharePath() : requested;
+      if (!path) { void refreshDirectory(); return; }
+      if (requested === PREFIX) writeUrl(path, true);
+      if (path === currentPath()) return;
       const tab = activeTab();
+      if (!tab) { addTab(path); return; }
       tab.path = path; tab.history = [path]; tab.cursor = 0;
       state.selection.clear(); renderTabs(); refreshDirectory();
     });
@@ -1290,14 +1333,35 @@
       native.parentNode.insertBefore(root, native);
     }
     startLayoutSync();
+    // Resolve the root before creating a tab: do not briefly render the
+    // "all shares" listing or put the virtual group into tab history.
+    void initializeBrowser(start);
+    return true;
+  }
+  async function initializeBrowser(start) {
+    if (start === PREFIX) {
+      state.busy = true;
+      renderTree();
+      renderFiles();
+      await loadTree(PREFIX);
+      const home = defaultSharePath();
+      if (!home) {
+        state.busy = false;
+        renderTabs();
+        renderNavigation();
+        renderFiles(state.rootLoadError || '没有可访问的共享文件夹');
+        return;
+      }
+      start = home;
+      writeUrl(home, true); // root cannot remain in the browser Back stack
+    }
     state.tabs = [{ id: state.nextId++, path: start, history: [start], cursor: 0 }];
     state.activeId = state.tabs[0].id;
     renderTabs();
     renderNavigation();
     renderTree();
-    loadTree(PREFIX);
-    refreshDirectory();
-    return true;
+    if (!state.tree.has(PREFIX)) void loadTree(PREFIX);
+    void refreshDirectory();
   }
   function begin() {
     if (sharesPage && !isDemo) {
@@ -1316,7 +1380,7 @@
   }
   // Explicit opt-in hook for pure-function tests; never enabled on production WebGUI.
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
-    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, availableHeight, visibleEntries, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
+    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, availableHeight, visibleEntries, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();
