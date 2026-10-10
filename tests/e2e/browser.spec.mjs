@@ -90,7 +90,7 @@ after(async()=> { await browser?.close(); });
 
 test('首次根路径进入首个共享目录；根分组不可选；展开箭头不会导航', async t => {
   const {page,errors} = await pageFor(t);
-  await currentLabel(page).getByText('TimeMachine').waitFor();
+  await page.locator('.ufs-tab.ufs-active .ufs-tab-name', {hasText:'TimeMachine'}).waitFor();
   await page.locator('.ufs-entry').first().waitFor();
   assert.equal(new URL(page.url()).searchParams.get('dir'),'/mnt/user/TimeMachine');
   const root = page.locator('.ufs-tree-row.ufs-tree-group');
@@ -106,24 +106,24 @@ test('首次根路径进入首个共享目录；根分组不可选；展开箭�
 
 test('切换目录、浏览器后退和标签内部后退保持一致', async t => {
   const {page,errors} = await pageFor(t);
-  await currentLabel(page).getByText('TimeMachine').waitFor();
+  await page.locator('.ufs-tab.ufs-active .ufs-tab-name', {hasText:'TimeMachine'}).waitFor();
   await page.locator('.ufs-tree-row').filter({has:page.locator('.ufs-tree-name', {hasText:'downloads'})}).first().click();
-  await currentLabel(page).getByText('downloads').waitFor();
+  await page.locator('.ufs-tab.ufs-active .ufs-tab-name', {hasText:'downloads'}).waitFor();
   await page.locator('.ufs-tree-row').filter({has:page.locator('.ufs-tree-name', {hasText:'appdata'})}).first().click();
-  await currentLabel(page).getByText('appdata').waitFor();
+  await page.locator('.ufs-tab.ufs-active .ufs-tab-name', {hasText:'appdata'}).waitFor();
   await page.goBack();
-  await currentLabel(page).getByText('downloads').waitFor();
+  await page.locator('.ufs-tab.ufs-active .ufs-tab-name', {hasText:'downloads'}).waitFor();
   await page.locator('.ufs-back').click();
-  await currentLabel(page).getByText('TimeMachine').waitFor();
+  await page.locator('.ufs-tab.ufs-active .ufs-tab-name', {hasText:'TimeMachine'}).waitFor();
   await page.locator('.ufs-next').click();
-  await currentLabel(page).getByText('downloads').waitFor();
+  await page.locator('.ufs-tab.ufs-active .ufs-tab-name', {hasText:'downloads'}).waitFor();
   assert.equal(new URL(page.url()).searchParams.get('dir'),'/mnt/user/downloads');
   assert.equal(errors.length,0,errors.join('\n'));
 });
 
 test('快速切换目录时旧请求不能覆盖当前目录；多选和 LOCATION 仍可用', async t => {
   const {page,errors} = await pageFor(t,{delayDownloads:700});
-  await currentLabel(page).getByText('TimeMachine').waitFor();
+  await page.locator('.ufs-tab.ufs-active .ufs-tab-name', {hasText:'TimeMachine'}).waitFor();
   await page.locator('.ufs-tree-row').filter({has:page.locator('.ufs-tree-name', {hasText:'downloads'})}).first().click();
   await page.locator('.ufs-tree-row').filter({has:page.locator('.ufs-tree-name', {hasText:'appdata'})}).first().click();
   await page.locator('.ufs-entry').filter({hasText:'bitwarden'}).first().waitFor();
@@ -144,7 +144,7 @@ test('可调整列宽并保持记忆；根目录读取失败时可以重试', as
   const {page,errors} = await pageFor(t,{rootFailures:1});
   await page.locator('.ufs-error').waitFor();
   await page.locator('.ufs-refresh').click();
-  await currentLabel(page).getByText('TimeMachine').waitFor();
+  await page.locator('.ufs-tab.ufs-active .ufs-tab-name', {hasText:'TimeMachine'}).waitFor();
   const grip = page.locator('.ufs-head > span').nth(1).locator('.ufs-column-grip');
   const rect = await grip.boundingBox();
   assert.ok(rect,'column grip must have bounding box');
@@ -155,7 +155,7 @@ test('可调整列宽并保持记忆；根目录读取失败时可以重试', as
   const saved = await page.evaluate(()=>JSON.parse(localStorage.getItem('unraid-file-station:v1:columns')));
   assert.ok(saved.size > 95,saved.size);
   await page.reload();
-  await currentLabel(page).getByText('TimeMachine').waitFor();
+  await page.locator('.ufs-tab.ufs-active .ufs-tab-name', {hasText:'TimeMachine'}).waitFor();
   const retained = await page.evaluate(()=>JSON.parse(localStorage.getItem('unraid-file-station:v1:columns')));
   assert.equal(retained.size,saved.size);
   assert.equal(errors.length,0,errors.join('\n'));
