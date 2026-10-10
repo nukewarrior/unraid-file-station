@@ -144,11 +144,12 @@
       };
     }).filter(Boolean);
   }
-  async function listDirectory(path) {
+  async function listDirectory(path, options = {}) {
     if (!safePath(path)) throw new Error('仅允许访问 /mnt/user 下的共享目录');
     if (isDemo) {
       const data = window.__UFS_DEMO__ || {};
       await Promise.resolve();
+      if (options.signal?.aborted) throw new DOMException('请求已取消', 'AbortError');
       return (data[path] || []).map((entry) => ({
         ...entry, path: path + '/' + entry.name, size: entry.folder ? null : entry.size
       }));
@@ -157,7 +158,7 @@
     // Unraid 7.2.2 applies rawurldecode to this parameter after PHP has decoded the query.
     url.searchParams.set('dir', encodeURIComponent(path));
     url.searchParams.set('path', location.pathname.replace(/^\/+/, ''));
-    const response = await fetch(url.toString(), { credentials: 'same-origin', cache: 'no-store' });
+    const response = await fetch(url.toString(), { credentials: 'same-origin', cache: 'no-store', signal: options.signal });
     if (!response.ok) throw new Error('读取失败：HTTP ' + response.status);
     const html = await response.text();
     if (/Invalid path/i.test(html)) throw new Error('目录无效或没有访问权限');
@@ -483,9 +484,11 @@
       !path.slice(PREFIX.length + 1).includes('/');
   }
   async function addDefaultTab() {
+    if (destroyed || state.initializing) return;
     // A previous root read failure must not permanently cache an empty tree.
     if (state.rootLoadError) state.tree.delete(PREFIX);
     if (!state.tree.has(PREFIX)) await loadTree(PREFIX);
+    if (destroyed) return;
     const home = defaultSharePath();
     if (!home) return notify(state.rootLoadError ? '无法读取共享文件夹，请稍后重试' : '没有可访问的共享文件夹');
     addTab(home);
@@ -607,37 +610,57 @@
     navigate(path, false, 'none'); // popstate must never push/replace itself
     return true;
   }
-  async function loadTree(path) {
-    if (state.tree.has(path)) return;
-    try {
-      const entries = await listDirectory(path);
-      if (path === PREFIX) state.rootLoadError = '';
-      state.tree.set(path, entries.filter((entry) => entry.folder));
-      renderTree();
-    } catch (error) {
-      if (path === PREFIX) state.rootLoadError = error.message;
-      state.tree.set(path, []);
-      renderTree();
-      notify('目录树读取失败：' + error.message);
-    }
+  async function loadTree(path, retry = false) {
+    if (destroyed || !safePath(path)) return;
+    if (!retry && state.tree.has(path)) return;
+    if (treeLoads.has(path)) return treeLoads.get(path);
+    const pending = (async () => {
+      try {
+        const entries = await listDirectory(path);
+        if (destroyed) return;
+        if (path === PREFIX) state.rootLoadError = '';
+        // An active-directory refresh may already have newer directory data.
+        if (retry || !state.tree.has(path)) {
+          state.tree.set(path, entries.filter((entry) => entry.folder));
+        }
+        renderTree();
+      } catch (error) {
+        if (destroyed) return;
+        if (path === PREFIX) state.rootLoadError = error.message;
+        // Do not cache an unsuccessful read as an empty folder: next click retries.
+        state.tree.delete(path);
+        renderTree();
+        notify('目录树读取失败：' + error.message);
+      } finally {
+        treeLoads.delete(path);
+      }
+    })();
+    treeLoads.set(path, pending);
+    return pending;
   }
   async function refreshDirectory() {
+    if (destroyed) return;
     if (!activeTab()) {
-      // Empty/error state has no working directory; Refresh retries discovery.
+      if (state.initializing) return;
       state.tree.delete(PREFIX);
       state.rootLoadError = '';
       await initializeBrowser(PREFIX);
       return;
     }
+    state.directoryController?.abort();
+    const controller = new AbortController();
+    state.directoryController = controller;
     const path = currentPath();
+    const tabId = activeTab().id;
     const request = ++state.requestId;
     state.busy = true;
     state.entries = [];
     renderNavigation();
     renderFiles();
     try {
-      const entries = await listDirectory(path);
-      if (request !== state.requestId) return;
+      const entries = await listDirectory(path, {signal: controller.signal});
+      if (destroyed || request !== state.requestId || tabId !== activeTab()?.id ||
+          path !== currentPath() || controller.signal.aborted) return;
       state.entries = entries;
       state.busy = false;
       state.tree.set(path, entries.filter((entry) => entry.folder));
@@ -645,11 +668,14 @@
       renderTree();
       renderNavigation();
     } catch (error) {
-      if (request !== state.requestId) return;
+      if (destroyed || controller.signal.aborted || error.name === 'AbortError' ||
+          request !== state.requestId) return;
       state.busy = false;
       state.entries = [];
       renderFiles(error.message);
       renderNavigation();
+    } finally {
+      if (state.directoryController === controller) state.directoryController = null;
     }
   }
   function renderTabs() {
@@ -1387,11 +1413,16 @@
     return true;
   }
   async function initializeBrowser(start) {
+    if (destroyed || state.initializing) return;
+    const generation = ++state.initGeneration;
+    state.initializing = true;
+    try {
     if (start === PREFIX) {
       state.busy = true;
       renderTree();
       renderFiles();
       await loadTree(PREFIX);
+      if (destroyed || generation !== state.initGeneration) return;
       const home = defaultSharePath();
       if (!home) {
         state.busy = false;
@@ -1410,6 +1441,13 @@
     renderTree();
     if (!state.tree.has(PREFIX)) void loadTree(PREFIX);
     void refreshDirectory();
+    } finally {
+      if (!destroyed && generation === state.initGeneration) {
+        state.initializing = false;
+        renderTabs();
+        renderNavigation();
+      }
+    }
   }
   function begin() {
     if (sharesPage && !isDemo) {
