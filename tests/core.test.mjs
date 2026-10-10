@@ -231,7 +231,9 @@ test('LOCATION 保留原始独立磁盘名称，按钮点击可展开及复制�
   const safe = api.renderLocationTags({locations:[raw]});
   assert.equal(safe.children[0].textContent, raw);
   assert.match(script, /names\.forEach\(\(name\) => items\.append\(element\('span', 'ufs-location-device', name\)\)\)/);
-  assert.match(script, /navigator\.clipboard\.writeText\(names\.join\(', '\)\)/);
+  assert.match(script, /copyText\(names\.join\(', '\)\)/);
+  assert.match(script, /document\.execCommand\('copy'\)/);
+  assert.match(script, /navigator\.clipboard\.writeText\(text\)/);
   assert.match(script, /max-height:min\(300px,50vh\);overflow-y:auto/);
   assert.match(script, /ufs-location-more-link/);
 });
