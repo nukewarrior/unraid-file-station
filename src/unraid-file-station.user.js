@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.1.14
+// @version      0.1.15
 // @description  DSM-inspired read-only file browser inside Unraid WebGUI 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -250,6 +250,7 @@
     '#ufs-app .ufs-sort-button{display:inline-flex;align-items:center;gap:5px;width:100%;height:30px;border:0;padding:0;background:transparent;text-align:left;color:inherit;white-space:nowrap}#ufs-app .ufs-sort-button .ufs-sort-mark{color:var(--ufs-accent);font-size:12px}',
     '#ufs-app .ufs-head>span{position:relative}#ufs-app .ufs-column-grip{position:absolute;right:-6px;top:0;width:12px;height:100%;cursor:col-resize!important;touch-action:none;z-index:3;user-select:none;-webkit-user-select:none}#ufs-app .ufs-column-grip:hover,#ufs-app .ufs-column-grip:active{border-right:2px solid var(--ufs-accent)}#ufs-app .ufs-entry{width:100%;min-width:var(--ufs-table-min-width)}',
     '#ufs-app .ufs-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(125px,1fr));gap:10px;align-content:start;padding:14px}#ufs-app .ufs-grid .ufs-entry{display:flex;height:auto;flex-direction:column;text-align:center;gap:7px;border:1px solid var(--ufs-border);padding:16px 8px;min-width:0;min-height:107px;width:auto}',
+    '#ufs-app .ufs-virtual-spacer{height:0;min-width:var(--ufs-table-min-width);pointer-events:none}#ufs-app .ufs-virtual-body{min-width:var(--ufs-table-min-width)}#ufs-app .ufs-grid.ufs-virtualized{display:block;padding:14px}#ufs-app .ufs-grid.ufs-virtualized .ufs-virtual-spacer,#ufs-app .ufs-grid.ufs-virtualized .ufs-virtual-body{min-width:0;width:100%}#ufs-app .ufs-virtual-grid{display:grid;grid-template-columns:repeat(var(--ufs-grid-cols,4),minmax(0,1fr));gap:10px;grid-auto-rows:122px;padding-bottom:10px}#ufs-app .ufs-grid .ufs-virtual-grid .ufs-entry{height:122px;min-height:0;box-sizing:border-box;overflow:hidden}',
     '#ufs-app .ufs-grid .ufs-file-name{flex-direction:column;max-width:100%;gap:7px}#ufs-app .ufs-grid .ufs-file-name .ufs-svg{width:34px;height:34px}#ufs-app .ufs-grid .ufs-extra{display:none}',
     '#ufs-app .ufs-inspector{width:285px;flex:0 0 285px;min-width:220px;max-width:38%;border-left:1px solid var(--ufs-border);background:var(--ufs-panel);padding:14px;overflow:auto}#ufs-app .ufs-inspector[hidden]{display:none}#ufs-app .ufs-inspector h3{margin:0 0 12px;font-size:14px}#ufs-app .ufs-prop{display:flex;justify-content:space-between;gap:15px;margin:10px 0;word-break:break-word}#ufs-app .ufs-prop span:first-child{color:var(--ufs-muted);flex-shrink:0}',
     '#ufs-app .ufs-status{height:30px;border-top:1px solid var(--ufs-border);border-bottom:0;background:var(--ufs-panel);justify-content:space-between;padding:0 12px;color:var(--ufs-muted);font-size:12px;gap:14px}#ufs-app .ufs-status span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}',
@@ -293,6 +294,23 @@
     { key:'locations', label:'LOCATION', width:250, min:120, max:900 }
   ];
   const COLUMN_GAP = 10, COLUMN_PADDING = 24;
+  const VIRTUAL_THRESHOLD = 200;
+  const VIRTUAL_ROW_HEIGHT = 38, VIRTUAL_GRID_STEP = 132, VIRTUAL_OVERSCAN = 8;
+  function virtualGridColumns(width) {
+    return Math.max(1, Math.floor((Math.max(0, width - 28) + 10) / 135));
+  }
+  function virtualWindow(total, scrollTop, viewportHeight, view = 'list', columns = 1) {
+    const cols = view === 'grid' ? Math.max(1, Math.floor(columns)) : 1;
+    const step = view === 'grid' ? VIRTUAL_GRID_STEP : VIRTUAL_ROW_HEIGHT;
+    const offset = view === 'grid' ? 14 : 34;
+    const rows = Math.ceil(total / cols);
+    const first = Math.max(0, Math.floor((Math.max(0, scrollTop) - offset) / step));
+    const startRow = Math.max(0, Math.min(rows, first - VIRTUAL_OVERSCAN));
+    const endRow = Math.max(startRow, Math.min(rows,
+      Math.ceil((Math.max(0, scrollTop) + Math.max(0, viewportHeight) - offset) / step) + VIRTUAL_OVERSCAN));
+    return {start:startRow * cols, end:Math.min(total,endRow*cols),
+      before:startRow*step, after:(rows-endRow)*step, columns:cols};
+  }
   function clampColumnWidth(key, value) {
     const spec = COLUMNS.find((column) => column.key === key);
     const n = Number(value);
@@ -440,7 +458,7 @@
     view: localStorage.getItem(STORE + 'view') || 'list',
     theme: localStorage.getItem(STORE + 'theme') || 'unraid',
     inspector: false, filter: '', searchOpen: false, busy: false, requestId: 0,
-    initializing: false, initGeneration: 0, directoryController: null,
+    initializing: false, initGeneration: 0, directoryController: null, virtual: null,
     sortKey: 'name', sortDirection: 1,
     columnWidths: readColumnWidths(localStorage.getItem(STORE + 'columns'))
   };
@@ -825,11 +843,16 @@
     $('.ufs-up', app).disabled = !tab || state.initializing || currentPath() === PREFIX || isShareRoot(currentPath());
     $('.ufs-refresh', app).disabled = state.busy || state.initializing;
   }
+  let visibleCache = null;
+  const nameCollator = new Intl.Collator('zh-CN', {numeric:true});
   function visibleEntries() {
+    if (visibleCache && visibleCache.entries === state.entries &&
+        visibleCache.filter === state.filter && visibleCache.sortKey === state.sortKey &&
+        visibleCache.sortDirection === state.sortDirection) return visibleCache.result;
     const q = state.filter.trim().toLocaleLowerCase();
     const direction = state.sortDirection;
-    const nameCompare = (a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true });
-    return state.entries.filter((entry) => !q || entry.name.toLocaleLowerCase().includes(q))
+    const nameCompare = (a, b) => nameCollator.compare(a.name,b.name);
+    const result = state.entries.filter((entry) => !q || entry.name.toLocaleLowerCase().includes(q))
       .sort((a, b) => {
         const foldersFirst = Number(b.folder) - Number(a.folder);
         if (foldersFirst) return foldersFirst;
@@ -841,6 +864,9 @@
           locationNames(a).join(',').localeCompare(locationNames(b).join(','), 'zh-CN', { numeric: true }) || nameCompare(a, b);
         return direction * nameCompare(a, b);
       });
+    visibleCache = {entries:state.entries,filter:state.filter,
+      sortKey:state.sortKey,sortDirection:state.sortDirection,result};
+    return result;
   }
   function updateSelection(event, entry, index, visible) {
     if (event.shiftKey && state.lastIndex >= 0) {
@@ -903,41 +929,7 @@
       box.append(row);
     });
   }
-  function renderFiles(error = '') {
-    const list = $('.ufs-list', app);
-    list.replaceChildren();
-    list.classList.toggle('ufs-grid', state.view === 'grid');
-    $('.ufs-list-button', app).classList.toggle('ufs-view-active', state.view === 'list');
-    $('.ufs-grid-button', app).classList.toggle('ufs-view-active', state.view === 'grid');
-    if (state.view === 'list') {
-      const head = element('div', 'ufs-head');
-      [['name', '名称'], ['size', '大小'], ['mtime', '修改日期'], ['owner', 'OWNER'],
-        ['permissions', '权限'], ['locations', 'LOCATION']].forEach(([key, label]) => {
-        const className = { mtime: 'ufs-date', owner: 'ufs-owner', permissions: 'ufs-permission',
-          locations: 'ufs-location-col' }[key] || '';
-        const cell = element('span', className);
-        const button = element('button', 'ufs-sort-button');
-        button.type = 'button';
-        button.append(element('span', '', label));
-        if (state.sortKey === key) button.append(element('span', 'ufs-sort-mark', state.sortDirection === 1 ? '↑' : '↓'));
-        button.addEventListener('click', () => {
-          if (state.sortKey === key) state.sortDirection *= -1;
-          else { state.sortKey = key; state.sortDirection = 1; }
-          state.lastIndex = -1;
-          renderFiles();
-        });
-        cell.append(button);
-        attachColumnResizer(cell, key);
-        head.append(cell);
-      });
-      list.append(head);
-    }
-    if (error) list.append(element('div', 'ufs-empty ufs-error', error + '。可切换回 Unraid 原生界面检查。'));
-    else if (state.busy) list.append(element('div', 'ufs-empty', '正在读取文件…'));
-    else {
-      const entries = visibleEntries();
-      if (!entries.length) list.append(element('div', 'ufs-empty', state.filter ? '没有匹配的文件' : '此文件夹为空'));
-      entries.forEach((entry, index) => {
+  function createFileRow(entry, index, entries) {
         const row = element('div', 'ufs-entry');
         row.dataset.ufsFile = entry.path;
         row.tabIndex = 0;
@@ -968,8 +960,93 @@
           }
           showMenu(event.clientX, event.clientY, entry);
         });
-        list.append(row);
+        return row;
+
+  }
+  let virtualScheduled = false;
+  function updateVirtualWindow(force = false) {
+    const data = state.virtual;
+    if (!data || destroyed || !app) return;
+    const list = $('.ufs-list', app);
+    if (!list || !list.isConnected || data.list !== list) return;
+    const cols = data.view === 'grid' ? virtualGridColumns(list.clientWidth) : 1;
+    const range = virtualWindow(data.entries.length,list.scrollTop,list.clientHeight,data.view,cols);
+    if (!force && data.start === range.start && data.end === range.end &&
+        data.columns === cols) return;
+    data.start = range.start;
+    data.end = range.end;
+    data.columns = cols;
+    data.before.style.height = range.before + 'px';
+    data.after.style.height = range.after + 'px';
+    if (data.view === 'grid') data.body.style.setProperty('--ufs-grid-cols',String(cols));
+    const fragment = document.createDocumentFragment();
+    for (let i = range.start; i < range.end; i++) {
+      fragment.append(createFileRow(data.entries[i],i,data.entries));
+    }
+    data.body.replaceChildren(fragment);
+    scheduleLocationDisplay();
+  }
+  function scheduleVirtualWindow() {
+    if (!state.virtual || virtualScheduled || destroyed) return;
+    virtualScheduled = true;
+    requestAnimationFrame(() => {
+      virtualScheduled = false;
+      updateVirtualWindow();
+    });
+  }
+  function renderFiles(error = '') {
+    const list = $('.ufs-list', app);
+    state.virtual = null;
+    list.replaceChildren();
+    list.scrollTop = 0;
+    list.scrollLeft = 0;
+    list.classList.toggle('ufs-grid', state.view === 'grid');
+    list.classList.remove('ufs-virtualized');
+    $('.ufs-list-button', app).classList.toggle('ufs-view-active', state.view === 'list');
+    $('.ufs-grid-button', app).classList.toggle('ufs-view-active', state.view === 'grid');
+    if (state.view === 'list') {
+      const head = element('div', 'ufs-head');
+      [['name', '名称'], ['size', '大小'], ['mtime', '修改日期'], ['owner', 'OWNER'],
+        ['permissions', '权限'], ['locations', 'LOCATION']].forEach(([key, label]) => {
+        const className = { mtime: 'ufs-date', owner: 'ufs-owner', permissions: 'ufs-permission',
+          locations: 'ufs-location-col' }[key] || '';
+        const cell = element('span', className);
+        const button = element('button', 'ufs-sort-button');
+        button.type = 'button';
+        button.append(element('span', '', label));
+        if (state.sortKey === key) button.append(element('span', 'ufs-sort-mark', state.sortDirection === 1 ? '↑' : '↓'));
+        button.addEventListener('click', () => {
+          if (state.sortKey === key) state.sortDirection *= -1;
+          else { state.sortKey = key; state.sortDirection = 1; }
+          state.lastIndex = -1;
+          renderFiles();
+        });
+        cell.append(button);
+        attachColumnResizer(cell, key);
+        head.append(cell);
       });
+      list.append(head);
+    }
+    if (error) list.append(element('div', 'ufs-empty ufs-error', error + '。可切换回 Unraid 原生界面检查。'));
+    else if (state.busy) list.append(element('div', 'ufs-empty', '正在读取文件…'));
+    else {
+      const entries = visibleEntries();
+      if (!entries.length) list.append(element('div', 'ufs-empty', state.filter ? '没有匹配的文件' : '此文件夹为空'));
+      if (entries.length > VIRTUAL_THRESHOLD) {
+        list.classList.add('ufs-virtualized');
+        const before = element('div','ufs-virtual-spacer');
+        const body = element('div',state.view === 'grid' ?
+          'ufs-virtual-body ufs-virtual-grid' : 'ufs-virtual-body');
+        const after = element('div','ufs-virtual-spacer');
+        list.append(before,body,after);
+        state.virtual = {list,view:state.view,entries,before,body,after,
+          start:-1,end:-1,columns:0};
+        updateVirtualWindow(true);
+      } else {
+        const fragment = document.createDocumentFragment();
+        entries.forEach((entry,index)=>fragment.append(createFileRow(entry,index,entries)));
+        list.append(fragment);
+      }
     }
     renderSelection();
     scheduleLocationDisplay();
@@ -1137,7 +1214,7 @@
       ['重置文件列表列宽', resetColumnWidths],
       ['返回原生文件管理器（写入操作）', nativeMode],
       [state.theme === 'unraid' ? '切换至 DSM 经典主题' : '切换至 Unraid 融合主题', toggleTheme],
-      ['关于 File Station v0.1.13', () => notify('File Station v0.1.13 · Unraid 7.2.2 · 只读预览')]
+      ['关于 File Station v0.1.15', () => notify('File Station v0.1.15 · Unraid 7.2.2 · 只读预览')]
     ];
     actions.forEach(([label, fn]) => {
       const button = element('button', '', label);
@@ -1248,8 +1325,9 @@
     $('.ufs-operations', app).addEventListener('click', showOperationsMenu);
     setupSidebarResizer();
     onCleanup(setupListScrollbars($('.ufs-list', app)));
+    $('.ufs-list', app).addEventListener('scroll', scheduleVirtualWindow, {passive:true});
     if (typeof ResizeObserver !== 'undefined') {
-      const locationObserver = new ResizeObserver(() => scheduleLocationDisplay());
+      const locationObserver = new ResizeObserver(() => { scheduleLocationDisplay(); scheduleVirtualWindow(); });
       locationObserver.observe($('.ufs-list', app));
       onCleanup(() => locationObserver.disconnect());
     }
@@ -1502,7 +1580,7 @@
   }
   // Explicit opt-in hook for pure-function tests; never enabled on production WebGUI.
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
-    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, availableHeight, visibleEntries, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
+    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, availableHeight, visibleEntries, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();
