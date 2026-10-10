@@ -185,7 +185,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.1\.12/);
+  assert.match(script, /@version\s+0\.1\.13/);
 });
 
 
@@ -489,7 +489,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.1\.12/);
+  assert.match(script, /@version\s+0\.1\.13/);
 });
 
 
@@ -567,4 +567,68 @@ test('文件列表使用透明原生细滚动条，悬停或滚动时显示，�
   assert.match(script, /#ufs-app \.ufs-list\{min-width:0;min-height:0;overflow:auto;flex:1/);
   assert.doesNotMatch(script, /#ufs-app \.ufs-list\{[^']*overflow:hidden/);
   assert.match(script, /html\.ufs-active-page,html\.ufs-active-page body\{overflow-y:hidden!important/);
+});
+
+
+test('v0.1.13 默认选择目录树返回顺序的第一个真实共享文件夹', () => {
+  const { api } = createAPI();
+  const shares = [
+    {path:'/mnt/user/notes.txt',folder:false},
+    {path:'/mnt/user/TimeMachine',folder:true},
+    {path:'/mnt/user/appdata',folder:true},
+    {path:'/mnt/user/downloads',folder:true},
+  ];
+  assert.equal(api.firstSharePath(shares), '/mnt/user/TimeMachine');
+  assert.equal(api.firstSharePath([...shares].reverse()), '/mnt/user/downloads');
+  // This must not use file-list sort order (which sorts TimeMachine/appdata differently).
+  api.state.tree.set('/mnt/user', shares.filter(x => x.folder));
+  assert.equal(api.defaultSharePath(), '/mnt/user/TimeMachine');
+  assert.equal(api.firstSharePath([{path:'/mnt/user/downloads/sub',folder:true},...shares]), '/mnt/user/TimeMachine');
+});
+
+test('根目录是虚拟分组，深层目录和真实 share 的判定独立', () => {
+  const { api } = createAPI();
+  assert.equal(api.isShareRoot('/mnt/user'), false);
+  assert.equal(api.isShareRoot('/mnt/user/TimeMachine'), true);
+  assert.equal(api.isShareRoot('/mnt/user/downloads'), true);
+  assert.equal(api.isShareRoot('/mnt/user/downloads/aria2'), false);
+  assert.equal(api.isShareRoot('/mnt/disk1/TimeMachine'), false);
+  assert.equal(api.firstSharePath([]), null);
+  assert.equal(api.firstSharePath(null), null);
+  assert.equal(api.firstSharePath([{path:'/mnt/user/a/b',folder:true}]), null);
+  assert.equal(api.firstSharePath([{path:'/mnt/user/bad/../path',folder:true}]), null);
+  assert.equal(api.firstSharePath([{path:'/mnt/disk1/hidden',folder:true}]), null);
+  assert.equal(api.firstSharePath([{path:'/mnt/user/file.txt',folder:false}]), null);
+});
+
+test('首次从根入口读取目录后替换 URL 且不渲染根文件列表或根标签', () => {
+  assert.match(script, /const start = isDemo \? '\/mnt\/user\/downloads' : new URLSearchParams\(location\.search\)\.get\('dir'\) \|\| PREFIX;/);
+  assert.match(script, /void initializeBrowser\(start\)/);
+  assert.match(script, /async function initializeBrowser\(start\) \{[\s\S]*?if \(start === PREFIX\) \{[\s\S]*?await loadTree\(PREFIX\);[\s\S]*?const home = defaultSharePath\(\);/);
+  assert.match(script, /start = home;\s*writeUrl\(home, true\)/);
+  assert.match(script, /state\.tabs = \[\{ id: state\.nextId\+\+, path: start, history: \[start\], cursor: 0 \}\]/);
+  assert.match(script, /const row = element\('div', 'ufs-tree-row' \+\s*\(path === PREFIX \? ' ufs-tree-group'/);
+  assert.match(script, /if \(path !== PREFIX\) row\.addEventListener\('click'/);
+  assert.match(script, /ufs-tree-row\.ufs-tree-group:hover\{background:transparent!important\}/);
+});
+
+test('根目录不能通过上一级、新标签、面包屑和历史回退被再次选中', () => {
+  assert.match(script, /if \(path === PREFIX\) return notify\('请选择左侧的具体共享文件夹'\)/);
+  assert.match(script, /if \(path === PREFIX\) \{ void addDefaultTab\(\); return; \}/);
+  assert.match(script, /add\.addEventListener\('click', \(\) => \{ void addDefaultTab\(\); \}\)/);
+  assert.match(script, /currentPath\(\) === PREFIX \|\| isShareRoot\(currentPath\(\)\)/);
+  assert.match(script, /const crumb = element\(path === PREFIX \? 'span' : 'button'/);
+  assert.match(script, /if \(path !== PREFIX\) crumb\.addEventListener\('click'/);
+  assert.match(script, /const path = requested === PREFIX \? defaultSharePath\(\) : requested/);
+  assert.match(script, /if \(requested === PREFIX\) writeUrl\(path, true\)/);
+  assert.match(script, /tab\.path = path; tab\.history = \[path\]; tab\.cursor = 0/);
+});
+
+test('没有共享目录时显示明确空状态，读取失败后允许用户重试', () => {
+  assert.match(script, /if \(!home\) \{[\s\S]*?state\.busy = false;[\s\S]*?renderFiles\(state\.rootLoadError \|\| '没有可访问的共享文件夹'\)/);
+  assert.match(script, /if \(path === PREFIX\) state\.rootLoadError = error\.message/);
+  assert.match(script, /if \(state\.rootLoadError\) state\.tree\.delete\(PREFIX\)/);
+  assert.match(script, /state\.tree\.delete\(PREFIX\);\s*state\.rootLoadError = '';\s*await initializeBrowser\(PREFIX\)/);
+  assert.match(script, /add\.disabled = state\.busy && !activeTab\(\)/);
+  assert.doesNotMatch(script, /state\.tabs = \[\{ id: state\.nextId\+\+, path: PREFIX/);
 });
