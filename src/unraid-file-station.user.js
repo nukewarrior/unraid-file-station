@@ -976,7 +976,13 @@
       list.scrollHeight - list.clientHeight - list.scrollTop <= 6;
     const anchorIndex = gridResized ?
       Math.floor(Math.max(0, list.scrollTop - 14) / VIRTUAL_GRID_STEP) * data.columns : 0;
-    const range = virtualWindow(data.entries.length,list.scrollTop,list.clientHeight,data.view,cols);
+    const gridTotalHeight = 28 + Math.ceil(data.entries.length / cols) * VIRTUAL_GRID_STEP;
+    const desiredScrollTop = gridResized ? (nearBottom ?
+      Math.max(0, gridTotalHeight - list.clientHeight) :
+      14 + Math.floor(anchorIndex / cols) * VIRTUAL_GRID_STEP) : list.scrollTop;
+    // Compute the new virtual window from its final scroll position, so a
+    // resized grid never renders a stale middle slice for one animation frame.
+    const range = virtualWindow(data.entries.length,desiredScrollTop,list.clientHeight,data.view,cols);
     if (!force && data.start === range.start && data.end === range.end &&
         data.columns === cols) return;
     data.start = range.start;
@@ -990,13 +996,7 @@
       fragment.append(createFileRow(data.entries[i],i,data.entries));
     }
     data.body.replaceChildren(fragment);
-    if (gridResized) {
-      // Grid column count changes can increase the total scroll height. Retain
-      // the visible item (or the bottom edge) instead of jumping mid-directory.
-      list.scrollTop = nearBottom ? list.scrollHeight :
-        14 + Math.floor(anchorIndex / cols) * VIRTUAL_GRID_STEP;
-      scheduleVirtualWindow(); // Re-mount the new range at the restored scroll offset.
-    }
+    if (gridResized) list.scrollTop = desiredScrollTop;
     scheduleLocationDisplay();
   }
   function scheduleVirtualWindow() {
