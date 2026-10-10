@@ -675,10 +675,33 @@
     });
     $('.ufs-list-button', app).addEventListener('click', () => setView('list'));
     $('.ufs-grid-button', app).addEventListener('click', () => setView('grid'));
-    $('.ufs-details-button', app).addEventListener('click', () => {
+    function showDetails() {
       state.inspector = !state.inspector;
       $('.ufs-details-button', app).classList.toggle('ufs-view-active', state.inspector);
       renderInspector();
+    }
+    $('.ufs-details-button', app).addEventListener('click', showDetails);
+    $('.ufs-show-selection-details', app).addEventListener('click', () => {
+      if (!state.inspector) showDetails();
+      else renderInspector();
+    });
+    $('.ufs-selection-native', app).addEventListener('click', nativeMode);
+    $('.ufs-clear-selection', app).addEventListener('click', () => {
+      state.selection.clear();
+      state.lastIndex = -1;
+      renderSelection();
+    });
+    $('.ufs-selection-download', app).addEventListener('click', () => {
+      const chosen = selectedEntries();
+      if (chosen.length === 1 && !chosen[0].folder) downloadEntry(chosen[0]);
+    });
+    $('.ufs-copy-path', app).addEventListener('click', async () => {
+      const paths = selectedEntries().map((entry) => entry.path);
+      if (!paths.length) return;
+      try {
+        await navigator.clipboard.writeText(paths.join('\n'));
+        notify('已复制 ' + paths.length + ' 个文件路径');
+      } catch (_) { notify('浏览器不允许读取剪贴板，请检查站点权限'); }
     });
     setupSidebarResizer();
     $('.ufs-list', app).addEventListener('contextmenu', (event) => {
