@@ -23,6 +23,7 @@ function createAPI() {
       addEventListener() {},
     },
     window: {
+      addEventListener() {},
       __UFS_TEST_MODE__: true,
       __UFS_DEMO__: {
         '/mnt/user': [
@@ -40,7 +41,7 @@ function createAPI() {
         };
       }
     },
-    URL, URLSearchParams, setTimeout, clearTimeout, console,
+    URL, URLSearchParams, setTimeout, clearTimeout, AbortController, DOMException, console,
   };
   vm.runInNewContext(script, sandbox, { filename: 'unraid-file-station.user.js' });
   return { api: sandbox.window.__UFS_TEST_API__, rows };
@@ -185,7 +186,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.1\.13/);
+  assert.match(script, /@version\s+0\.1\.14/);
 });
 
 
@@ -489,7 +490,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.1\.13/);
+  assert.match(script, /@version\s+0\.1\.14/);
 });
 
 
@@ -621,7 +622,7 @@ test('根目录不能通过上一级、新标签、面包屑和历史回退被�
   assert.match(script, /if \(path !== PREFIX\) crumb\.addEventListener\('click'/);
   assert.match(script, /const path = requested === PREFIX \? defaultSharePath\(\) : requested/);
   assert.match(script, /if \(requested === PREFIX\) writeUrl\(path, true\)/);
-  assert.match(script, /tab\.path = path; tab\.history = \[path\]; tab\.cursor = 0/);
+  assert.match(script, /restoreBrowserPath\(path, event\.state\?\.ufs \? event\.state\.tabId : null\)/);
 });
 
 test('没有共享目录时显示明确空状态，读取失败后允许用户重试', () => {
@@ -629,6 +630,55 @@ test('没有共享目录时显示明确空状态，读取失败后允许用户�
   assert.match(script, /if \(path === PREFIX\) state\.rootLoadError = error\.message/);
   assert.match(script, /if \(state\.rootLoadError\) state\.tree\.delete\(PREFIX\)/);
   assert.match(script, /state\.tree\.delete\(PREFIX\);\s*state\.rootLoadError = '';\s*await initializeBrowser\(PREFIX\)/);
-  assert.match(script, /add\.disabled = state\.busy && !activeTab\(\)/);
+  assert.match(script, /add\.disabled = state\.initializing \|\| \(state\.busy && !activeTab\(\)\)/);
   assert.doesNotMatch(script, /state\.tabs = \[\{ id: state\.nextId\+\+, path: PREFIX/);
+});
+
+test('v0.1.14 VM 环境支持取消的异步目录读取', async () => {
+  const {api} = createAPI();
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(api.listDirectory('/mnt/user', {signal:controller.signal}), {name:'AbortError'});
+  const live = await api.listDirectory('/mnt/user');
+  assert.equal(live[0].path, '/mnt/user/downloads');
+});
+
+test('v0.1.14 浏览器历史与标签历史不相互压入重复记录', () => {
+  assert.match(script, /function navigate\(path, addHistory = true, urlMode = addHistory \? 'push' : 'replace'\)/);
+  assert.match(script, /navigate\(tab\.history\[next\], false, 'replace'\)/);
+  assert.match(script, /navigate\(path, false, 'none'\)/);
+  assert.match(script, /history\[replace \? 'replaceState' : 'pushState'\]/);
+  assert.match(script, /const stateValue = \{ ufs: true, tabId: tab\?\.id \?\? null, path \}/);
+  assert.match(script, /if \(!tab \|\| destroyed\) return/);
+});
+
+test('v0.1.14 目录加载具备取消、过期保护、请求去重与失败重试', () => {
+  assert.match(script, /if \(treeLoads\.has\(path\)\) return treeLoads\.get\(path\)/);
+  assert.match(script, /treeLoads\.set\(path, pending\)/);
+  assert.match(script, /treeLoads\.delete\(path\)/);
+  assert.match(script, /state\.directoryController\?\.abort\(\)/);
+  assert.match(script, /new AbortController\(\)/);
+  assert.match(script, /listDirectory\(path, \{signal: controller\.signal\}\)/);
+  assert.match(script, /request !== state\.requestId \|\| tabId !== activeTab\(\)\?\.id/);
+  assert.match(script, /if \(retry\) state\.tree\.delete\(path\)/);
+  assert.doesNotMatch(script, /catch \(error\) \{\s*state\.tree\.set\(path, \[\]\)/);
+});
+
+test('v0.1.14 正常退出会注销页面级监听并释放观察器', () => {
+  assert.match(script, /function cleanupApp\(\) \{/);
+  assert.match(script, /lifecycle\.abort\(\)/);
+  assert.match(script, /onCleanup\(\(\) => observer\.disconnect\(\)\)/);
+  assert.match(script, /onCleanup\(\(\) => locationObserver\.disconnect\(\)\)/);
+  assert.match(script, /onCleanup\(setupListScrollbars\(\$\('\.ufs-list', app\)\)\)/);
+  assert.match(script, /window\.addEventListener\('pagehide'/);
+  assert.match(script, /document\.addEventListener\('pointerdown',[\s\S]*?\{ signal: lifecycle\.signal \}\)/);
+});
+
+test('v0.1.14 初始化状态禁止在未创建标签时操作历史或新标签', () => {
+  assert.match(script, /state\.initializing = true/);
+  assert.match(script, /state\.initializing = false/);
+  assert.match(script, /if \(destroyed \|\| generation !== state\.initGeneration\) return/);
+  assert.match(script, /if \(!tab \|\| destroyed\) return/);
+  assert.match(script, /state\.initializing \|\| tab\.cursor <= 0/);
+  assert.match(script, /add\.disabled = state\.initializing/);
 });
