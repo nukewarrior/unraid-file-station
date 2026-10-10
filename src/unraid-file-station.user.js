@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.1.15
+// @version      0.1.16
 // @description  DSM-inspired read-only file browser inside Unraid WebGUI 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -250,6 +250,9 @@
     '#ufs-app .ufs-sort-button{display:inline-flex;align-items:center;gap:5px;width:100%;height:30px;border:0;padding:0;background:transparent;text-align:left;color:inherit;white-space:nowrap}#ufs-app .ufs-sort-button .ufs-sort-mark{color:var(--ufs-accent);font-size:12px}',
     '#ufs-app .ufs-head>span{position:relative}#ufs-app .ufs-column-grip{position:absolute;right:-6px;top:0;width:12px;height:100%;cursor:col-resize!important;touch-action:none;z-index:3;user-select:none;-webkit-user-select:none}#ufs-app .ufs-column-grip:hover,#ufs-app .ufs-column-grip:active{border-right:2px solid var(--ufs-accent)}#ufs-app .ufs-entry{width:100%;min-width:var(--ufs-table-min-width)}',
     '#ufs-app .ufs-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(125px,1fr));gap:10px;align-content:start;padding:14px}#ufs-app .ufs-grid .ufs-entry{display:flex;height:auto;flex-direction:column;text-align:center;gap:7px;border:1px solid var(--ufs-border);padding:16px 8px;min-width:0;min-height:107px;width:auto}',
+    // Prevent Chromium scroll anchoring from changing scrollTop while virtual
+    // spacers and mounted rows are replaced. The native wheel/scrollbar remains in control.
+    '#ufs-app .ufs-list.ufs-virtualized{overflow-anchor:none}',
     '#ufs-app .ufs-virtual-spacer{height:0;min-width:var(--ufs-table-min-width);pointer-events:none}#ufs-app .ufs-virtual-body{min-width:var(--ufs-table-min-width)}#ufs-app .ufs-grid.ufs-virtualized{display:block;padding:14px}#ufs-app .ufs-grid.ufs-virtualized .ufs-virtual-spacer,#ufs-app .ufs-grid.ufs-virtualized .ufs-virtual-body{min-width:0;width:100%}#ufs-app .ufs-virtual-grid{display:grid;grid-template-columns:repeat(var(--ufs-grid-cols,4),minmax(0,1fr));gap:10px;grid-auto-rows:122px;padding-bottom:10px}#ufs-app .ufs-grid .ufs-virtual-grid .ufs-entry{height:122px;min-height:0;box-sizing:border-box;overflow:hidden}',
     '#ufs-app .ufs-grid .ufs-file-name{flex-direction:column;max-width:100%;gap:7px}#ufs-app .ufs-grid .ufs-file-name .ufs-svg{width:34px;height:34px}#ufs-app .ufs-grid .ufs-extra{display:none}',
     '#ufs-app .ufs-inspector{width:285px;flex:0 0 285px;min-width:220px;max-width:38%;border-left:1px solid var(--ufs-border);background:var(--ufs-panel);padding:14px;overflow:auto}#ufs-app .ufs-inspector[hidden]{display:none}#ufs-app .ufs-inspector h3{margin:0 0 12px;font-size:14px}#ufs-app .ufs-prop{display:flex;justify-content:space-between;gap:15px;margin:10px 0;word-break:break-word}#ufs-app .ufs-prop span:first-child{color:var(--ufs-muted);flex-shrink:0}',
@@ -1236,7 +1239,7 @@
       ['重置文件列表列宽', resetColumnWidths],
       ['返回原生文件管理器（写入操作）', nativeMode],
       [state.theme === 'unraid' ? '切换至 DSM 经典主题' : '切换至 Unraid 融合主题', toggleTheme],
-      ['关于 File Station v0.1.15', () => notify('File Station v0.1.15 · Unraid 7.2.2 · 只读预览')]
+      ['关于 File Station v0.1.16', () => notify('File Station v0.1.16 · Unraid 7.2.2 · 只读预览')]
     ];
     actions.forEach(([label, fn]) => {
       const button = element('button', '', label);
