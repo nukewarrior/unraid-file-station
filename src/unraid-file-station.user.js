@@ -325,7 +325,7 @@
     function appendNode(path, level) {
       const wrapper = element('div', 'ufs-tree-node');
       const row = element('div', 'ufs-tree-row' + (currentPath() === path ? ' ufs-current' : ''));
-      row.style.paddingLeft = (6 + level * 14) + 'px';
+      row.style.paddingLeft = (7 + level * 16) + 'px';
       const children = state.tree.get(path);
       const hasKnownChildren = children && children.length > 0;
       const toggler = element('button', 'ufs-tree-toggle');
@@ -371,8 +371,17 @@
   }
   function visibleEntries() {
     const q = state.filter.trim().toLocaleLowerCase();
+    const direction = state.sortDirection;
+    const nameCompare = (a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true });
     return state.entries.filter((entry) => !q || entry.name.toLocaleLowerCase().includes(q))
-      .sort((a, b) => Number(b.folder) - Number(a.folder) || a.name.localeCompare(b.name, 'zh-CN', { numeric: true }));
+      .sort((a, b) => {
+        const foldersFirst = Number(b.folder) - Number(a.folder);
+        if (foldersFirst) return foldersFirst;
+        if (state.sortKey === 'size') return direction * ((a.size || 0) - (b.size || 0)) || nameCompare(a, b);
+        if (state.sortKey === 'mtime') return direction * ((a.mtime || 0) - (b.mtime || 0)) || nameCompare(a, b);
+        if (state.sortKey === 'permissions') return direction * (a.permissions || '').localeCompare(b.permissions || '') || nameCompare(a, b);
+        return direction * nameCompare(a, b);
+      });
   }
   function selectEntry(event, entry, index, visible) {
     if (event.shiftKey && state.lastIndex >= 0) {
@@ -395,7 +404,7 @@
     $$('[data-ufs-file]', app).forEach((node) => node.classList.toggle('ufs-selected', state.selection.has(node.dataset.ufsFile)));
     const count = state.selection.size;
     $('.ufs-count', app).textContent = state.busy ? '正在读取目录…' :
-      state.entries.length + ' 个项目' + (count ? ' · 已选择 ' + count + ' 个项目' : '');
+      visibleEntries().length + (state.filter ? ' 个匹配项目' : ' 个项目') + (count ? ' · 已选择 ' + count + ' 个项目' : '');
     renderInspector();
   }
   function renderInspector() {
@@ -426,8 +435,21 @@
     $('.ufs-grid-button', app).classList.toggle('ufs-view-active', state.view === 'grid');
     if (state.view === 'list') {
       const head = element('div', 'ufs-head');
-      ['名称', '大小', '修改日期', '权限'].forEach((name, index) =>
-        head.append(element('span', index === 2 ? 'ufs-date' : index === 3 ? 'ufs-permission' : '', name)));
+      [['name', '名称'], ['size', '大小'], ['mtime', '修改日期'], ['permissions', '权限']].forEach(([key, label], index) => {
+        const cell = element('span', index === 2 ? 'ufs-date' : index === 3 ? 'ufs-permission' : '');
+        const button = element('button', 'ufs-sort-button');
+        button.type = 'button';
+        button.append(element('span', '', label));
+        if (state.sortKey === key) button.append(element('span', 'ufs-sort-mark', state.sortDirection === 1 ? '↑' : '↓'));
+        button.addEventListener('click', () => {
+          if (state.sortKey === key) state.sortDirection *= -1;
+          else { state.sortKey = key; state.sortDirection = 1; }
+          state.lastIndex = -1;
+          renderFiles();
+        });
+        cell.append(button);
+        head.append(cell);
+      });
       list.append(head);
     }
     if (error) list.append(element('div', 'ufs-empty ufs-error', error + '。可切换回 Unraid 原生界面检查。'));
@@ -557,8 +579,11 @@
     $('.ufs-list-button', app).addEventListener('click', () => setView('list'));
     $('.ufs-grid-button', app).addEventListener('click', () => setView('grid'));
     $('.ufs-details-button', app).addEventListener('click', () => {
-      state.inspector = !state.inspector; renderInspector();
+      state.inspector = !state.inspector;
+      $('.ufs-details-button', app).classList.toggle('ufs-view-active', state.inspector);
+      renderInspector();
     });
+    setupSidebarResizer();
     $('.ufs-list', app).addEventListener('contextmenu', (event) => {
       if (event.target === $('.ufs-list', app)) {
         event.preventDefault();
@@ -589,6 +614,74 @@
     });
     return app;
   }
+
+  function availableHeight(appTop, footerTop, viewportHeight) {
+    const bottom = Number.isFinite(footerTop) && footerTop > appTop ? Math.min(footerTop, viewportHeight) : viewportHeight;
+    return Math.max(260, Math.floor(bottom - appTop - 12));
+  }
+  function startLayoutSync() {
+    // Unraid's collapsible masthead and fixed footer alter usable space without changing window.innerHeight.
+    let scheduled = false;
+    const measure = () => {
+      scheduled = false;
+      if (!app || !app.isConnected) return;
+      const top = app.getBoundingClientRect().top;
+      const footer = isDemo ? null : document.querySelector('#footer');
+      const footerTop = footer ? footer.getBoundingClientRect().top : NaN;
+      const height = availableHeight(top, footerTop, window.innerHeight);
+      if (app.style.height !== height + 'px') app.style.height = height + 'px';
+    };
+    const schedule = () => {
+      if (scheduled) return;
+      scheduled = true;
+      requestAnimationFrame(measure);
+    };
+    window.addEventListener('resize', schedule);
+    window.addEventListener('scroll', schedule, { passive: true });
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', schedule);
+    if (typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(schedule);
+      const targets = [document.body, document.querySelector('#header'),
+        document.querySelector('header'), document.querySelector('#footer')];
+      [...new Set(targets.filter(Boolean))].forEach((node) => observer.observe(node));
+    }
+    // Also handle the WebGUI masthead collapsing after its animation completes.
+    document.addEventListener('click', () => { setTimeout(schedule, 120); setTimeout(schedule, 400); });
+    schedule();
+  }
+  function setupSidebarResizer() {
+    const handle = $('.ufs-resizer', app);
+    const workspace = $('.ufs-workspace', app);
+    const saved = Number(localStorage.getItem(STORE + 'sidebarWidth'));
+    if (Number.isFinite(saved) && saved >= 170 && saved <= 420) {
+      app.style.setProperty('--ufs-sidebar-width', saved + 'px');
+    }
+    let dragging = false;
+    const adjust = (clientX) => {
+      const width = Math.min(420, Math.max(170, clientX - workspace.getBoundingClientRect().left));
+      if (workspace.clientWidth <= 720) return;
+      app.style.setProperty('--ufs-sidebar-width', Math.min(width, workspace.clientWidth * 0.42) + 'px');
+    };
+    handle.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      dragging = true;
+      handle.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    });
+    handle.addEventListener('pointermove', (event) => {
+      if (dragging) adjust(event.clientX);
+    });
+    const end = () => {
+      if (!dragging) return;
+      dragging = false;
+      const width = parseFloat(app.style.getPropertyValue('--ufs-sidebar-width'));
+      if (Number.isFinite(width)) localStorage.setItem(STORE + 'sidebarWidth', String(Math.round(width)));
+    };
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+    handle.addEventListener('lostpointercapture', end);
+  }
+
   function setView(view) {
     state.view = view;
     localStorage.setItem(STORE + 'view', view);
@@ -630,10 +723,14 @@
     const root = renderUI();
     if (isDemo) mount.append(root);
     else {
-      nativeElements = [native, $('#buttons')].filter(Boolean);
+      // Browse.page renders a separate native breadcrumb/filter strip above its table.
+      // Hide it only on the enhanced Browse view, never on Shares/settings pages.
+      const nativeBreadcrumb = $('.title .left')?.closest('.title');
+      nativeElements = [native, $('#buttons'), nativeBreadcrumb].filter(Boolean);
       nativeElements.forEach((node) => node.classList.add('ufs-hide-native'));
       native.parentNode.insertBefore(root, native);
     }
+    startLayoutSync();
     state.tabs = [{ id: state.nextId++, path: start, history: [start], cursor: 0 }];
     state.activeId = state.tabs[0].id;
     renderTabs();
