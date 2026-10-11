@@ -188,7 +188,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.3\.5\b/);
+  assert.match(script, /@version\s+0\.2\.3\.6\b/);
 });
 
 
@@ -492,7 +492,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.3\.5\b/);
+  assert.match(script, /@version\s+0\.2\.3\.6\b/);
 });
 
 
@@ -1384,4 +1384,11 @@ test('v0.2.3.5 仅未知进度使用流光，真实进度必须纯色且通过�
   assert.match(script,/data-progress-mode=determinate\] \.ufs-copy-progress-fill\{transition:none/);
   assert.match(script,/data-phase=success\] \.ufs-copy-progress-fill\{[^}]*background:#34895e/);
   assert.match(script,/fill\.style\.width=info\.percent\+'%'/);
+});
+
+
+test('v0.2.3.6 选中可用目标时展开并懒加载，箭头保留独立折叠语义',()=>{
+  assert.match(script,/choose\.addEventListener\('click',\(\)=>\{[\s\S]*?selected=path;[\s\S]*?opened\.add\(path\);[\s\S]*?renderPicker\(\);[\s\S]*?void loadChildren\(path\)/);
+  assert.match(script,/expand\.addEventListener\('click',\(\)=>\{[\s\S]*?if\(opened\.has\(path\)\) \{opened\.delete\(path\);renderPicker\(\);\}/);
+  assert.match(script,/choose\.disabled=!permitted \|\| busy/);
 });
