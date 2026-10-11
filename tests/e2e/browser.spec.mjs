@@ -1278,6 +1278,7 @@ test('v0.2.3.7 创建结果不确定时禁用重复创建和复制',async t=>{
   assert.equal(await page.getByRole('button',{name:'确认新建文件夹'}).isDisabled(),true);
   assert.equal(await page.locator('.ufs-copy-submit').isDisabled(),true);
   await page.getByRole('button',{name:'取消新建文件夹'}).click();
+  await page.getByRole('button',{name:'选择 downloads'}).locator('..').hover();
   assert.equal(await page.getByRole('button',{name:'在 downloads 下新建文件夹'}).isDisabled(),true);
   assert.equal(nativePosts.filter(x=>x.mode==='file').length,1);
   assert.equal(errors.length,0,errors.join('\n'));
