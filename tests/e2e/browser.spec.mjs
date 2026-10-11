@@ -991,3 +991,36 @@ test('v0.2.3.3 取消复制需二次确认，确认后仅发送一次 action 99 
   assert.equal(await page.locator('.ufs-copy-dialog').count(),0);
   assert.equal(errors.length,0,errors.join('\n'));
 });
+
+
+test('v0.2.3.4 rsync -h 单文件复制时真实百分比从 17% 更新到 34%',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t,{simulateNativeMonitor:true,longCopy:true});
+  await openCopyDialog(page,'notes.txt');
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-progress-panel[data-phase="copying"]').waitFor();
+  await page.evaluate(()=>{
+    window.__ufsMonitorTest.emitFileManager({
+      status:'<i class="fa fa-circle-o-notch fa-spin dfm"></i>Copying... /mnt/user/TimeMachine/notes.txt\n'+
+        '        557.06K  17%  500.49kB/s    0:00:05  '
+    });
+  });
+  await page.locator('.ufs-copy-progress-indicator',{hasText:'17%'}).waitFor();
+  assert.equal(await page.getByRole('progressbar').getAttribute('aria-valuenow'),'17');
+  assert.match(await page.locator('.ufs-copy-progress-metrics').innerText(),/已传输 557\.06K/);
+  await page.evaluate(()=>{
+    window.__ufsMonitorTest.emitFileManager({
+      status:'<i class="fa fa-circle-o-notch fa-spin dfm"></i>Copying... /mnt/user/TimeMachine/notes.txt\n'+
+        '          1.08M  34%  500.24kB/s    0:00:04  '
+    });
+  });
+  await page.locator('.ufs-copy-progress-indicator',{hasText:'34%'}).waitFor();
+  assert.equal(await page.getByRole('progressbar').getAttribute('aria-valuenow'),'34');
+  assert.match(await page.locator('.ufs-copy-progress-metrics').innerText(),/已传输 1\.08M/);
+  assert.match(await page.locator('.ufs-copy-progress-metrics').innerText(),/500\.24kB\/s/);
+  assert.match(await page.locator('.ufs-copy-progress-metrics').innerText(),/剩余 0:00:04/);
+  const width=await page.locator('.ufs-copy-progress-fill').evaluate(el=>parseFloat(el.style.width));
+  assert.equal(width,34);
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,1);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
