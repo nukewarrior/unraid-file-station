@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.3
+// @version      0.2.3.1
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -774,9 +774,9 @@
     "#ufs-app .ufs-copy-summary-info span{color:var(--ufs-muted);font-size:12px}",
     "#ufs-app .ufs-copy-picker{height:225px;overflow:auto;border:1px solid var(--ufs-border);border-radius:5px;padding:6px 0;background:var(--ufs-bg)}",
     "#ufs-app .ufs-copy-tree-group{padding:5px 11px 7px;color:var(--ufs-muted);font-size:12px;font-weight:600}",
-    "#ufs-app .ufs-copy-tree-row{display:flex;align-items:center;min-height:31px;gap:0;padding-right:7px}",
-    "#ufs-app .ufs-copy-expand{display:flex;align-items:center;justify-content:center;flex:0 0 24px;width:24px;height:27px;border:0;background:transparent;color:var(--ufs-muted);padding:4px}",
-    "#ufs-app .ufs-copy-choose{display:flex;align-items:center;gap:7px;flex:1;min-width:0;min-height:29px;padding:5px 7px;border:0;background:transparent;color:var(--ufs-text);text-align:left;border-radius:4px;font-size:13px}",
+    "#ufs-app .ufs-copy-tree-row{display:flex;align-items:center;height:32px;min-height:32px;gap:0;padding-right:7px}",
+    "#ufs-app .ufs-copy-expand{display:flex;align-items:center;justify-content:center;flex:0 0 24px;width:24px;min-width:24px;max-width:24px;height:28px;min-height:28px;margin:0;padding:0;border:0;background:transparent;color:var(--ufs-muted)}",
+    "#ufs-app .ufs-copy-choose{display:flex;align-items:center;gap:7px;flex:1;min-width:0;height:30px;min-height:30px;margin:0;padding:4px 7px;border:0;background:transparent;color:var(--ufs-text);text-align:left;border-radius:4px;font-size:13px}",
     "#ufs-app .ufs-copy-choose span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
     "#ufs-app .ufs-copy-tree-row.ufs-copy-selected .ufs-copy-choose{background:rgba(235,120,37,.11);color:var(--ufs-text);font-weight:600}",
     "#ufs-app .ufs-copy-choose:hover:not(:disabled){background:var(--ufs-hover)}",
@@ -2278,7 +2278,7 @@
       ['重置文件列表列宽', resetColumnWidths],
       ['返回原生文件管理器（其他写入操作）', nativeMode],
       [state.theme === 'unraid' ? '切换至 DSM 经典主题' : '切换至 Unraid 融合主题', toggleTheme],
-      ['关于 File Station v0.2.3', () => notify('File Station v0.2.3 · Unraid 7.2.2 · 已开放单项复制')]
+      ['关于 File Station v0.2.3.1', () => notify('File Station v0.2.3.1 · Unraid 7.2.2 · 修复复制目录树间距')]
     ];
     actions.forEach(([label, fn]) => {
       const button = element('button', '', label);
