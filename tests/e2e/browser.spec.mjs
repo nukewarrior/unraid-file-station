@@ -1118,3 +1118,53 @@ test('v0.2.3.5 减少动态效果仍保留实心真实进度，但没有宽度�
   assert.equal(style.width,'34%');
   assert.equal(errors.length,0,errors.join('\n'));
 });
+
+
+test('v0.2.3.6 点击目标文件夹同时选中并展开，重复选择不折叠，箭头仍可单独折叠',async t=>{
+  const {page,errors,nativePosts,browseRequests}=await pageFor(t);
+  await openCopyDialog(page,'notes.txt');
+  const before=browseRequests.filter(path=>path==='/mnt/user/downloads').length;
+  const selected=page.getByRole('button',{name:'选择 downloads'});
+  await selected.click();
+  assert.equal(await page.locator('.ufs-copy-destination').innerText(),'目标：/mnt/user/downloads');
+  assert.equal(await page.locator('.ufs-copy-submit').isEnabled(),true);
+  await page.getByRole('button',{name:'选择 completed'}).waitFor();
+  await page.getByRole('button',{name:'折叠 downloads'}).waitFor();
+  assert.equal(await selected.locator('..').getAttribute('aria-selected'),'true');
+  const fetched=browseRequests.filter(path=>path==='/mnt/user/downloads').length;
+  assert.equal(fetched-before,1,'首次选中仅按需读取一次目标子目录');
+
+  await selected.click();
+  assert.equal(await page.getByRole('button',{name:'选择 completed'}).count(),1);
+  assert.equal(await page.getByRole('button',{name:'折叠 downloads'}).count(),1);
+  assert.equal(browseRequests.filter(path=>path==='/mnt/user/downloads').length,fetched);
+
+  await page.getByRole('button',{name:'折叠 downloads'}).click();
+  assert.equal(await page.getByRole('button',{name:'选择 completed'}).count(),0);
+  assert.equal(await page.locator('.ufs-copy-destination').innerText(),'目标：/mnt/user/downloads');
+  assert.equal(await page.locator('.ufs-copy-submit').isEnabled(),true);
+
+  await page.getByRole('button',{name:'展开 downloads'}).click();
+  await page.getByRole('button',{name:'选择 completed'}).click();
+  assert.equal(await page.locator('.ufs-copy-destination').innerText(), '目标：/mnt/user/downloads/completed');
+  await page.getByRole('button',{name:'折叠 completed'}).waitFor();
+  assert.equal(await page.getByRole('button',{name:'选择 completed'}).locator('..').getAttribute('aria-selected'),'true');
+  assert.equal(nativePosts.filter(entry=>entry.mode==='file').length,0,'展开/选中目录不得提交复制');
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.3.6 箭头展开不自动选中，无效目标仍不可选但可展开查看',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t);
+  await openCopyDialog(page,'Photos');
+  await page.getByRole('button',{name:'展开 downloads'}).click();
+  await page.getByRole('button',{name:'选择 completed'}).waitFor();
+  assert.equal(await page.locator('.ufs-copy-destination').innerText(),'请选择目标文件夹');
+  assert.equal(await page.locator('.ufs-copy-submit').isDisabled(),true);
+  await page.getByRole('button',{name:'展开 TimeMachine'}).click();
+  assert.equal(await page.getByRole('button',{name:'选择 TimeMachine'}).isDisabled(),true);
+  await page.getByRole('button',{name:'展开 Photos'}).click();
+  assert.equal(await page.getByRole('button',{name:'选择 Photos'}).isDisabled(),true);
+  assert.equal(await page.locator('.ufs-copy-submit').isDisabled(),true);
+  assert.equal(nativePosts.filter(entry=>entry.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
