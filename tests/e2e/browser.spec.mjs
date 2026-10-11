@@ -1024,3 +1024,97 @@ test('v0.2.3.4 rsync -h 单文件复制时真实百分比从 17% 更新到 34%',
   assert.equal(nativePosts.filter(x=>x.mode==='file').length,1);
   assert.equal(errors.length,0,errors.join('\n'));
 });
+
+
+test('v0.2.3.5 真实百分比进度条为实心橙色，宽度平滑跟随数值',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t,{simulateNativeMonitor:true,longCopy:true});
+  await openCopyDialog(page,'notes.txt');
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  const panel=page.locator('.ufs-copy-progress-panel[data-phase="copying"]');
+  await panel.waitFor();
+  const fill=panel.locator('.ufs-copy-progress-fill');
+  const geometry=async()=>panel.evaluate(el=>{
+    const bar=el.querySelector('.ufs-copy-progress-track');
+    const inner=el.querySelector('.ufs-copy-progress-fill');
+    const style=getComputedStyle(inner);
+    return {mode:el.dataset.progressMode,trackHeight:bar.getBoundingClientRect().height,
+      percent:inner.getBoundingClientRect().width/bar.getBoundingClientRect().width*100,
+      backgroundImage:style.backgroundImage,backgroundColor:style.backgroundColor,
+      animation:style.animationName,transition:style.transitionDuration};
+  });
+  const before=await geometry();
+  assert.equal(before.mode,'indeterminate');
+  assert.match(before.backgroundImage,/linear-gradient/);
+  assert.equal(before.animation,'ufs-copy-flow');
+  assert.equal(before.trackHeight,8);
+
+  await page.evaluate(()=>window.__ufsMonitorTest.emitFileManager({status:
+    'Copying... /mnt/user/TimeMachine/notes.txt\n557.06K 17% 500.49kB/s 0:00:05'}));
+  await page.locator('.ufs-copy-progress-indicator',{hasText:'17%'}).waitFor();
+  await page.waitForTimeout(260);
+  const first=await geometry();
+  assert.equal(first.mode,'determinate');
+  assert.equal(first.backgroundImage,'none');
+  assert.equal(first.animation,'none');
+  assert.equal(first.transition,'0.2s');
+  assert.ok(Math.abs(first.percent-17)<1,JSON.stringify(first));
+
+  await page.evaluate(()=>window.__ufsMonitorTest.emitFileManager({status:
+    'Copying... /mnt/user/TimeMachine/notes.txt\n2.50G 73% 31.61MB/s 0:00:57'}));
+  await page.locator('.ufs-copy-progress-indicator',{hasText:'73%'}).waitFor();
+  await page.waitForTimeout(260);
+  const second=await geometry();
+  assert.ok(Math.abs(second.percent-73)<1,JSON.stringify(second));
+  assert.equal(second.backgroundColor,first.backgroundColor);
+  assert.equal(second.backgroundImage,'none');
+  assert.equal(await panel.getByRole('progressbar').getAttribute('aria-valuenow'),'73');
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,1);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.3.5 核验完成后为纯绿色满格，减少动画时禁用宽度过渡',async t=>{
+  const {page,errors}=await pageFor(t);
+  await openCopyDialog(page,'notes.txt');
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  const panel=page.locator('.ufs-copy-progress-panel[data-phase="success"]');
+  await panel.waitFor();
+  const done=await panel.evaluate(el=>{
+    const outer=el.querySelector('.ufs-copy-progress-track');
+    const inner=el.querySelector('.ufs-copy-progress-fill');
+    const style=getComputedStyle(inner);
+    return {phase:el.dataset.phase,image:style.backgroundImage,color:style.backgroundColor,
+      ratio:inner.getBoundingClientRect().width/outer.getBoundingClientRect().width,
+      animation:style.animationName};
+  });
+  assert.equal(done.phase,'success');
+  assert.equal(done.image,'none');
+  assert.equal(done.color,'rgb(52, 137, 94)');
+  assert.equal(done.animation,'none');
+  assert.ok(Math.abs(done.ratio-1)<0.01,JSON.stringify(done));
+  await page.locator('.ufs-copy-submit',{hasText:'完成'}).click();
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.3.5 减少动态效果仍保留实心真实进度，但没有宽度过渡',async t=>{
+  const {page,errors}=await pageFor(t,{simulateNativeMonitor:true,longCopy:true});
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await openCopyDialog(page,'notes.txt');
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-progress-panel[data-phase="copying"]').waitFor();
+  await page.evaluate(()=>window.__ufsMonitorTest.emitFileManager({status:
+    'Copying... /mnt/user/TimeMachine/notes.txt\n1.08M 34% 500.24kB/s 0:00:04'}));
+  await page.locator('.ufs-copy-progress-indicator',{hasText:'34%'}).waitFor();
+  const style=await page.locator('.ufs-copy-progress-fill').evaluate(el=>{
+    const css=getComputedStyle(el);
+    return {image:css.backgroundImage,animation:css.animationName,
+      transition:css.transitionDuration,width:el.style.width};
+  });
+  assert.equal(style.image,'none');
+  assert.equal(style.animation,'none');
+  assert.equal(style.transition,'0s');
+  assert.equal(style.width,'34%');
+  assert.equal(errors.length,0,errors.join('\n'));
+});
