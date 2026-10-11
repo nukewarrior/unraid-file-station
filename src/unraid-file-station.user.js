@@ -1109,6 +1109,18 @@
     columnWidths: readColumnWidths(localStorage.getItem(STORE + 'columns'))
   };
   let app;
+  let activeCopySession = null;
+  function updateCopyTaskButton() {
+    const button=app && $('.ufs-copy-task-trigger',app);
+    if (!button) return;
+    button.hidden=!activeCopySession;
+    if (activeCopySession) {
+      const phase=activeCopySession.phase;
+      button.textContent=phase==='success'?'复制已完成':phase==='uncertain'?'复制待核实':
+        phase==='cancelled'?'复制已停止':'复制任务进行中';
+      button.setAttribute('aria-label','查看'+button.textContent);
+    }
+  }
   let nativeElements = [];
   let currentMenu = null;
   const treeLoads = new Map();
@@ -2211,6 +2223,9 @@
       return node;
     });
     progressPanel.append(progressStages);
+    const progressFile=element('div','ufs-copy-current-file');
+    const progressMetrics=element('div','ufs-copy-progress-metrics');
+    progressPanel.append(progressFile,progressMetrics);
     const progressNote=element('div','ufs-copy-progress-note');
     progressNote.setAttribute('role','status');
     progressNote.setAttribute('aria-live','polite');
@@ -2240,43 +2255,109 @@
       progressNote.textContent=message || info[2];
       track.setAttribute('aria-label',phase==='success'?'复制完成':
         phase==='uncertain'?'复制结果无法确认':'复制任务进行中，进度未知');
+      if(phase==='success') {fill.style.width='100%';track.setAttribute('aria-valuenow','100');}
+      if(phase==='uncertain' || phase==='cancelled') {fill.style.animation='none';}
+      if(phase==='checking') {fill.style.width='35%';fill.style.animation='';track.removeAttribute('aria-valuenow');}
     }
     let lastActiveCopyStep=0;
-    function updateCopyProgress(message,phase) {
-      if(closed || destroyed || !dialog.isConnected) return;
+    function updateCopyProgress(message,phase,info) {
+      if(closed || destroyed) return;
       if(phase) {
         const next=stages.findIndex(([key])=>key===phase);
         if(next>=0) lastActiveCopyStep=Math.max(lastActiveCopyStep,next);
         renderCopyProgress(phase);
       } else if(visibleCopyPhase==='copying' && message) {
-        progressNote.textContent=message.slice(0,160);
+        if(info?.filename) {
+          const current=info.filename.trim().replace(/\/$/,'');
+          progressFile.textContent='当前文件：'+shortenCopyName(current.split('/').pop()||current,90);
+          progressFile.title=current;
+        }
+        if(info?.percent!=null) {
+          fill.style.animation='none';
+          fill.style.width=info.percent+'%';
+          track.setAttribute('aria-valuenow',String(info.percent));
+          track.setAttribute('aria-label','复制进度 '+info.percent+'%');
+          progressIndicator.textContent=info.percent+'%';
+          progressMetrics.textContent=[info.bytes!=null?info.bytes.toLocaleString()+' 字节':'',info.speed,info.eta?'剩余 '+info.eta:''].filter(Boolean).join(' · ');
+        }
+        // Do not dump full rsync paths and octal bytes into a multi-line panel.
+        progressNote.textContent='正在复制，请保持此页面打开。';
       }
     }
     const footer=element('div','ufs-create-buttons');
     const cancel=element('button','ufs-create-cancel ufs-copy-cancel','取消');
     cancel.type='button';
+    const background=element('button','ufs-copy-background','后台运行');
+    background.type='button';
+    background.hidden=true;
     const submit=element('button','ufs-create-submit ufs-copy-submit','开始复制');
     submit.type='submit';
     submit.disabled=true;
-    footer.append(cancel,submit);
+    footer.append(background,cancel,submit);
     form.append(fields,footer);
     dialog.append(header,form);
     overlay.append(dialog);
     app.append(overlay);
     let busy=false, closed=false, selected=null, requestVersion=0;
+    let finalPhase='picker', cancelSubmitting=false;
+    let control={cancelRequested:false,observedOwnTask:false};
     const nodes=new Map();
     const opened=new Set([PREFIX]);
     const pending=new Map();
     const close=()=>{
-      if(busy) return;
+      if(busy) {minimize();return;}
       closed=true; ++requestVersion;
       overlay.remove();
+      if(activeCopySession?.dialog===dialog) {
+        activeCopySession=null;
+        updateCopyTaskButton();
+      }
+    };
+    const minimize=()=>{
+      if(!busy || closed) return;
+      overlay.remove();
+      updateCopyTaskButton();
+      notify('复制继续在当前页面运行；点击「复制任务进行中」可查看。请勿刷新页面。');
+    };
+    const reopen=()=>{
+      if(closed || destroyed || $('.ufs-dialog-overlay',app)) return;
+      app.append(overlay);
+      updateCopyTaskButton();
     };
     dismiss.addEventListener('click',close);
-    cancel.addEventListener('click',close);
+    background.addEventListener('click',minimize);
+    cancel.addEventListener('click',()=>{
+      if(!busy || finalPhase==='success' || finalPhase==='uncertain' ||
+          finalPhase==='cancelled') {close();return;}
+      if(finalPhase!=='copying' || cancelSubmitting) return;
+      if(!control.observedOwnTask) {
+        progressNote.textContent='原生任务归属尚未确认，暂时无法安全停止。可选择后台运行。';
+        return;
+      }
+      const yes=window.confirm(
+        '确定停止此次复制吗？\n\n取消可能留下不完整的文件或文件夹，需要手动检查目标目录。\n'+
+        'Unraid 使用全局停止接口；即使已经检查任务归属，并发任务切换仍有误停风险。\n\n确定继续？'
+      );
+      if(!yes) return;
+      cancelSubmitting=true;
+      cancel.disabled=true;
+      cancel.textContent='正在停止…';
+      void requestCancelNativeCopy(activeCopySession.plan,control).then(()=>{
+        renderCopyProgress('uncertain','已发送停止指令，正在等待 Unraid 确认；请勿直接重试。');
+        heading.textContent='正在停止复制';
+      }).catch(error=>{
+        if(!closed && !destroyed) {
+          renderCopyProgress('uncertain',String(error?.message||error));
+          heading.textContent='取消结果待核实';
+        }
+      }).finally(()=>{
+        cancelSubmitting=false;
+        if(!closed) {cancel.disabled=false;cancel.textContent='关闭';}
+      });
+    });
     overlay.addEventListener('click',event=>{if(event.target===overlay) close();});
     dialog.addEventListener('keydown',event=>{
-      if(event.key==='Escape' && !busy) {event.stopPropagation();close();}
+      if(event.key==='Escape') {event.stopPropagation();close();}
     });
     const setFeedback=(message,isError=false)=>{
       if(closed || !dialog.isConnected) return;
@@ -2363,6 +2444,7 @@
     }
     form.addEventListener('submit',async event=>{
       event.preventDefault();
+      if(finalPhase==='success') {close();return;}
       if(busy || submit.disabled || !selected || nativeWriteBusy) return;
       let plan;
       try {
@@ -2373,9 +2455,15 @@
         return;
       }
       busy=true;
+      finalPhase='copying';
+      activeCopySession={dialog,plan,phase:'copying',reopen};
+      updateCopyTaskButton();
       submit.disabled=true;
-      cancel.disabled=true;
-      dismiss.disabled=true;
+      cancel.disabled=false;
+      cancel.textContent='取消复制';
+      background.hidden=false;
+      dismiss.disabled=false;
+      dismiss.title='后台运行';
       submit.textContent='复制中…';
       progressTargetPath.textContent=plan.destinationDir;
       heading.textContent='正在复制';
@@ -2383,33 +2471,45 @@
       fields.replaceChildren(summary,progressPanel);
       renderCopyProgress('checking');
       try {
-        await copyNativeEntry(plan,updateCopyProgress);
+        await copyNativeEntry(plan,updateCopyProgress,control);
         if(closed || destroyed) return;
+        finalPhase='success';
         heading.textContent='复制完成';
         renderCopyProgress('success');
-        submit.textContent='已完成';
-        // Briefly display completion rather than instantly dismissing
-        // the successful verification; keep the dialog non-dismissible.
-        await waitNative(850);
-        if(closed || destroyed) return;
-        closed=true;
-        overlay.remove();
+        activeCopySession.phase='success';
+        updateCopyTaskButton();
+        submit.textContent='完成';
+        submit.disabled=false;
+        cancel.hidden=true;
+        background.hidden=true;
+        dismiss.title='关闭';
         state.tree.delete(plan.destinationDir);
         if(currentPath()===plan.destinationDir) await refreshDirectory();
         else if(state.expanded.has(plan.destinationDir)) void loadTree(plan.destinationDir,true);
-        notify('复制完成：'+fileName(plan.target));
+        notify('复制完成：'+fileName(plan.target)+'；点击「完成」关闭结果');
       } catch(error) {
         if(closed || destroyed) return;
         const message=String(error?.message||error);
-        if(message.includes('结果不确定')) {
-          heading.textContent='复制结果待核实';
+        if(message.includes('结果不确定') || control.cancelRequested || message.includes('已请求取消')) {
+          finalPhase=control.cancelRequested?'cancelled':'uncertain';
+          heading.textContent=control.cancelRequested?'复制已请求停止':'复制结果待核实';
           renderCopyProgress('uncertain',message);
+          activeCopySession.phase=finalPhase;
+          updateCopyTaskButton();
           submit.textContent='请核实复制状态';
           submit.disabled=true;
+          cancel.textContent='关闭';
+          background.hidden=true;
+          dismiss.title='关闭';
         } else {
           // Preflight failures happened without a native write. Let the user
           // choose another destination and retry from the original picker.
           heading.textContent='复制到';
+          finalPhase='picker';
+          activeCopySession=null;
+          updateCopyTaskButton();
+          background.hidden=true;
+          cancel.textContent='取消';
           fields.replaceChildren(summary,location);
           setFeedback(message,true);
         }
@@ -2418,9 +2518,12 @@
         if(dialog.isConnected) {
           cancel.disabled=false;
           dismiss.disabled=false;
-          if(submit.textContent!=='请核实复制状态') {
+          if(finalPhase==='picker') {
             submit.textContent='开始复制';
             submit.disabled=!selected;
+          } else if(finalPhase==='success') {
+            submit.textContent='完成';
+            submit.disabled=false;
           }
           if(fields.contains(location)) renderPicker();
         }
@@ -2491,7 +2594,7 @@
       ['重置文件列表列宽', resetColumnWidths],
       ['返回原生文件管理器（其他写入操作）', nativeMode],
       [state.theme === 'unraid' ? '切换至 DSM 经典主题' : '切换至 Unraid 融合主题', toggleTheme],
-      ['关于 File Station v0.2.3.2', () => notify('File Station v0.2.3.2 · Unraid 7.2.2 · 复制过程动画与状态提示')]
+      ['关于 File Station v0.2.3.3', () => notify('File Station v0.2.3.3 · Unraid 7.2.2 · 复制真实进度、后台任务与安全取消')]
     ];
     actions.forEach(([label, fn]) => {
       const button = element('button', '', label);
@@ -2537,6 +2640,7 @@
       '<span class="ufs-section-label">文件</span>',
       '<button type="button" class="ufs-ico ufs-create-trigger" title="新建" aria-label="新建" aria-haspopup="menu" aria-expanded="false"><span data-ufs-icon="plus"></span> 新建 <span data-ufs-icon="chevron-down"></span></button>',
        '<button type="button" class="ufs-ico ufs-operations" title="文件操作" aria-label="文件操作" aria-haspopup="menu" aria-expanded="false">操作 <span data-ufs-icon="chevron-down"></span></button>',
+       '<button type="button" class="ufs-ico ufs-copy-task-trigger" title="查看复制任务" hidden>复制任务进行中</button>',
       '<span class="ufs-spacer"></span>',
       '<div class="ufs-view-controls" role="group" aria-label="文件视图">',
       '<button type="button" class="ufs-ico ufs-list-button" title="列表视图" aria-label="列表视图"><span data-ufs-icon="list"></span></button>',
@@ -2577,6 +2681,10 @@
     });
     $('.ufs-refresh', app).addEventListener('click', refreshDirectory);
     $('.ufs-more', app).addEventListener('click', showAppMenu);
+    $('.ufs-copy-task-trigger', app).addEventListener('click', () => {
+      if (activeCopySession && !$('.ufs-dialog-overlay',app)) activeCopySession.reopen();
+    });
+    updateCopyTaskButton();
     // Only create-folder is writable in v0.2.1; other native actions remain disabled.
     $('.ufs-back', app).addEventListener('click', () => stepHistory(-1));
     $('.ufs-next', app).addEventListener('click', () => stepHistory(1));
