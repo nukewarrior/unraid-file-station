@@ -188,7 +188,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.3\.1\b/);
+  assert.match(script, /@version\s+0\.2\.3\.2\b/);
 });
 
 
@@ -492,7 +492,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.3\.1\b/);
+  assert.match(script, /@version\s+0\.2\.3\.2\b/);
 });
 
 
@@ -1253,4 +1253,46 @@ test('v0.2.3.1 复制目录选择器按钮独立覆盖 Unraid 的最小宽度与
   assert.match(script,/#ufs-app \.ufs-copy-choose\{[^}]*margin:0;padding:4px 7px/);
   assert.match(script,/expand\.addEventListener\('click',/);
   assert.match(script,/choose\.addEventListener\('click',/);
+});
+
+
+test('v0.2.3.2 动画仅显示不确定进度、提供三阶段和减少动态效果支持',()=>{
+  assert.match(script,/ufs-copy-progress-panel/);
+  assert.match(script,/ufs-copy-progress-spinner/);
+  assert.match(script,/@keyframes ufs-copy-flow/);
+  assert.match(script,/@keyframes ufs-copy-spin/);
+  assert.match(script,/@media\(prefers-reduced-motion:reduce\)/);
+  assert.match(script,/track\.setAttribute\('role','progressbar'\)/);
+  assert.match(script,/aria-label','复制任务进行中，进度未知'/);
+  assert.doesNotMatch(script,/track\.setAttribute\('aria-valuenow'/);
+  assert.match(script,/fields\.replaceChildren\(summary,progressPanel\)/);
+  assert.match(script,/renderCopyProgress\('success'\)/);
+  assert.match(script,/renderCopyProgress\('uncertain',message\)/);
+  assert.match(script,/fields\.replaceChildren\(summary,location\)/);
+  assert.match(script,/await waitNative\(850\)/);
+});
+
+test('v0.2.3.2 复制阶段由原生任务流程发出，不虚构完成比例',async()=>{
+  let reads=0;
+  const observed=[];
+  const {api,sandbox}=createAPI({fetch:async(_url,opts)=>{
+    const data=new URLSearchParams(opts.body);
+    if(data.get('mode')==='read' && ++reads===2) {
+      return {ok:true,text:async()=>JSON.stringify({
+        action:8,source:'/mnt/user/a/report.txt',target:'/mnt/user/b/'
+      })};
+    }
+    if(data.get('mode')==='file') {
+      sandbox.window.__UFS_DEMO__['/mnt/user/b']=[{name:'report.txt',folder:false,size:100}];
+    }
+    return {ok:true,text:async()=>''};
+  }});
+  sandbox.window.__UFS_DEMO__['/mnt/user/a']=[{name:'report.txt',folder:false,size:100}];
+  sandbox.window.__UFS_DEMO__['/mnt/user/b']=[];
+  const plan=api.planFileOperation({type:'copy',source:'/mnt/user/a/report.txt',
+    destinationDir:'/mnt/user/b',folder:false});
+  await api.copyNativeEntry(plan,(text,phase)=>observed.push({text,phase}));
+  assert.deepEqual(observed.map(x=>x.phase),['checking','copying','verifying']);
+  assert.match(observed[0].text,/检查/);
+  assert.match(observed[2].text,/核对/);
 });
