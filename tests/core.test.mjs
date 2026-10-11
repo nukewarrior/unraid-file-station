@@ -1264,7 +1264,7 @@ test('v0.2.3.2 动画仅显示不确定进度、提供三阶段和减少动态�
   assert.match(script,/@media\(prefers-reduced-motion:reduce\)/);
   assert.match(script,/track\.setAttribute\('role','progressbar'\)/);
   assert.match(script,/aria-label','复制任务进行中，进度未知'/);
-  assert.doesNotMatch(script,/track\.setAttribute\('aria-valuenow'/);
+  assert.match(script,/track\.setAttribute\('aria-valuenow','100'\)/);
   assert.match(script,/fields\.replaceChildren\(summary,progressPanel\)/);
   assert.match(script,/renderCopyProgress\('success'\)/);
   assert.match(script,/renderCopyProgress\('uncertain',message\)/);
