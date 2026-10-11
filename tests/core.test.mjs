@@ -188,7 +188,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.3\b/);
+  assert.match(script, /@version\s+0\.2\.3\.1\b/);
 });
 
 
@@ -492,7 +492,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.3\b/);
+  assert.match(script, /@version\s+0\.2\.3\.1\b/);
 });
 
 
@@ -1242,4 +1242,15 @@ test('v0.2.3 文件复制完成但大小与源文件不一致时不能报告成�
   const plan=api.planFileOperation({type:'copy',source:'/mnt/user/a/data.bin',
     destinationDir:'/mnt/user/b',folder:false});
   await assert.rejects(api.copyNativeEntry(plan),/结果不确定.*大小与源文件不一致/);
+});
+
+
+test('v0.2.3.1 复制目录选择器按钮独立覆盖 Unraid 的最小宽度与 margin',()=>{
+  assert.match(script,/#ufs-app \.ufs-copy-tree-row\{[^}]*height:32px/);
+  assert.match(script,/#ufs-app \.ufs-copy-expand\{[^}]*width:24px;min-width:24px;max-width:24px/);
+  assert.match(script,/#ufs-app \.ufs-copy-expand\{[^}]*margin:0;padding:0/);
+  assert.match(script,/#ufs-app \.ufs-copy-choose\{[^}]*min-width:0;height:30px/);
+  assert.match(script,/#ufs-app \.ufs-copy-choose\{[^}]*margin:0;padding:4px 7px/);
+  assert.match(script,/expand\.addEventListener\('click',/);
+  assert.match(script,/choose\.addEventListener\('click',/);
 });
