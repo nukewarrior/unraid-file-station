@@ -1459,6 +1459,8 @@ test('v0.2.3.10 HTML 实体歧义及原有特殊字符显示禁用复制与原�
     assert.match(await menu.getAttribute('title'),/无法安全处理|路径与文件名不一致/);
     assert.equal(await page.getByRole('menuitem',{name:'重命名'}).count(),0,
       '路径失真的项目不能允许重命名');
+    // Dismiss the menu before the next right-click; it otherwise overlays rows.
+    await page.locator('.ufs-section-label').click();
   }
   assert.equal(nativePosts.filter(p=>p.mode==='file').length,0);
   assert.equal(errors.length,0,errors.join('\n'));

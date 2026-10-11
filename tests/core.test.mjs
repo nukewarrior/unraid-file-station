@@ -1496,8 +1496,12 @@ test('v0.2.3.10 HTML 实体及高风险名称仍禁止复制', () => {
   for(const name of ['A&amp;B','A&#38;B','A&copy;B','A&copy','A%25B',
     'A"B',"A'B",'a;b','a\\b','a/b','bad\\nname',' bad','bad ']) {
     assert.equal(api.safeCopyName(name),false,JSON.stringify(name));
-    assert.equal(api.safeCopyPath('/mnt/user/downloads/'+name),false,JSON.stringify(name));
+    // Slash is invalid *within one name* but may separate legal path parts.
+    if (name !== 'a/b') {
+      assert.equal(api.safeCopyPath('/mnt/user/downloads/'+name),false,JSON.stringify(name));
+    }
   }
+  assert.equal(api.safeCopyPath('/mnt/user/downloads/a/b'),true);
   assert.equal(api.safeCopyPath('/mnt/disk1/Folder&A'),false);
   assert.equal(api.safeCopyPath('/mnt/user/downloads/../Folder&A'),false);
   assert.equal(api.safeCopyPath('/mnt/user/downloads',true),true);
