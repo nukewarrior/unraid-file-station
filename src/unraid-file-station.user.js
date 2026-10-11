@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.3.1
+// @version      0.2.3.2
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -562,6 +562,7 @@
       if (isDemo && window.__UFS_TEST_MODE__ !== true) {
         throw new Error('演示模式不允许真实写入');
       }
+      progress('正在检查源文件和目标目录…', 'checking');
       // Preflight fresh directories independently, never trust filtered UI
       // rows nor the destination picker cache.
       const originEntries = await listDirectory(parentPath(plan.source));
@@ -596,7 +597,7 @@
           hdlink: '', sparse: '', exist: '', zfs: ''
         });
         if (reply.trim()) throw new Error('原生接口返回了非预期内容');
-        progress('正在复制，完成后自动核对目标…');
+        progress('正在复制，完成后自动核对目标…', 'copying');
         // Large rsync tasks are allowed to continue for hours. The UI never
         // retries, issues mode=start, or stops someone else's global task.
         const deadline = Date.now() + 6 * 60 * 60 * 1000;
@@ -625,6 +626,7 @@
           throw new Error('复制任务尚未结束或无法确认结束');
         }
         if (eventError) throw new Error('Unraid 报告复制错误：' + eventError);
+        progress('正在核对复制结果…', 'verifying');
         const verified = await listDirectory(plan.destinationDir);
         const result = verified.find(entry => entry.path === plan.target);
         if (!result || result.folder !== plan.folder) {
@@ -785,6 +787,31 @@
     "#ufs-app .ufs-copy-destination{margin-top:9px;color:var(--ufs-muted);font-size:12px;overflow-wrap:anywhere}",
     "#ufs-app .ufs-copy-dialog .ufs-create-feedback{margin-top:8px}",
     "@media(max-height:650px){#ufs-app .ufs-copy-picker{height:min(200px,30vh)}}",
+    "#ufs-app .ufs-copy-progress-panel{display:flex;flex-direction:column;gap:0;min-width:0}",
+    "#ufs-app .ufs-copy-progress-target{display:flex;align-items:center;gap:8px;color:var(--ufs-muted);font-size:12px;line-height:1.5;overflow-wrap:anywhere}",
+    "#ufs-app .ufs-copy-progress-target .ufs-folder-icon{color:var(--ufs-accent);flex-shrink:0}",
+    "#ufs-app .ufs-copy-progress-status{display:flex;align-items:center;justify-content:space-between;gap:9px;margin:22px 0 11px;font-size:13px}",
+    "#ufs-app .ufs-copy-progress-state{display:flex;align-items:center;gap:8px;min-width:0;font-weight:600}",
+    "#ufs-app .ufs-copy-progress-state-text{min-width:0;overflow-wrap:anywhere}",
+    "#ufs-app .ufs-copy-progress-spinner{width:16px;height:16px;flex:0 0 16px;border:2px solid rgba(235,120,37,.19);border-top-color:var(--ufs-accent);border-radius:50%;animation:ufs-copy-spin .9s linear infinite}",
+    "#ufs-app .ufs-copy-progress-indicator{font-size:11px;color:var(--ufs-accent);white-space:nowrap}",
+    "#ufs-app .ufs-copy-progress-track{position:relative;height:6px;border-radius:8px;background:var(--ufs-panel);overflow:hidden}",
+    "#ufs-app .ufs-copy-progress-fill{position:absolute;top:0;bottom:0;left:0;width:35%;border-radius:8px;background:linear-gradient(90deg,transparent,rgba(235,120,37,.76),var(--ufs-accent),transparent);animation:ufs-copy-flow 1.7s cubic-bezier(.4,0,.2,1) infinite}",
+    "#ufs-app .ufs-copy-progress-stages{display:flex;justify-content:space-between;gap:7px;margin-top:14px;font-size:11px;line-height:1.5}",
+    "#ufs-app .ufs-copy-progress-stage{color:var(--ufs-muted);white-space:nowrap}",
+    "#ufs-app .ufs-copy-progress-stage[data-status=active]{color:var(--ufs-accent);font-weight:600}",
+    "#ufs-app .ufs-copy-progress-stage[data-status=done]{color:#34895e}",
+    "#ufs-app .ufs-copy-progress-note{margin-top:19px;font-size:12px;line-height:1.5;color:var(--ufs-muted);overflow-wrap:anywhere}",
+    "#ufs-app .ufs-copy-progress-panel[data-phase=success] .ufs-copy-progress-spinner{animation:none;border-color:#34895e;background:#34895e;position:relative}",
+    "#ufs-app .ufs-copy-progress-panel[data-phase=success] .ufs-copy-progress-spinner::after{content:'';position:absolute;left:3px;top:0;width:5px;height:9px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}",
+    "#ufs-app .ufs-copy-progress-panel[data-phase=success] .ufs-copy-progress-fill{animation:none;width:100%;background:#34895e}",
+    "#ufs-app .ufs-copy-progress-panel[data-phase=success] .ufs-copy-progress-indicator,#ufs-app .ufs-copy-progress-panel[data-phase=success] .ufs-copy-progress-state{color:#34895e}",
+    "#ufs-app .ufs-copy-progress-panel[data-phase=uncertain] .ufs-copy-progress-spinner{animation:none;border-color:#c13d37;border-top-color:transparent}",
+    "#ufs-app .ufs-copy-progress-panel[data-phase=uncertain] .ufs-copy-progress-fill{animation:none;width:0}",
+    "#ufs-app .ufs-copy-progress-panel[data-phase=uncertain] .ufs-copy-progress-state,#ufs-app .ufs-copy-progress-panel[data-phase=uncertain] .ufs-copy-progress-indicator,#ufs-app .ufs-copy-progress-panel[data-phase=uncertain] .ufs-copy-progress-note{color:#c13d37}",
+    "@keyframes ufs-copy-spin{to{transform:rotate(360deg)}}",
+    "@keyframes ufs-copy-flow{from{transform:translateX(-110%)}to{transform:translateX(305%)}}",
+    "@media(prefers-reduced-motion:reduce){#ufs-app .ufs-copy-progress-spinner,#ufs-app .ufs-copy-progress-fill{animation:none}}",
     // Only the enhanced Browse view is locked; the native view and every other Unraid page scroll normally.
     'html.ufs-active-page,html.ufs-active-page body{overflow-y:hidden!important;overscroll-behavior-y:none}',
     // Unraid adds two fixed global page-scroll arrows; neither applies to our internally scrolling browser.
@@ -2278,7 +2305,7 @@
       ['重置文件列表列宽', resetColumnWidths],
       ['返回原生文件管理器（其他写入操作）', nativeMode],
       [state.theme === 'unraid' ? '切换至 DSM 经典主题' : '切换至 Unraid 融合主题', toggleTheme],
-      ['关于 File Station v0.2.3.1', () => notify('File Station v0.2.3.1 · Unraid 7.2.2 · 修复复制目录树间距')]
+      ['关于 File Station v0.2.3.2', () => notify('File Station v0.2.3.2 · Unraid 7.2.2 · 复制过程动画与状态提示')]
     ];
     actions.forEach(([label, fn]) => {
       const button = element('button', '', label);
