@@ -777,6 +777,8 @@ test('v0.2.3 同名目标阻止原生写入，结果不确定时锁住提交',as
   await page.getByRole('button',{name:'选择 downloads'}).click();
   await page.locator('.ufs-copy-submit').click();
   await page.locator('.ufs-copy-feedback',{hasText:'已有同名项目'}).waitFor();
+  assert.equal(await page.locator('.ufs-copy-picker').isVisible(),true);
+  assert.equal(await page.locator('.ufs-copy-progress-panel').count(),0);
   assert.equal(nativePosts.filter(x=>x.mode==='file').length,0);
   assert.equal(errors.length,0,errors.join('\n'));
 });
@@ -786,7 +788,7 @@ test('v0.2.3 已提交但复制结果无法确认时不误报成功也不重复�
   await openCopyDialog(page,'notes.txt');
   await page.getByRole('button',{name:'选择 downloads'}).click();
   await page.locator('.ufs-copy-submit').click();
-  await page.locator('.ufs-copy-feedback',{hasText:'结果不确定'}).waitFor();
+  await page.locator('.ufs-copy-progress-panel[data-phase="uncertain"] .ufs-copy-progress-note',{hasText:'结果不确定'}).waitFor();
   assert.equal(await page.locator('.ufs-copy-submit').isDisabled(),true);
   assert.equal(nativePosts.filter(x=>x.mode==='file').length,1);
   assert.equal(errors.length,0,errors.join('\n'));
@@ -841,5 +843,69 @@ test('v0.2.3.1 复制目录树在 Unraid 原生按钮规则下仍保持 32px 行
     '目标：/mnt/user/downloads/completed');
   assert.equal(await page.locator('.ufs-copy-submit').isEnabled(),true);
   assert.equal(nativePosts.filter(x=>x.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+
+test('v0.2.3.2 复制时从目录选择器切到流动进度与真实任务阶段，无虚构百分比',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t);
+  await openCopyDialog(page,'notes.txt');
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  const panel=page.locator('.ufs-copy-progress-panel');
+  await panel.waitFor();
+  assert.equal(await page.locator('.ufs-copy-picker').count(),0);
+  assert.equal(await page.locator('.ufs-copy-progress-target-text').innerText(),'/mnt/user/downloads');
+  assert.equal(await page.locator('.ufs-copy-cancel').isDisabled(),true);
+  assert.equal(await page.locator('.ufs-copy-submit').isDisabled(),true);
+  const progressBar=panel.getByRole('progressbar');
+  assert.equal(await progressBar.getAttribute('aria-valuenow'),null);
+  assert.match(await progressBar.getAttribute('aria-label'),/进度未知/);
+  assert.equal(await page.locator('.ufs-copy-progress-stages .ufs-copy-progress-stage').count(),3);
+  await page.locator('.ufs-copy-progress-panel[data-phase="copying"]').waitFor();
+  assert.equal(await page.locator('.ufs-copy-progress-indicator').innerText(),'进行中');
+  assert.equal(await panel.evaluate(el=>getComputedStyle(el.querySelector('.ufs-copy-progress-fill')).animationName),'ufs-copy-flow');
+  await page.locator('.ufs-copy-progress-panel[data-phase="success"]').waitFor();
+  assert.equal(await page.locator('.ufs-copy-progress-indicator').innerText(),'已完成');
+  assert.equal(await panel.locator('.ufs-copy-progress-stage[data-status="done"]').count(),3);
+  const fill=panel.locator('.ufs-copy-progress-fill');
+  assert.equal(await fill.evaluate(el=>getComputedStyle(el).animationName),'none');
+  assert.equal(await fill.evaluate(el=>getComputedStyle(el).width),await fill.evaluate(el=>getComputedStyle(el.parentElement).width));
+  await page.locator('.ufs-copy-dialog').waitFor({state:'detached'});
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,1);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.3.2 原生复制结果不确定时停止动画，保持关闭入口且禁止重试',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t,{dropCopy:true});
+  await openCopyDialog(page,'notes.txt');
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  const panel=page.locator('.ufs-copy-progress-panel[data-phase="uncertain"]');
+  await panel.waitFor();
+  assert.match(await page.locator('.ufs-copy-progress-note').innerText(),/结果不确定/);
+  assert.equal(await page.locator('.ufs-copy-submit').isDisabled(),true);
+  assert.equal(await panel.locator('.ufs-copy-progress-fill').evaluate(el=>getComputedStyle(el).animationName),'none');
+  assert.equal(await page.locator('.ufs-copy-cancel').isEnabled(),true);
+  await page.locator('.ufs-copy-cancel').click();
+  assert.equal(await page.locator('.ufs-copy-dialog').count(),0);
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,1);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.3.2 减少动态效果时停止旋转与流动，但仍显示复制进行中',async t=>{
+  const {page,errors}=await pageFor(t);
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await openCopyDialog(page,'notes.txt');
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  const panel=page.locator('.ufs-copy-progress-panel');
+  await panel.waitFor();
+  const animations=await panel.evaluate(el=>[
+    getComputedStyle(el.querySelector('.ufs-copy-progress-spinner')).animationName,
+    getComputedStyle(el.querySelector('.ufs-copy-progress-fill')).animationName
+  ]);
+  assert.deepEqual(animations,['none','none']);
+  assert.match(await panel.getByRole('progressbar').getAttribute('aria-label'),/进度未知/);
   assert.equal(errors.length,0,errors.join('\n'));
 });
