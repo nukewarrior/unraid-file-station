@@ -35,7 +35,15 @@ function createAPI(options = {}) {
     },
     localStorage: { getItem: () => null },
     DOMParser: class {
-      parseFromString() {
+      parseFromString(html) {
+        if (html.startsWith('<i data="')) {
+          const value = html.slice('<i data="'.length, -'</i>'.length - 2);
+          // Minimal data-attribute entity simulation; the real browser suite
+          // checks HTML parsing directly in Chromium.
+          const decoded = value.replace(/&(amp|copy)(;|(?=$))/gi, (_, name) =>
+            name.toLowerCase() === 'amp' ? '&' : '©');
+          return { querySelector: () => ({ getAttribute: () => decoded }) };
+        }
         return {
           querySelector: () => (rows.length ? {} : null),
           querySelectorAll: () => rows,
@@ -54,6 +62,7 @@ function makeIcon(path, type = 'f') {
     getAttribute: () => null,
     textContent: '',
   }));
+  cells[2].textContent = path.slice(path.lastIndexOf('/') + 1);
   cells[3].textContent = 'nobody';
   cells[4].textContent = '-rw-rw-rw-';
   cells[5].getAttribute = () => '1024';
@@ -188,7 +197,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.3\.9\b/);
+  assert.match(script, /@version\s+0\.2\.3\.10\b/);
 });
 
 
@@ -492,7 +501,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.3\.9\b/);
+  assert.match(script, /@version\s+0\.2\.3\.10\b/);
 });
 
 
@@ -1459,4 +1468,56 @@ test('v0.2.3.9 懒加载、行内新建和异步刷新共用复制目录排序�
   assert.match(script,/nodes\.set\(path, sortedCopyFolders\(path, entries\)\)/);
   assert.match(script,/nodes\.set\(draft\.parent, sortedCopyFolders\(draft\.parent,\s*\[/);
   assert.match(script,/nodes\.set\(draft\.parent, sortedCopyFolders\(draft\.parent, children\)\)/);
+});
+
+test('v0.2.3.10 普通 & 的复制路径独立允许，其他写入继续拒绝', () => {
+  const {api} = createAPI();
+  const names=['[DHR&MakariHoshiyume&VCB-Studio] 1080p.mkv','Folder&A','A&B'];
+  for (const name of names) {
+    const source='/mnt/user/TimeMachine/'+name;
+    assert.equal(api.safeCopyName(name),true,name);
+    assert.equal(api.safeCopyPath(source),true,source);
+    assert.equal(api.safeWritePath(source),false,'mkdir/rename/move 禁止原有 & 路径');
+    const plan=api.planFileOperation({
+      type:'copy',source,destinationDir:'/mnt/user/downloads/Media&Archive',folder:false
+    });
+    assert.equal(plan.source,source);
+    assert.equal(plan.target,'/mnt/user/downloads/Media&Archive/'+name);
+    assert.equal(api.copyDestinationAllowed(plan,'/mnt/user/downloads/Media&Archive'),true);
+    assert.throws(()=>api.planFileOperation({
+      type:'rename',source,folder:false,name:'new.mkv'
+    }),/只能操作共享文件夹内/);
+  }
+  assert.equal(api.safeCopyPath('/mnt/user/TimeMachine/Folder&A/Episode&Bonus.mkv'),true);
+});
+
+test('v0.2.3.10 HTML 实体及高风险名称仍禁止复制', () => {
+  const {api}=createAPI();
+  for(const name of ['A&amp;B','A&#38;B','A&copy;B','A&copy','A%25B',
+    'A"B',"A'B",'a;b','a\\b','a/b','bad\\nname',' bad','bad ']) {
+    assert.equal(api.safeCopyName(name),false,JSON.stringify(name));
+    assert.equal(api.safeCopyPath('/mnt/user/downloads/'+name),false,JSON.stringify(name));
+  }
+  assert.equal(api.safeCopyPath('/mnt/disk1/Folder&A'),false);
+  assert.equal(api.safeCopyPath('/mnt/user/downloads/../Folder&A'),false);
+  assert.equal(api.safeCopyPath('/mnt/user/downloads',true),true);
+  assert.match(api.copyBlockedReason({path:'/mnt/user/downloads/A&amp;B'}),
+    /无法安全处理/);
+  assert.match(api.copyBlockedReason({
+    path:'/mnt/user/downloads/A&B',copyPathVerified:false
+  }),/路径与文件名不一致/);
+  assert.equal(api.copyBlockedReason({path:'/mnt/user/downloads/A&B',
+    copyPathVerified:true}),'');
+});
+
+test('v0.2.3.10 复制菜单及提交前必须验证原生 Browse 文件名一致性',()=>{
+  assert.match(script,/copyPathVerified: cells\[2\]\?\.textContent === path\.substring/);
+  assert.match(script,/copyBlockedReason\(chosen\[0\]\)/);
+  assert.match(script,/button\.disabled = true;[\s\S]*?button\.title = disabledReason/);
+  assert.match(script,/copyBlockedReason\(entry\) \|\| currentPath\(\)/);
+  assert.match(script,/if \(sourceEntry\.copyPathVerified === false\)/);
+  assert.match(script,/safeCopyPath\(item\.path, true\) && item\.copyPathVerified !== false/);
+  assert.match(script,/!safeCopyPath\(plan\.source\)/);
+  assert.match(script,/function safeWriteName\(name\)/);
+  assert.match(script,/const RENAME_ENABLED = true/);
 });

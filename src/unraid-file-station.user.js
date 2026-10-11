@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.3.9
+// @version      0.2.3.10
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -136,6 +136,9 @@
       if (!safePath(path) || !row || cells.length < 8 || !path.startsWith(directory.replace(/\/$/, '') + '/')) return null;
       return {
         path, name: path.substring(path.lastIndexOf('/') + 1), folder,
+        // Browse.php leaves '&' unescaped in data attributes; HTML entity
+        // decoding may change the pathname before it reaches JavaScript.
+        copyPathVerified: cells[2]?.textContent === path.substring(path.lastIndexOf('/') + 1),
         size: folder ? null : Number(cells[5].getAttribute('data') || '0'),
         mtime: Number(cells[6].getAttribute('data') || '0'),
         owner: (cells[3].textContent || '').trim(),
@@ -194,6 +197,30 @@
     const parts = path.slice(PREFIX.length + 1).split('/');
     return parts.length >= (allowShareRoot ? 1 : 2) && parts.every(safeWriteName);
   }
+  // Copy-only relaxation: allow unambiguous '&' while preserving all other
+  // write restrictions. Browse.php emits raw paths as HTML attributes; if
+  // the HTML parser would reinterpret an entity, refuse to copy that name.
+  function safeCopyName(name) {
+    if (safeWriteName(name)) return true;
+    if (typeof name !== 'string' || !name.includes('&') ||
+        !safeWriteName(name.replace(/&/g, '_'))) return false;
+    const parsed = new DOMParser().parseFromString('<i data="' + name + '"></i>', 'text/html');
+    return parsed.querySelector('i')?.getAttribute('data') === name;
+  }
+  function safeCopyPath(path, allowShareRoot = false) {
+    if (!safePath(path) || path === PREFIX || path.endsWith('/') || path.includes('//')) return false;
+    const parts = path.slice(PREFIX.length + 1).split('/');
+    return parts.length >= (allowShareRoot ? 1 : 2) && parts.every(safeCopyName);
+  }
+  function copyBlockedReason(entry) {
+    if (entry?.copyPathVerified === false) {
+      return '原生目录返回的路径与文件名不一致，可能存在 HTML 实体解码；已禁止复制以避免操作错误文件';
+    }
+    if (!safeCopyPath(entry?.path)) {
+      return '文件名或上级目录包含无法安全处理的字符（例如 HTML 实体、% 或引号），暂不支持复制';
+    }
+    return '';
+  }
   function parentPath(path) { return path.slice(0, path.lastIndexOf('/')); }
   function fileName(path) { return path.slice(path.lastIndexOf('/') + 1); }
 
@@ -218,7 +245,7 @@
     }
 
     // Shared-folder roots cannot be renamed, moved, copied or deleted here.
-    if (!safeWritePath(source)) throw new Error('只能操作共享文件夹内的文件或子目录');
+    if (!(type === 'copy' ? safeCopyPath(source) : safeWritePath(source))) throw new Error('只能操作共享文件夹内的文件或子目录');
     if (typeof folder !== 'boolean') throw new Error('必须明确文件或目录类型');
 
     if (type === 'rename') {
@@ -230,9 +257,10 @@
       return Object.freeze({ type, source, target, name, folder, conflictPolicy, previewOnly: true });
     }
     if (type === 'copy' || type === 'move') {
-      if (!safeWritePath(destinationDir, true)) throw new Error('目标文件夹路径无效');
+      const validatePath = type === 'copy' ? safeCopyPath : safeWritePath;
+      if (!validatePath(destinationDir, true)) throw new Error('目标文件夹路径无效');
       const target = destinationDir + '/' + fileName(source);
-      if (!safeWritePath(target) || target === source) throw new Error('源和目标不能相同');
+      if (!validatePath(target) || target === source) throw new Error('源和目标不能相同');
       if (folder && (destinationDir === source || destinationDir.startsWith(source + '/'))) {
         throw new Error('不能将目录复制或移动到其内部');
       }
@@ -601,7 +629,7 @@
       active.source === plan.source && active.target === nativeCopyTarget(plan);
   }
   function copyDestinationAllowed(plan, destinationDir) {
-    if (!plan || !safeWritePath(destinationDir, true) ||
+    if (!plan || !safeCopyPath(destinationDir, true) ||
         destinationDir === parentPath(plan.source)) return false;
     return !plan.folder || (destinationDir !== plan.source &&
       !destinationDir.startsWith(plan.source + '/'));
@@ -610,7 +638,7 @@
     return withNativeWriteLock(async () => {
       if (!COPY_ENABLED || !plan || plan.type !== 'copy' ||
           plan.conflictPolicy !== 'fail' || plan.previewOnly !== true ||
-          !safeWritePath(plan.source) || typeof plan.folder !== 'boolean' ||
+          !safeCopyPath(plan.source) || typeof plan.folder !== 'boolean' ||
           !copyDestinationAllowed(plan, plan.destinationDir) ||
           plan.target !== plan.destinationDir + '/' + fileName(plan.source)) {
         throw new Error('无效的复制操作或目标位置');
@@ -625,6 +653,9 @@
       const sourceEntry = originEntries.find(entry => entry.path === plan.source);
       if (!sourceEntry || sourceEntry.folder !== plan.folder) {
         throw new Error('源文件或目录已不存在，请刷新目录后重试');
+      }
+      if (sourceEntry.copyPathVerified === false) {
+        throw new Error('原生目录返回路径与文件名不一致，拒绝复制以防操作错误文件');
       }
       const destinationEntries = await listDirectory(plan.destinationDir);
       if (destinationEntries.some(entry =>
@@ -1584,7 +1615,8 @@
   // The main file list and copy destination picker share one folder-name order.
   // Keep top-level Shares in Browse.php's original order (first Share stays first).
   function sortedCopyFolders(parent, entries) {
-    const folders = entries.filter(item => item.folder && safeWritePath(item.path, true));
+    const folders = entries.filter(item => item.folder &&
+      safeCopyPath(item.path, true) && item.copyPathVerified !== false);
     return parent === PREFIX ? folders : folders.sort((a, b) => nameCollator.compare(a.name, b.name));
   }
   function visibleEntries() {
@@ -1888,9 +1920,12 @@
       if (entry.folder) actions.push(['在新标签页中打开', () => addTab(entry.path)]);
     }
     if (chosen.length) {
-      if (chosen.length === 1 && safeWritePath(chosen[0].path) && !nativeWriteBusy) {
-        actions.push(['重命名', () => showRenameDialog(chosen[0])]);
-        actions.push(['复制到…', () => showCopyDialog(chosen[0])]);
+      if (chosen.length === 1 && !nativeWriteBusy) {
+        if (safeWritePath(chosen[0].path) && chosen[0].copyPathVerified !== false) {
+          actions.push(['重命名', () => showRenameDialog(chosen[0])]);
+        }
+        actions.push(['复制到…', () => showCopyDialog(chosen[0]),
+          copyBlockedReason(chosen[0])]);
       }
       actions.push(['复制路径（' + chosen.length + ' 项）', copySelectedPaths]);
       if (chosen.length === 1 && !chosen[0].folder)
@@ -1905,11 +1940,17 @@
       actions.push(['刷新当前目录', refreshDirectory]);
     }
     actions.push(['返回原生文件管理器（其他写入操作）', nativeMode]);
-    actions.forEach(([label, action]) => {
+    actions.forEach(([label, action, disabledReason]) => {
       const button = element('button', '', label);
       button.type = 'button';
       button.setAttribute('role', 'menuitem');
-      button.addEventListener('click', () => { closeMenu(); action(); });
+      if (disabledReason) {
+        button.disabled = true;
+        button.title = disabledReason;
+        button.setAttribute('aria-description', disabledReason);
+      } else {
+        button.addEventListener('click', () => { closeMenu(); action(); });
+      }
       menu.append(button);
     });
     app.append(menu);
@@ -2185,7 +2226,7 @@
   function showCopyDialog(entry) {
     if (!COPY_ENABLED || destroyed || !entry || !activeTab() || state.busy ||
         nativeWriteBusy || $('.ufs-dialog-overlay', app) ||
-        !safeWritePath(entry.path) || currentPath() !== parentPath(entry.path)) return;
+        copyBlockedReason(entry) || currentPath() !== parentPath(entry.path)) return;
     const source = entry.path;
     const overlay = element('div','ufs-dialog-overlay');
     const dialog = element('div','ufs-create-dialog ufs-copy-dialog');
@@ -3310,7 +3351,7 @@
   }
   // Explicit opt-in hook for pure-function tests; never enabled on production WebGUI.
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
-    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, COPY_ENABLED, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, nativeCopyTarget, matchesCopyTask, copyDestinationAllowed, copyNativeEntry, decodeRsyncFilename, parseRsyncProgress, shortenCopyName, requestCancelNativeCopy, takeOverNativeFileMonitor, availableHeight, visibleEntries, sortedCopyFolders, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
+    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, COPY_ENABLED, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, nativeCopyTarget, matchesCopyTask, copyDestinationAllowed, copyNativeEntry, decodeRsyncFilename, parseRsyncProgress, shortenCopyName, requestCancelNativeCopy, takeOverNativeFileMonitor, availableHeight, visibleEntries, sortedCopyFolders, safeCopyName, safeCopyPath, copyBlockedReason, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();

@@ -54,8 +54,9 @@ function responseFor(path, extra = [], list = contents[path] || []) {
       ? Array.from({length:24},(_,i)=>'disk'+(i+1))
       : ['disk2','disk3'];
     const fields = [
-      '<i id="row_'+index+'" data="'+esc(full)+'" type="'+(folder?'d':'f')+'"></i>',
-      esc(name), '-','nobody','drwxrwxrwx','0','0',
+      // Browse.php escapes double quotes but leaves '&' in data="" raw.
+      '<i id="row_'+index+'" data="'+full.replace(/"/g,'&#34;')+'" type="'+(folder?'d':'f')+'"></i>',
+      '-', esc(name),'nobody','drwxrwxrwx','0','0',
       locations.map((device,i)=>'<span id="device_'+index+'_'+i+'">'+device+'</span>').join('')
     ];
     return '<tr>'+fields.map((field,i) =>
@@ -157,7 +158,8 @@ async function pageFor(t, options = {}) {
     const sourceForCopied=copied.find(item=>oldPath===item.target || oldPath.startsWith(item.target+'/'));
     const sourcePath=sourceForCopied?
       sourceForCopied.source + oldPath.slice(sourceForCopied.target.length) : oldPath;
-    const originalRows=contents[sourcePath] || [];
+    const originalRows=[...(contents[sourcePath] || []),
+      ...(options.extraEntries?.[sourcePath] || [])];
     const mappedRows=originalRows.map(([name,folder])=>{
       const oldEntry=oldPath+'/'+name;
       const changed=renamed.find(item=>item.source===oldEntry);
@@ -1381,5 +1383,83 @@ test('v0.2.3.9 主文件列表与复制目标子目录排序一致，行内创�
     '新建后的二次 Browse 刷新不可恢复原始服务器顺序');
   assert.equal(nativePosts.filter(post=>post.mode==='file').length,1,
     '排序不增加任何写入；仅允许用户主动执行的一次 mkdir');
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.3.10 普通 & 文件和含 & 的复制目标保留原路径', async t=>{
+  const filename='[DHR&MakariHoshiyume&VCB-Studio] Episode 01.mkv';
+  const {page,errors,nativePosts,copied}=await pageFor(t,{extraEntries:{
+    '/mnt/user/TimeMachine':[[filename,false]],
+    '/mnt/user/downloads':[['Media&Archive',true]]
+  }});
+  await openCopyDialog(page,filename);
+  await page.getByRole('button',{name:'展开 downloads'}).click();
+  const dest=page.getByRole('button',{name:'选择 Media&Archive'});
+  await dest.waitFor();
+  await dest.click();
+  assert.equal(await page.locator('.ufs-copy-destination').innerText(),
+    '目标：/mnt/user/downloads/Media&Archive');
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-progress-panel[data-phase="success"]').waitFor();
+  assert.equal(copied.length,1);
+  assert.equal(copied[0].source,'/mnt/user/TimeMachine/'+filename);
+  assert.equal(copied[0].destinationDir,'/mnt/user/downloads/Media&Archive');
+  const writes=nativePosts.filter(post=>post.mode==='file');
+  assert.equal(writes.length,1);
+  assert.equal(decodeURIComponent(writes[0].source),'/mnt/user/TimeMachine/'+filename);
+  assert.equal(decodeURIComponent(writes[0].target),'/mnt/user/downloads/Media&Archive/');
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.3.10 普通 & 文件夹能够执行文件夹复制',async t=>{
+  const folder='Archive&Sources';
+  const {page,errors,nativePosts,copied}=await pageFor(t,{extraEntries:{
+    '/mnt/user/TimeMachine':[[folder,true]]
+  }});
+  await openCopyDialog(page,folder);
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-progress-panel[data-phase="success"]').waitFor();
+  assert.equal(copied.length,1);
+  assert.equal(copied[0].source,'/mnt/user/TimeMachine/'+folder);
+  assert.equal(copied[0].target,'/mnt/user/downloads/'+folder);
+  assert.equal(nativePosts.filter(p=>p.mode==='file').length,1);
+  assert.equal(nativePosts.filter(p=>p.action==='3').length,1);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.3.10 上级目录包含 & 时仍能复制其中的文件',async t=>{
+  const parent='Parent&Directory', filename='Episode&Bonus.mkv';
+  const {page,errors,nativePosts,copied}=await pageFor(t,{extraEntries:{
+    '/mnt/user/TimeMachine':[[parent,true]],
+    ['/mnt/user/TimeMachine/'+parent]:[[filename,false]]
+  }});
+  await page.locator('.ufs-entry').filter({hasText:parent}).first().dblclick();
+  await page.locator('.ufs-entry').filter({hasText:filename}).first().waitFor();
+  await openCopyDialog(page,filename);
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-progress-panel[data-phase="success"]').waitFor();
+  assert.equal(copied[0].source,'/mnt/user/TimeMachine/'+parent+'/'+filename);
+  assert.equal(copied[0].target,'/mnt/user/downloads/'+filename);
+  assert.equal(nativePosts.filter(p=>p.mode==='file').length,1);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.3.10 HTML 实体歧义及原有特殊字符显示禁用复制与原因',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t,{extraEntries:{
+    '/mnt/user/TimeMachine':[['A&amp;B.mkv',false],['A&#38;B.zip',false],
+      ['Unsafe%name.mkv',false]]
+  }});
+  for(const name of ['A&B.mkv','A&B.zip','Unsafe%name.mkv']) {
+    await page.locator('.ufs-entry').filter({hasText:name}).first().click({button:'right'});
+    const menu=page.getByRole('menuitem',{name:'复制到…'});
+    await menu.waitFor({state:'visible'});
+    assert.equal(await menu.isDisabled(),true,name);
+    assert.match(await menu.getAttribute('title'),/无法安全处理|路径与文件名不一致/);
+    assert.equal(await page.getByRole('menuitem',{name:'重命名'}).count(),0,
+      '路径失真的项目不能允许重命名');
+  }
+  assert.equal(nativePosts.filter(p=>p.mode==='file').length,0);
   assert.equal(errors.length,0,errors.join('\n'));
 });
