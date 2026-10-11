@@ -791,3 +791,55 @@ test('v0.2.3 已提交但复制结果无法确认时不误报成功也不重复�
   assert.equal(nativePosts.filter(x=>x.mode==='file').length,1);
   assert.equal(errors.length,0,errors.join('\n'));
 });
+
+
+test('v0.2.3.1 复制目录树在 Unraid 原生按钮规则下仍保持 32px 行高和紧凑箭头间距',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t);
+  await openCopyDialog(page,'Photos');
+  // Simulate Unraid 7.2.2 default-base.css as a late-loaded stylesheet.
+  // Native button min-width/margins must not stretch picker rows.
+  await page.addStyleTag({content:
+    'button,button[type="button"]{min-width:86px;margin:10px 12px 10px 0;padding:8px;letter-spacing:1.8px;text-transform:uppercase}'
+  });
+  const measure=async(name)=>page.getByRole('button',{name:'选择 '+name})
+    .evaluate(choose=>{
+      const row=choose.closest('.ufs-copy-tree-row');
+      const expand=row.querySelector('.ufs-copy-expand');
+      const icon=choose.querySelector('.ufs-folder-icon');
+      const label=choose.querySelector('span');
+      const b=node=>{const r=node.getBoundingClientRect();return {
+        left:r.left,right:r.right,top:r.top,height:r.height,width:r.width
+      }};
+      return {row:b(row),expand:b(expand),choose:b(choose),icon:b(icon),label:b(label),
+        expandMargin:getComputedStyle(expand).margin,
+        chooseMargin:getComputedStyle(choose).margin,
+        expandMinWidth:getComputedStyle(expand).minWidth,
+        chooseMinWidth:getComputedStyle(choose).minWidth};
+    });
+  for(const name of ['TimeMachine','appdata','docker','downloads']){
+    const m=await measure(name);
+    assert.ok(Math.abs(m.row.height-32)<=1,JSON.stringify({name,...m}));
+    assert.ok(Math.abs(m.expand.width-24)<=1,JSON.stringify({name,...m}));
+    assert.equal(m.expandMinWidth,'24px');
+    assert.equal(m.chooseMinWidth,'0px');
+    assert.equal(m.expandMargin,'0px');
+    assert.equal(m.chooseMargin,'0px');
+    assert.ok(m.choose.left-m.expand.right<=1,JSON.stringify({name,...m}));
+    assert.ok(m.icon.left-m.expand.right>=4 && m.icon.left-m.expand.right<=12,
+      JSON.stringify({name,...m}));
+    assert.ok(m.label.left-m.icon.right<=9,JSON.stringify({name,...m}));
+  }
+  await page.getByRole('button',{name:'展开 downloads'}).click();
+  await page.getByRole('button',{name:'选择 completed'}).waitFor();
+  const nested=await measure('completed');
+  assert.ok(Math.abs(nested.row.height-32)<=1,JSON.stringify(nested));
+  assert.ok(nested.icon.left-nested.expand.right>=4 &&
+    nested.icon.left-nested.expand.right<=12,JSON.stringify(nested));
+  // Selection still works after resetting native button dimensions.
+  await page.getByRole('button',{name:'选择 completed'}).click();
+  assert.equal(await page.locator('.ufs-copy-destination').innerText(),
+    '目标：/mnt/user/downloads/completed');
+  assert.equal(await page.locator('.ufs-copy-submit').isEnabled(),true);
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
