@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.3.8
+// @version      0.2.3.9
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -1581,6 +1581,12 @@
   }
   let visibleCache = null;
   const nameCollator = new Intl.Collator('zh-CN', {numeric:true});
+  // The main file list and copy destination picker share one folder-name order.
+  // Keep top-level Shares in Browse.php's original order (first Share stays first).
+  function sortedCopyFolders(parent, entries) {
+    const folders = entries.filter(item => item.folder && safeWritePath(item.path, true));
+    return parent === PREFIX ? folders : folders.sort((a, b) => nameCollator.compare(a.name, b.name));
+  }
   function visibleEntries() {
     if (visibleCache && visibleCache.entries === state.entries &&
         visibleCache.filter === state.filter && visibleCache.sortKey === state.sortKey &&
@@ -2501,7 +2507,7 @@
         try {
           const entries=await listDirectory(path);
           if(closed || request!==requestVersion) return;
-          nodes.set(path, entries.filter(item=>item.folder && safeWritePath(item.path,true)));
+          nodes.set(path, sortedCopyFolders(path, entries));
           setFeedback('已存在同名项目时拒绝复制；不允许将文件夹复制到自身内部');
         } catch(error) {
           if(closed || request!==requestVersion) return;
@@ -2614,8 +2620,8 @@
         ++requestVersion;
         pending.clear();
         const previous=nodes.get(draft.parent)||[];
-        nodes.set(draft.parent,[...previous.filter(node=>node.path!==created.path),created]
-          .sort((a,b)=>a.name.localeCompare(b.name,'zh-CN')));
+        nodes.set(draft.parent, sortedCopyFolders(draft.parent,
+          [...previous.filter(node=>node.path!==created.path),created]));
         nodes.set(created.path,[]);
         opened.add(draft.parent);
         opened.add(created.path);
@@ -2634,7 +2640,7 @@
         try {
           const children=await listDirectory(draft.parent);
           if(!closed && !destroyed && epoch===requestVersion) {
-            nodes.set(draft.parent,children.filter(item=>item.folder && safeWritePath(item.path,true)));
+            nodes.set(draft.parent, sortedCopyFolders(draft.parent, children));
             renderPicker();
           }
         } catch(_) {
@@ -3304,7 +3310,7 @@
   }
   // Explicit opt-in hook for pure-function tests; never enabled on production WebGUI.
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
-    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, COPY_ENABLED, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, nativeCopyTarget, matchesCopyTask, copyDestinationAllowed, copyNativeEntry, decodeRsyncFilename, parseRsyncProgress, shortenCopyName, requestCancelNativeCopy, takeOverNativeFileMonitor, availableHeight, visibleEntries, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
+    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, COPY_ENABLED, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, nativeCopyTarget, matchesCopyTask, copyDestinationAllowed, copyNativeEntry, decodeRsyncFilename, parseRsyncProgress, shortenCopyName, requestCancelNativeCopy, takeOverNativeFileMonitor, availableHeight, visibleEntries, sortedCopyFolders, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();

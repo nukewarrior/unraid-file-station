@@ -1327,3 +1327,58 @@ test('v0.2.3.8 选中及悬停整行仅一层背景，文件夹加号为标准 L
   assert.equal(nativePosts.filter(p=>p.mode==='file').length,0);
   assert.equal(errors.length,0,errors.join('\n'));
 });
+
+test('v0.2.3.9 主文件列表与复制目标子目录排序一致，行内创建刷新不回退乱序',async t=>{
+  const {page,errors,nativePosts,createdAnywhere}=await pageFor(t);
+  for(const name of ['folder10','新建文件夹33','folder2','aria2','folder1'])
+    createdAnywhere.push({parent:'/mnt/user/downloads',name});
+  await currentLabel(page).filter({hasText:'TimeMachine'}).waitFor();
+  await page.locator('.ufs-tree-row')
+    .filter({has:page.locator('.ufs-tree-name',{hasText:'downloads'})}).first().click();
+  await currentLabel(page).filter({hasText:'downloads'}).waitFor();
+  await page.locator('.ufs-filename',{hasText:'新建文件夹33'}).waitFor();
+  const mainOrder=await page.locator('.ufs-entry .ufs-filename').allInnerTexts();
+  assert.deepEqual(mainOrder,[...mainOrder].sort(new Intl.Collator('zh-CN',{numeric:true}).compare));
+
+  await page.locator('.ufs-tree-row')
+    .filter({has:page.locator('.ufs-tree-name',{hasText:'TimeMachine'})}).first().click();
+  await openCopyDialog(page,'notes.txt');
+  const choices=page.locator('.ufs-copy-tree-row .ufs-copy-choose > span');
+  assert.deepEqual(await choices.allInnerTexts(),['TimeMachine','appdata','docker','downloads'],
+    '复制目标的顶层 Share 保持接口原始顺序');
+  await page.getByRole('button',{name:'展开 downloads'}).click();
+  await page.getByRole('button',{name:'选择 新建文件夹33'}).waitFor();
+  assert.deepEqual((await choices.allInnerTexts()).slice(4),mainOrder,
+    '首次懒加载后与主文件列表顺序一致');
+
+  await page.getByRole('button',{name:'选择 downloads'}).locator('..').hover();
+  await page.getByRole('button',{name:'在 downloads 下新建文件夹'}).click();
+  const input=page.getByRole('textbox',{name:'新文件夹名称'});
+  await input.fill('folder3');
+  // mkdir: one preflight Browse read, one verification read, one final picker refresh.
+  const finalRefresh=new Promise(resolve=>{
+    let reads=0;
+    const onResponse=response=>{
+      if(!response.url().includes('/webGui/include/Browse.php')) return;
+      const dir=decodeURIComponent(new URL(response.url()).searchParams.get('dir')||'');
+      if(dir==='/mnt/user/downloads' && ++reads===3) {
+        page.off('response',onResponse);
+        resolve();
+      }
+    };
+    page.on('response',onResponse);
+  });
+  await input.press('Enter');
+  await finalRefresh;
+  const expected=[...mainOrder,'folder3'].sort(new Intl.Collator('zh-CN',{numeric:true}).compare);
+  await page.waitForFunction(expectedNames=>{
+    const all=Array.from(document.querySelectorAll(
+      '.ufs-copy-tree-row .ufs-copy-choose > span'),el=>el.textContent);
+    return JSON.stringify(all.slice(4))===JSON.stringify(expectedNames);
+  },expected);
+  assert.deepEqual((await choices.allInnerTexts()).slice(4),expected,
+    '新建后的二次 Browse 刷新不可恢复原始服务器顺序');
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,1,
+    '排序不增加任何写入；仅允许用户主动执行的一次 mkdir');
+  assert.equal(errors.length,0,errors.join('\n'));
+});

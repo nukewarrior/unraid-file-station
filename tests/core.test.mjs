@@ -1433,3 +1433,30 @@ test('v0.2.3.8 folder-plus 使用官方 Lucide 闭合文件夹与居中十字路
   assert.doesNotMatch(script,/'folder-plus':\['M3 7a2 2 0 0 1/);
   assert.match(script,/mkdir\.append\(icon\('folder-plus'\)\)/);
 });
+
+test('v0.2.3.9 复制目录子文件夹与主文件列表使用相同中文数字排序，共享根保持原有顺序',()=>{
+  const {api}=createAPI();
+  const names=['folder10','aria2_cache','新建文件夹33','folder2','aria2','folder1'];
+  const entries=names.map(name=>({name,folder:true,path:'/mnt/user/downloads/'+name}));
+  api.state.entries=[...entries,{name:'note.txt',folder:false,path:'/mnt/user/downloads/note.txt'}];
+  const main=Array.from(api.visibleEntries()).filter(item=>item.folder).map(item=>item.name);
+  const picker=Array.from(api.sortedCopyFolders('/mnt/user/downloads',entries)).map(item=>item.name);
+  assert.deepEqual(picker,main,'复制目标排序必须等于主文件列表的名称升序');
+  assert.ok(picker.indexOf('folder2')<picker.indexOf('folder10'),'必须使用 numeric:true');
+  assert.deepEqual(entries.map(item=>item.name),names,'不能就地修改 Browse 原始数据');
+  const roots=['TimeMachine','appdata','docker','downloads'].map(name=>({
+    name,folder:true,path:'/mnt/user/'+name
+  }));
+  assert.deepEqual(Array.from(api.sortedCopyFolders('/mnt/user',roots),item=>item.name),
+    ['TimeMachine','appdata','docker','downloads'],'Share 根顺序不可重新排序');
+  assert.deepEqual(Array.from(api.sortedCopyFolders('/mnt/user/downloads',
+    [...entries,{name:'note.txt',folder:false,path:'/mnt/user/downloads/note.txt'},
+      {name:'invalid',folder:true,path:'/mnt/disk1/invalid'}]),item=>item.name),main,
+    '目录选择器仍只展示安全的文件夹路径');
+});
+
+test('v0.2.3.9 懒加载、行内新建和异步刷新共用复制目录排序函数',()=>{
+  assert.match(script,/nodes\.set\(path, sortedCopyFolders\(path, entries\)\)/);
+  assert.match(script,/nodes\.set\(draft\.parent, sortedCopyFolders\(draft\.parent,\s*\[/);
+  assert.match(script,/nodes\.set\(draft\.parent, sortedCopyFolders\(draft\.parent, children\)\)/);
+});
