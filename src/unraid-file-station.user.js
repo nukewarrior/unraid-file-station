@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.3.5
+// @version      0.2.3.6
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -2430,7 +2430,11 @@
             selected=path;
             destinationText.textContent='目标：'+path;
             submit.disabled=false;
+            // Choosing a destination also expands it. Clicking an already
+            // expanded folder keeps it open; only the arrow can collapse it.
+            opened.add(path);
             renderPicker();
+            void loadChildren(path);
           });
           row.append(expand,choose);
           picker.append(row);
@@ -2613,7 +2617,7 @@
       ['重置文件列表列宽', resetColumnWidths],
       ['返回原生文件管理器（其他写入操作）', nativeMode],
       [state.theme === 'unraid' ? '切换至 DSM 经典主题' : '切换至 Unraid 融合主题', toggleTheme],
-      ['关于 File Station v0.2.3.5', () => notify('File Station v0.2.3.5 · Unraid 7.2.2 · 实心橙色复制进度条')]
+      ['关于 File Station v0.2.3.6', () => notify('File Station v0.2.3.6 · Unraid 7.2.2 · 选择目标文件夹同时展开子目录')]
     ];
     actions.forEach(([label, fn]) => {
       const button = element('button', '', label);
