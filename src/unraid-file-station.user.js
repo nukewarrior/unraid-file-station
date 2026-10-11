@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.2.1
-// @description  DSM-inspired File Station with native mkdir and rename for Unraid 7.2.2
+// @version      0.2.3
+// @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
 // @grant        none
@@ -173,6 +173,7 @@
   const FILE_WRITES_ENABLED = false;
   const CREATE_FOLDER_ENABLED = true;
   const RENAME_ENABLED = true;
+  const COPY_ENABLED = true;
   const NATIVE_CONTROL_URL = '/webGui/include/Control.php';
   const NATIVE_TASK_EVENTS = '/sub/filemanager';
   const NATIVE_CHANGE_EVENTS = '/sub/filemonitor';
@@ -527,6 +528,116 @@
           throw new Error('重命名请求可能已被 Unraid 接收；结果不确定，请先刷新目录核实。详情：' +
             String(error?.message || error));
         }
+        throw error;
+      } finally {
+        unwatch();
+      }
+    });
+  }
+
+
+  // Copy source intentionally has no trailing slash: rsync copies the source
+  // entry (including a folder's name), not only the folder's contents.
+  // Copy target is the existing destination directory WITH a trailing slash.
+  function nativeCopyTarget(plan) { return plan.destinationDir + '/'; }
+  function matchesCopyTask(active, plan) {
+    return active && Number(active.action) === (plan.folder ? 3 : 8) &&
+      active.source === plan.source && active.target === nativeCopyTarget(plan);
+  }
+  function copyDestinationAllowed(plan, destinationDir) {
+    if (!plan || !safeWritePath(destinationDir, true) ||
+        destinationDir === parentPath(plan.source)) return false;
+    return !plan.folder || (destinationDir !== plan.source &&
+      !destinationDir.startsWith(plan.source + '/'));
+  }
+  async function copyNativeEntry(plan, progress = () => {}) {
+    return withNativeWriteLock(async () => {
+      if (!COPY_ENABLED || !plan || plan.type !== 'copy' ||
+          plan.conflictPolicy !== 'fail' || plan.previewOnly !== true ||
+          !safeWritePath(plan.source) || typeof plan.folder !== 'boolean' ||
+          !copyDestinationAllowed(plan, plan.destinationDir) ||
+          plan.target !== plan.destinationDir + '/' + fileName(plan.source)) {
+        throw new Error('无效的复制操作或目标位置');
+      }
+      if (isDemo && window.__UFS_TEST_MODE__ !== true) {
+        throw new Error('演示模式不允许真实写入');
+      }
+      // Preflight fresh directories independently, never trust filtered UI
+      // rows nor the destination picker cache.
+      const originEntries = await listDirectory(parentPath(plan.source));
+      const sourceEntry = originEntries.find(entry => entry.path === plan.source);
+      if (!sourceEntry || sourceEntry.folder !== plan.folder) {
+        throw new Error('源文件或目录已不存在，请刷新目录后重试');
+      }
+      const destinationEntries = await listDirectory(plan.destinationDir);
+      if (destinationEntries.some(entry =>
+        entry.name === fileName(plan.source) || entry.path === plan.target)) {
+        throw new Error('目标文件夹中已有同名项目，未执行复制');
+      }
+      if (await readNativeActive()) throw new Error('Unraid 正在执行其他原生文件任务，请稍后重试');
+      nativeCsrfToken();
+      let submitted = false;
+      let eventError = '';
+      let eventDone = false;
+      let observedOwnTask = false;
+      const unwatch = observeNativeProgress(data => {
+        if (typeof data.status === 'string' && data.status) {
+          progress(data.status.replace(/<[^>]*>/g, '').slice(0, 160));
+        }
+        if (data.error) eventError = String(data.error).replace(/<[^>]*>/g, '').slice(0, 200);
+        if (data.done === 1) eventDone = true;
+      });
+      try {
+        submitted = true;
+        const reply = await postNativeControl({
+          mode: 'file', action: plan.folder ? '3' : '8', title: encodeURIComponent('复制'),
+          source: encodeURIComponent(plan.source),
+          target: encodeURIComponent(nativeCopyTarget(plan)),
+          hdlink: '', sparse: '', exist: '', zfs: ''
+        });
+        if (reply.trim()) throw new Error('原生接口返回了非预期内容');
+        progress('正在复制，完成后自动核对目标…');
+        // Large rsync tasks are allowed to continue for hours. The UI never
+        // retries, issues mode=start, or stops someone else's global task.
+        const deadline = Date.now() + 6 * 60 * 60 * 1000;
+        let consecutiveIdle = 0;
+        while (Date.now() < deadline) {
+          await waitNative(700);
+          if (eventError) throw new Error('Unraid 报告复制错误：' + eventError);
+          const active = await readNativeActive();
+          if (active) {
+            if (!matchesCopyTask(active, plan)) {
+              throw new Error('原生任务被其他操作占用，无法确认复制结果');
+            }
+            observedOwnTask = true;
+            consecutiveIdle = 0;
+          } else {
+            ++consecutiveIdle;
+            if (consecutiveIdle >= 2 && (observedOwnTask || eventDone)) break;
+            // If rsync completed between polls and the WebSocket is missing,
+            // do not pretend a copied entry proves the full rsync succeeded.
+            if (consecutiveIdle >= 5 && !observedOwnTask && !eventDone) {
+              throw new Error('无法确认原生复制任务已执行完毕');
+            }
+          }
+        }
+        if (consecutiveIdle < 2 || !(observedOwnTask || eventDone)) {
+          throw new Error('复制任务尚未结束或无法确认结束');
+        }
+        if (eventError) throw new Error('Unraid 报告复制错误：' + eventError);
+        const verified = await listDirectory(plan.destinationDir);
+        const result = verified.find(entry => entry.path === plan.target);
+        if (!result || result.folder !== plan.folder) {
+          throw new Error('目标目录未出现预期文件或文件夹，请检查复制状态');
+        }
+        // A directory appearing proves only its top-level presence. The native
+        // job's completion is required; we do not claim checksum verification.
+        return result;
+      } catch (error) {
+        if (submitted) throw new Error(
+          '复制请求可能已被 Unraid 接收；结果不确定，请检查目标目录及原生任务状态，切勿直接重试。详情：' +
+          String(error?.message || error)
+        );
         throw error;
       } finally {
         unwatch();
@@ -2422,7 +2533,7 @@
   }
   // Explicit opt-in hook for pure-function tests; never enabled on production WebGUI.
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
-    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, takeOverNativeFileMonitor, availableHeight, visibleEntries, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
+    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, COPY_ENABLED, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, nativeCopyTarget, matchesCopyTask, copyDestinationAllowed, copyNativeEntry, takeOverNativeFileMonitor, availableHeight, visibleEntries, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();
