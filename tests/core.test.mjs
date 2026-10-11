@@ -188,7 +188,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.3\.6\b/);
+  assert.match(script, /@version\s+0\.2\.3\.7\b/);
 });
 
 
@@ -492,7 +492,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.3\.6\b/);
+  assert.match(script, /@version\s+0\.2\.3\.7\b/);
 });
 
 
@@ -1391,4 +1391,29 @@ test('v0.2.3.6 选中可用目标时展开并懒加载，箭头保留独立折�
   assert.match(script,/choose\.addEventListener\('click',\(\)=>\{[\s\S]*?selected=path;[\s\S]*?opened\.add\(path\);[\s\S]*?renderPicker\(\);[\s\S]*?void loadChildren\(path\)/);
   assert.match(script,/expand\.addEventListener\('click',\(\)=>\{[\s\S]*?if\(opened\.has\(path\)\) \{opened\.delete\(path\);renderPicker\(\);\}/);
   assert.match(script,/choose\.disabled=!permitted \|\| busy/);
+});
+
+
+test('v0.2.3.7 复制目的地支持行内新建文件夹且复用安全原生创建接口',()=>{
+  assert.match(script,/function beginInlineCreate\(parent\)/);
+  assert.match(script,/function confirmInlineCreate\(\)/);
+  assert.match(script,/function cancelInlineCreate\(\)/);
+  assert.match(script,/icon\('folder-plus'\)/);
+  assert.match(script,/planFileOperation\(\{type:'mkdir',parent:draft\.parent,name:draft\.input\.value\}\)/);
+  assert.match(script,/await createNativeFolder\(plan,/);
+  assert.match(script,/selected=created\.path/);
+  assert.match(script,/submit\.disabled=false/);
+  assert.match(script,/if\(busy \|\| inlineDraft \|\| mkdirUncertain \|\| submit\.disabled/);
+  assert.match(script,/draft\.uncertain=true/);
+  assert.match(script,/mkdirUncertain=true/);
+  assert.match(script,/const restoreFocus=inlineDraft && !inlineDraft\.busy/);
+  assert.match(script,/if\(pending\.get\(path\)===task\) pending\.delete\(path\)/);
+});
+
+test('v0.2.3.7 行内目录操作图标紧邻名称并重置原生按钮 CSS',()=>{
+  assert.match(script,/#ufs-app \.ufs-copy-mkdir-trigger\{[^}]*min-width:25px/);
+  assert.match(script,/#ufs-app \.ufs-copy-inline-row\{[^}]*height:36px/);
+  assert.match(script,/#ufs-app \.ufs-copy-inline-input\{[^}]*min-width:40px/);
+  assert.match(script,/row\.append\(expand,choose,mkdir\)/);
+  assert.match(script,/mkdir\.disabled=busy \|\| nativeWriteBusy \|\| !!inlineDraft \|\| mkdirUncertain/);
 });
