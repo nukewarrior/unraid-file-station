@@ -889,7 +889,8 @@
     "#ufs-app .ufs-copy-inline-action{flex:0 0 26px;display:flex;justify-content:center;align-items:center;width:26px;min-width:26px;height:28px;min-height:28px;margin:0;padding:4px;border:0;background:transparent;color:var(--ufs-muted)}",
     "#ufs-app .ufs-copy-inline-action.ufs-copy-inline-confirm{color:var(--ufs-accent)}",
     "#ufs-app .ufs-copy-inline-action:hover:not(:disabled){background:var(--ufs-hover)}",
-    "#ufs-app .ufs-copy-inline-error{color:#c13d37;font-size:12px;line-height:1.45;white-space:normal;overflow-wrap:anywhere;padding:3px 7px 6px}",
+    "#ufs-app .ufs-copy-inline-error{color:var(--ufs-muted);font-size:12px;line-height:1.45;white-space:normal;overflow-wrap:anywhere;padding:3px 7px 6px}",
+    "#ufs-app .ufs-copy-inline-error[data-error=true]{color:#c13d37}",
     "#ufs-app .ufs-copy-dialog[data-inline-mkdir=active] .ufs-copy-submit{opacity:.42;cursor:not-allowed}",
     "#ufs-app .ufs-copy-destination{margin-top:9px;color:var(--ufs-muted);font-size:12px;overflow-wrap:anywhere}",
     "#ufs-app .ufs-copy-dialog .ufs-create-feedback{margin-top:8px}",
@@ -2334,7 +2335,10 @@
     const nodes=new Map();
     const opened=new Set([PREFIX]);
     const pending=new Map();
+    let inlineDraft=null;
+    let mkdirUncertain=false;
     const close=()=>{
+      if(inlineDraft?.busy) return;
       if(busy) {minimize();return;}
       closed=true; ++requestVersion;
       overlay.remove();
@@ -2399,6 +2403,12 @@
     };
     function renderPicker() {
       if(closed || !dialog.isConnected) return;
+      // The picker is reconstructed during lazy directory reads. Restore a
+      // live inline editor's caret rather than losing focus mid-typing.
+      const restoreFocus=inlineDraft && !inlineDraft.busy &&
+        document.activeElement===inlineDraft.input;
+      const start=restoreFocus?inlineDraft.input.selectionStart:0;
+      const end=restoreFocus?inlineDraft.input.selectionEnd:0;
       picker.replaceChildren();
       const root=element('div','ufs-copy-tree-group','共享文件夹');
       picker.append(root);
@@ -2411,7 +2421,7 @@
           picker.append(status);
           return;
         }
-        if(children.length===0) {
+        if(children.length===0 && inlineDraft?.parent!==parent) {
           const empty=element('div','ufs-copy-tree-status','没有子文件夹');
           empty.style.paddingLeft=(12+depth*15)+'px';
           picker.append(empty);
@@ -2450,12 +2460,37 @@
             renderPicker();
             void loadChildren(path);
           });
-          row.append(expand,choose);
+          const mkdir=element('button','ufs-copy-mkdir-trigger');
+          mkdir.type='button';
+          mkdir.setAttribute('aria-label','在 '+item.name+' 下新建文件夹');
+          mkdir.title='在此文件夹中新建文件夹';
+          mkdir.disabled=busy || nativeWriteBusy || !!inlineDraft || mkdirUncertain ||
+            !safeWritePath(path,true);
+          mkdir.append(icon('folder-plus'));
+          mkdir.addEventListener('click',event=>{
+            event.stopPropagation();
+            beginInlineCreate(path);
+          });
+          row.append(expand,choose,mkdir);
           picker.append(row);
-          if(opened.has(path)) renderChildren(path,depth+1);
+          if(opened.has(path)) {
+            if(inlineDraft?.parent===path) {
+              inlineDraft.row.style.paddingLeft=(5+(depth+1)*15)+'px';
+              picker.append(inlineDraft.row);
+              if(inlineDraft.message.textContent) {
+                inlineDraft.message.style.paddingLeft=(31+(depth+1)*15)+'px';
+                picker.append(inlineDraft.message);
+              }
+            }
+            renderChildren(path,depth+1);
+          }
         }
       }
       renderChildren(PREFIX,0);
+      if(restoreFocus && inlineDraft?.input.isConnected) {
+        inlineDraft.input.focus();
+        inlineDraft.input.setSelectionRange(start,end);
+      }
     }
     async function loadChildren(path) {
       if(nodes.has(path) || pending.has(path) || closed) return pending.get(path);
@@ -2471,7 +2506,7 @@
           opened.delete(path);
           setFeedback('无法读取目标文件夹：'+String(error?.message||error),true);
         } finally {
-          pending.delete(path);
+          if(pending.get(path)===task) pending.delete(path);
           renderPicker();
         }
       })();
@@ -2479,10 +2514,160 @@
       renderPicker();
       return task;
     }
+
+    function cancelInlineCreate() {
+      if(!inlineDraft || inlineDraft.busy) return;
+      inlineDraft=null;
+      delete dialog.dataset.inlineMkdir;
+      submit.disabled=!selected || mkdirUncertain;
+      if(mkdirUncertain) setFeedback('新建结果不确定，请刷新页面并检查目录后再操作。',true);
+      renderPicker();
+    }
+    function beginInlineCreate(parent) {
+      if(closed || busy || inlineDraft || nativeWriteBusy || mkdirUncertain ||
+          !safeWritePath(parent,true)) return;
+      const row=element('div','ufs-copy-inline-row');
+      row.setAttribute('role','group');
+      row.setAttribute('aria-label','在 '+fileName(parent)+' 下新建文件夹');
+      row.append(icon('folder','ufs-folder-icon'));
+      const input=element('input','ufs-copy-inline-input');
+      input.type='text';
+      input.value='新建文件夹';
+      input.maxLength=255;
+      input.autocomplete='off';
+      input.spellcheck=false;
+      input.setAttribute('aria-label','新文件夹名称');
+      const cancelButton=element('button','ufs-copy-inline-action ufs-copy-inline-cancel');
+      cancelButton.type='button';
+      cancelButton.setAttribute('aria-label','取消新建文件夹');
+      cancelButton.title='取消';
+      cancelButton.append(icon('close'));
+      const confirmButton=element('button','ufs-copy-inline-action ufs-copy-inline-confirm');
+      confirmButton.type='button';
+      confirmButton.setAttribute('aria-label','确认新建文件夹');
+      confirmButton.title='创建';
+      confirmButton.append(icon('check'));
+      const message=element('div','ufs-copy-inline-error');
+      message.setAttribute('role','status');
+      row.append(input,cancelButton,confirmButton);
+      inlineDraft={parent,row,input,message,cancelButton,confirmButton,busy:false,uncertain:false};
+      dialog.dataset.inlineMkdir='active';
+      opened.add(parent);
+      submit.disabled=true;
+      cancelButton.addEventListener('click',cancelInlineCreate);
+      confirmButton.addEventListener('click',()=>{void confirmInlineCreate();});
+      input.addEventListener('input',()=>{
+        if(inlineDraft?.input===input && !inlineDraft.busy) {
+          message.textContent='';
+          message.dataset.error='false';
+          if(message.isConnected) message.remove();
+        }
+      });
+      input.addEventListener('keydown',event=>{
+        if(event.key==='Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          cancelInlineCreate();
+        } else if(event.key==='Enter') {
+          event.preventDefault();
+          event.stopPropagation();
+          if(!event.isComposing && event.keyCode!==229) void confirmInlineCreate();
+        }
+      });
+      renderPicker();
+      input.focus();
+      input.select();
+      void loadChildren(parent);
+    }
+    async function confirmInlineCreate() {
+      const draft=inlineDraft;
+      if(!draft || draft.busy || draft.uncertain || busy || nativeWriteBusy || closed) return;
+      let plan;
+      try {
+        plan=planFileOperation({type:'mkdir',parent:draft.parent,name:draft.input.value});
+      } catch(error) {
+        draft.message.textContent=String(error?.message||error);
+        draft.message.dataset.error='true';
+        renderPicker();
+        return;
+      }
+      draft.busy=true;
+      draft.input.disabled=true;
+      draft.cancelButton.disabled=true;
+      draft.confirmButton.disabled=true;
+      submit.disabled=true;
+      draft.message.textContent='正在创建文件夹…';
+      draft.message.dataset.error='false';
+      renderPicker();
+      try {
+        const created=await createNativeFolder(plan,text=>{
+          if(!closed && !destroyed && inlineDraft===draft && text) {
+            draft.message.textContent=text;
+            draft.message.dataset.error='false';
+            if(!draft.message.isConnected) renderPicker();
+          }
+        });
+        if(closed || destroyed || inlineDraft!==draft) return;
+        // Invalidate stale lazy-load responses before updating the parent.
+        ++requestVersion;
+        pending.clear();
+        const previous=nodes.get(draft.parent)||[];
+        nodes.set(draft.parent,[...previous.filter(node=>node.path!==created.path),created]
+          .sort((a,b)=>a.name.localeCompare(b.name,'zh-CN')));
+        nodes.set(created.path,[]);
+        opened.add(draft.parent);
+        opened.add(created.path);
+        selected=created.path;
+        destinationText.textContent='目标：'+created.path;
+        inlineDraft=null;
+        delete dialog.dataset.inlineMkdir;
+        submit.disabled=false;
+        setFeedback('已创建并选中新文件夹：'+created.name);
+        state.tree.delete(draft.parent);
+        renderPicker();
+        if(currentPath()===draft.parent) void refreshDirectory();
+        // Re-read the parent's actual children, not a stale in-memory list.
+        // If it fails, keep the already server-verified created directory.
+        const epoch=requestVersion;
+        try {
+          const children=await listDirectory(draft.parent);
+          if(!closed && !destroyed && epoch===requestVersion) {
+            nodes.set(draft.parent,children.filter(item=>item.folder && safeWritePath(item.path,true)));
+            renderPicker();
+          }
+        } catch(_) {
+          if(!closed && !destroyed) {
+            setFeedback('文件夹已创建并选中，但目录列表刷新失败，可重新展开后检查。',true);
+          }
+        }
+      } catch(error) {
+        if(closed || destroyed || inlineDraft!==draft) return;
+        const text=String(error?.message||error);
+        draft.message.textContent=text;
+        draft.message.dataset.error='true';
+        if(text.includes('结果不确定')) {
+          draft.uncertain=true;
+          mkdirUncertain=true;
+          draft.confirmButton.disabled=true;
+          draft.input.disabled=true;
+          // This modal cannot issue another write until the user rechecks NAS.
+          setFeedback('创建结果不确定，请刷新目录核实后再操作。',true);
+        }
+        renderPicker();
+      } finally {
+        draft.busy=false;
+        if(inlineDraft===draft && !closed) {
+          draft.input.disabled=draft.uncertain;
+          draft.cancelButton.disabled=false;
+          draft.confirmButton.disabled=draft.uncertain;
+          renderPicker();
+        }
+      }
+    }
     form.addEventListener('submit',async event=>{
       event.preventDefault();
       if(finalPhase==='success') {close();return;}
-      if(busy || submit.disabled || !selected || nativeWriteBusy) return;
+      if(busy || inlineDraft || mkdirUncertain || submit.disabled || !selected || nativeWriteBusy) return;
       let plan;
       try {
         plan=planFileOperation({type:'copy',source,destinationDir:selected,folder:entry.folder});
