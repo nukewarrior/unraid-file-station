@@ -946,7 +946,7 @@ test('v0.2.3.3 真实进度显示 UTF-8 文件名、传输百分比、速度和 
   });
   await page.locator('.ufs-copy-progress-indicator',{hasText:'42%'}).waitFor();
   assert.equal(await page.locator('.ufs-copy-progress-panel [role="progressbar"]').getAttribute('aria-valuenow'),'42');
-  assert.match(await page.locator('.ufs-copy-current-file').innerText(),/测试\.jpg/);
+  assert.match(await page.locator('.ufs-copy-current-file').innerText(),/中文\.jpg/);
   assert.match(await page.locator('.ufs-copy-progress-metrics').innerText(),/5\.10MB\/s/);
   assert.match(await page.locator('.ufs-copy-progress-metrics').innerText(),/0:00:06/);
   assert.doesNotMatch(await page.locator('.ufs-copy-current-file').innerText(),/\\#\d{3}/);
