@@ -1255,6 +1255,7 @@ test('v0.2.3.7 行内编辑可取消、同名失败保留输入，修正后再�
 test('v0.2.3.7 目录懒加载不会清空行内输入或抢走焦点',async t=>{
   const {page,errors}=await pageFor(t,{delayDownloads:300});
   await openCopyDialog(page,'notes.txt');
+  await page.getByRole('button',{name:'选择 downloads'}).locator('..').hover();
   await page.getByRole('button',{name:'在 downloads 下新建文件夹'}).click();
   const input=page.getByRole('textbox',{name:'新文件夹名称'});
   await input.fill('中文目录输入中');
@@ -1269,6 +1270,7 @@ test('v0.2.3.7 目录懒加载不会清空行内输入或抢走焦点',async t=>
 test('v0.2.3.7 创建结果不确定时禁用重复创建和复制',async t=>{
   const {page,errors,nativePosts}=await pageFor(t,{dropCreate:true});
   await openCopyDialog(page,'notes.txt');
+  await page.getByRole('button',{name:'选择 downloads'}).locator('..').hover();
   await page.getByRole('button',{name:'在 downloads 下新建文件夹'}).click();
   await page.getByRole('textbox',{name:'新文件夹名称'}).fill('不会出现');
   await page.getByRole('button',{name:'确认新建文件夹'}).click();
