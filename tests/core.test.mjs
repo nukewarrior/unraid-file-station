@@ -1269,7 +1269,7 @@ test('v0.2.3.2 动画仅显示不确定进度、提供三阶段和减少动态�
   assert.match(script,/renderCopyProgress\('success'\)/);
   assert.match(script,/renderCopyProgress\('uncertain',message\)/);
   assert.match(script,/fields\.replaceChildren\(summary,location\)/);
-  assert.match(script,/await waitNative\(850\)/);
+  assert.doesNotMatch(script,/await waitNative\(850\)/);
 });
 
 test('v0.2.3.2 复制阶段由原生任务流程发出，不虚构完成比例',async()=>{
