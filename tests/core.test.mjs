@@ -188,7 +188,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.3\.7\b/);
+  assert.match(script, /@version\s+0\.2\.3\.8\b/);
 });
 
 
@@ -492,7 +492,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.3\.7\b/);
+  assert.match(script, /@version\s+0\.2\.3\.8\b/);
 });
 
 
@@ -1416,4 +1416,20 @@ test('v0.2.3.7 行内目录操作图标紧邻名称并重置原生按钮 CSS',()
   assert.match(script,/#ufs-app \.ufs-copy-inline-input\{[^}]*min-width:40px/);
   assert.match(script,/row\.append\(expand,choose,mkdir\)/);
   assert.match(script,/mkdir\.disabled=busy \|\| nativeWriteBusy \|\| !!inlineDraft \|\| mkdirUncertain/);
+});
+
+
+test('v0.2.3.8 选中目录只有整行高亮，按钮 hover 不再叠加内层背景',()=>{
+  assert.match(script,/#ufs-app \.ufs-copy-tree-row\.ufs-copy-selected\{background:rgba\(235,120,37,\.11\)/);
+  assert.match(script,/#ufs-app \.ufs-copy-tree-row\.ufs-copy-selected \.ufs-copy-choose\{background:transparent/);
+  assert.match(script,/#ufs-app \.ufs-copy-tree-row:not\(\.ufs-copy-selected\):hover\{background:var\(--ufs-hover\)/);
+  assert.match(script,/#ufs-app \.ufs-copy-tree-row \.ufs-copy-choose:hover:not\(:disabled\)\{background:transparent\}/);
+  assert.match(script,/#ufs-app \.ufs-copy-tree-row\.ufs-copy-selected \.ufs-copy-mkdir-trigger:hover:not\(:disabled\)\{background:transparent\}/);
+  assert.doesNotMatch(script,/#ufs-app \.ufs-copy-choose:hover:not\(:disabled\)\{background:var\(--ufs-hover\)/);
+});
+
+test('v0.2.3.8 folder-plus 使用官方 Lucide 闭合文件夹与居中十字路径',()=>{
+  assert.match(script,/'folder-plus':\['M12 10v6','M9 13h6','M20 20a2 2 0 0 0 2-2V8/);
+  assert.doesNotMatch(script,/'folder-plus':\['M3 7a2 2 0 0 1/);
+  assert.match(script,/mkdir\.append\(icon\('folder-plus'\)\)/);
 });

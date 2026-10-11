@@ -1283,3 +1283,47 @@ test('v0.2.3.7 创建结果不确定时禁用重复创建和复制',async t=>{
   assert.equal(nativePosts.filter(x=>x.mode==='file').length,1);
   assert.equal(errors.length,0,errors.join('\n'));
 });
+
+
+test('v0.2.3.8 选中及悬停整行仅一层背景，文件夹加号为标准 Lucide SVG',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t);
+  await openCopyDialog(page,'notes.txt');
+  const choose=page.getByRole('button',{name:'选择 downloads'});
+  await choose.click();
+  await choose.hover();
+  const row=choose.locator('..');
+  const plus=page.getByRole('button',{name:'在 downloads 下新建文件夹'});
+  await plus.waitFor({state:'visible'});
+  const selected=await row.evaluate(el=>{
+    const inner=el.querySelector('.ufs-copy-choose');
+    const action=el.querySelector('.ufs-copy-mkdir-trigger');
+    const svg=action.querySelector('svg');
+    return {
+      rowBackground:getComputedStyle(el).backgroundColor,
+      innerBackground:getComputedStyle(inner).backgroundColor,
+      paths:[...svg.querySelectorAll('path')].map(p=>p.getAttribute('d')),
+      gap:action.getBoundingClientRect().left-inner.getBoundingClientRect().right,
+      rowHeight:el.getBoundingClientRect().height
+    };
+  });
+  assert.match(selected.rowBackground,/rgba\(235,\s*120,\s*37,\s*0\.11\)/);
+  assert.equal(selected.innerBackground,'rgba(0, 0, 0, 0)');
+  assert.equal(selected.rowHeight,32);
+  assert.ok(selected.gap>=0 && selected.gap<=4,JSON.stringify(selected));
+  assert.deepEqual(selected.paths,[
+    'M12 10v6',
+    'M9 13h6',
+    'M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z'
+  ]);
+  await plus.hover();
+  assert.equal(await plus.evaluate(el=>getComputedStyle(el).backgroundColor),'rgba(0, 0, 0, 0)');
+  assert.equal(await row.evaluate(el=>getComputedStyle(el).backgroundColor),selected.rowBackground);
+  await page.getByRole('button',{name:'选择 TimeMachine'}).locator('..').hover();
+  const unselected=await page.getByRole('button',{name:'选择 TimeMachine'}).locator('..')
+    .evaluate(el=>({row:getComputedStyle(el).backgroundColor,
+      inner:getComputedStyle(el.querySelector('.ufs-copy-choose')).backgroundColor}));
+  assert.equal(unselected.inner,'rgba(0, 0, 0, 0)');
+  assert.notEqual(unselected.row,selected.rowBackground);
+  assert.equal(nativePosts.filter(p=>p.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
