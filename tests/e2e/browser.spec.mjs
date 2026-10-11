@@ -130,6 +130,7 @@ async function pageFor(t, options = {}) {
   const errors = [];
   const nativePosts = [];
   const created = [];
+  const createdAnywhere = [];
   const renamed = [];
   const copied = [];
   const browseRequests = [];
@@ -165,10 +166,11 @@ async function pageFor(t, options = {}) {
     const copyRows=copied.filter(item=>item.destinationDir===path)
       .map(item=>[item.name,item.folder]);
     const conflictRows=options.copyConflictDest===path ? [['notes.txt',false]] : [];
+    const createdOtherRows=createdAnywhere.filter(item=>item.parent===path).map(item=>[item.name,true]);
     const response=options.bulkCount && path==='/mnt/user/TimeMachine' ?
       bulkRows(path,options.bulkCount) : responseFor(path,
         [...(path==='/mnt/user/TimeMachine' ? created.map(name=>[name,true]) : []),
-         ...copyRows,...conflictRows], mappedRows);
+         ...copyRows,...conflictRows,...createdOtherRows], mappedRows);
     await route.fulfill({status:200,contentType:'text/html',body:response}).catch(()=>{});
   });
   await page.route('**/webGui/include/Control.php',async route=>{
@@ -191,7 +193,10 @@ async function pageFor(t, options = {}) {
     if (mode==='file' && body.get('action')==='0') {
       const parent=decodeURIComponent(body.get('source') || '');
       const name=decodeURIComponent(body.get('target') || '');
-      if (!options.dropCreate && parent==='/mnt/user/TimeMachine') created.push(name);
+      if (!options.dropCreate) {
+        if(parent==='/mnt/user/TimeMachine') created.push(name);
+        else createdAnywhere.push({parent,name});
+      }
       await route.fulfill({status:200,body:''});
       return;
     }
@@ -224,7 +229,7 @@ async function pageFor(t, options = {}) {
     await route.fulfill({status:400,body:'Unexpected native operation'});
   });
   await page.goto(base + '/Shares/Browse?dir=%2Fmnt%2Fuser');
-  return {page,errors,nativePosts,created,renamed,copied,browseRequests};
+  return {page,errors,nativePosts,created,createdAnywhere,renamed,copied,browseRequests};
 }
 
 const currentLabel = page => page.locator('.ufs-tab.ufs-active .ufs-tab-name');
