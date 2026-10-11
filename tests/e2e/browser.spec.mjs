@@ -74,7 +74,7 @@ const html = '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'+
   '<script src="/src/unraid-file-station.user.js"></script></body></html>';
 
 async function pageFor(t, options = {}) {
-  const context = await browser.newContext({viewport: {width: options.width || 1440, height: 900}});
+  const context = await browser.newContext({viewport: {width: options.width || 1440, height: options.height || 900}});
   t.after(()=>context.close());
   await context.addInitScript({content:options.noCsrf ? 'delete window.csrf_token;' : "window.csrf_token = 'test-csrf';"});
   if(options.nativeMode) {
@@ -1463,5 +1463,86 @@ test('v0.2.3.10 HTML 实体歧义及原有特殊字符显示禁用复制与原�
     await page.locator('.ufs-section-label').click();
   }
   assert.equal(nativePosts.filter(p=>p.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+
+test('v0.2.3.11 小窗口与超长文件名时，复制底部按钮始终可见，中间内容独立滚动',async t=>{
+  const filename='[DHR&MakariHoshiyume&VCB-Studio] '+
+    'Gekijouban DanMachi Orion no Ya '.repeat(4)+'[Ma10p_1080p].ass';
+  const {page,errors,nativePosts}=await pageFor(t,{width:960,height:480,extraEntries:{
+    '/mnt/user/TimeMachine':[[filename,false]]
+  }});
+  await openCopyDialog(page,filename);
+  const readLayout=()=>page.locator('.ufs-copy-dialog').evaluate(dialog=>{
+    const box=selector=> {
+      const rect=dialog.querySelector(selector).getBoundingClientRect();
+      return {top:rect.top,bottom:rect.bottom,height:rect.height};
+    };
+    const middle=dialog.querySelector('.ufs-create-fields');
+    return {windowHeight:innerHeight,dialog:dialog.getBoundingClientRect().toJSON(),
+      header:box('.ufs-create-head'),body:box('.ufs-create-fields'),
+      footer:box('.ufs-create-buttons'),
+      cancel:box('.ufs-copy-cancel'),submit:box('.ufs-copy-submit'),
+      overflow:getComputedStyle(dialog).overflowY,
+      middleOverflow:getComputedStyle(middle).overflowY,
+      middleScrollHeight:middle.scrollHeight,middleClientHeight:middle.clientHeight,
+      middleScrollTop:middle.scrollTop};
+  });
+  const initial=await readLayout();
+  assert.ok(initial.dialog.top>=0 && initial.dialog.bottom<=initial.windowHeight,
+    '复制弹窗应完整落在视口内：'+JSON.stringify(initial));
+  assert.ok(initial.footer.top>=initial.header.bottom,
+    '标题和底部按钮不能重叠：'+JSON.stringify(initial));
+  assert.ok(initial.cancel.bottom<=initial.dialog.bottom &&
+    initial.submit.bottom<=initial.dialog.bottom &&
+    initial.submit.bottom<=initial.windowHeight,
+    '两个按钮应在视口内完全显示：'+JSON.stringify(initial));
+  assert.equal(initial.overflow,'hidden','外层复制弹窗不应整体滚动');
+  assert.equal(initial.middleOverflow,'auto','只有复制内容区承担外层滚动');
+  assert.ok(initial.middleScrollHeight>initial.middleClientHeight,
+    '长内容必须在中间区域滚动：'+JSON.stringify(initial));
+  await page.locator('.ufs-copy-dialog .ufs-create-fields')
+    .evaluate(el=>{el.scrollTop=el.scrollHeight;});
+  const after=await readLayout();
+  assert.ok(after.middleScrollTop>0,'中间区域应可滚动');
+  assert.ok(Math.abs(after.header.top-initial.header.top)<1);
+  assert.ok(Math.abs(after.footer.top-initial.footer.top)<1,
+    '滚动正文时底部按钮位置不能改变');
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  assert.equal(await page.locator('.ufs-copy-submit').isEnabled(),true);
+  const selected=await readLayout();
+  assert.ok(Math.abs(selected.footer.top-initial.footer.top)<1,
+    '选择目录并展开后底部按钮仍保持位置');
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,0,
+    '只选择目标不能自动复制');
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.3.11 复制进度与完成界面仍沿用固定底部，常规窗口不引入外层滚动',async t=>{
+  const {page,errors}=await pageFor(t,{width:1100,height:520});
+  await openCopyDialog(page,'notes.txt');
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  const inspect=()=>page.locator('.ufs-copy-dialog').evaluate(dialog=>{
+    const footer=dialog.querySelector('.ufs-create-buttons').getBoundingClientRect();
+    const body=dialog.querySelector('.ufs-create-fields');
+    const root=dialog.getBoundingClientRect();
+    return {footerTop:footer.top,footerBottom:footer.bottom,rootBottom:root.bottom,
+      windowHeight:innerHeight,dialogOverflow:getComputedStyle(dialog).overflowY,
+      bodyOverflow:getComputedStyle(body).overflowY};
+  });
+  const picker=await inspect();
+  assert.equal(picker.dialogOverflow,'hidden');
+  assert.equal(picker.bodyOverflow,'auto');
+  assert.ok(picker.footerBottom<=picker.rootBottom && picker.footerBottom<=picker.windowHeight);
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-progress-panel[data-phase="success"]').waitFor();
+  const result=await inspect();
+  assert.ok(result.footerBottom<=result.rootBottom && result.footerBottom<=result.windowHeight,
+    '进度阶段切换后底部操作栏仍然完整可见');
+  assert.equal(await page.locator('.ufs-copy-submit').innerText(),'完成');
+  assert.equal(await page.locator('.ufs-copy-submit').isVisible(),true);
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-dialog').waitFor({state:'detached'});
   assert.equal(errors.length,0,errors.join('\n'));
 });

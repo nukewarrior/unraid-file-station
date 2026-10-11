@@ -197,7 +197,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.3\.10\b/);
+  assert.match(script, /@version\s+0\.2\.3\.11\b/);
 });
 
 
@@ -501,7 +501,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.3\.10\b/);
+  assert.match(script, /@version\s+0\.2\.3\.11\b/);
 });
 
 
@@ -1524,4 +1524,14 @@ test('v0.2.3.10 复制菜单及提交前必须验证原生 Browse 文件名一�
   assert.match(script,/!safeCopyPath\(plan\.source\)/);
   assert.match(script,/function safeWriteName\(name\)/);
   assert.match(script,/const RENAME_ENABLED = true/);
+});
+
+test('v0.2.3.11 复制弹窗独立滚动区域仅作用于复制，不改通用创建/重命名样式',()=>{
+  assert.match(script,/#ufs-app \.ufs-copy-dialog\{width:min\(465px,100%\);min-height:0;overflow:hidden\}/);
+  assert.match(script,/#ufs-app \.ufs-copy-dialog>\.ufs-create-head\{flex:0 0 auto\}/);
+  assert.match(script,/#ufs-app \.ufs-copy-dialog>\.ufs-copy-form\{flex:1 1 auto;min-height:0;overflow:hidden\}/);
+  assert.match(script,/#ufs-app \.ufs-copy-dialog \.ufs-create-fields\{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain\}/);
+  assert.match(script,/#ufs-app \.ufs-copy-dialog \.ufs-create-buttons\{flex:0 0 auto;background:var\(--ufs-bg\)\}/);
+  assert.match(script,/#ufs-app \.ufs-create-dialog\{[^}]*overflow-y:auto/);
+  assert.match(script,/form\.append\(fields,footer\);\s*dialog\.append\(header,form\);/);
 });

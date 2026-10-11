@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.3.10
+// @version      0.2.3.11
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -896,7 +896,13 @@
     "#ufs-app .ufs-create-buttons .ufs-create-submit:hover:not(:disabled){filter:brightness(.96)}",
     "@media(max-width:560px){#ufs-app .ufs-dialog-overlay{padding:10px}#ufs-app .ufs-create-head{padding:12px 15px}#ufs-app .ufs-create-fields{padding:15px}#ufs-app .ufs-create-buttons{padding:12px 15px 14px}}",
     '#ufs-app .ufs-rename-original{display:block;min-height:20px;padding:1px 0;color:var(--ufs-text);font-size:13px;line-height:1.5;overflow-wrap:anywhere}',
-    "#ufs-app .ufs-copy-dialog{width:min(465px,100%)}",
+    // The copy dialog has a fixed header/footer and a separately scrolling
+    // middle region. Do not change the shared mkdir/rename modal layout.
+    "#ufs-app .ufs-copy-dialog{width:min(465px,100%);min-height:0;overflow:hidden}",
+    "#ufs-app .ufs-copy-dialog>.ufs-create-head{flex:0 0 auto}",
+    "#ufs-app .ufs-copy-dialog>.ufs-copy-form{flex:1 1 auto;min-height:0;overflow:hidden}",
+    "#ufs-app .ufs-copy-dialog .ufs-create-fields{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain}",
+    "#ufs-app .ufs-copy-dialog .ufs-create-buttons{flex:0 0 auto;background:var(--ufs-bg)}",
     "#ufs-app .ufs-copy-summary{display:flex;align-items:center;gap:10px;padding:10px;background:var(--ufs-panel);border:1px solid var(--ufs-border);border-radius:5px;min-width:0}",
     "#ufs-app .ufs-copy-summary-info{display:flex;flex:1;flex-direction:column;gap:3px;min-width:0;font-size:13px;overflow-wrap:anywhere}",
     "#ufs-app .ufs-copy-summary-info span{color:var(--ufs-muted);font-size:12px}",
