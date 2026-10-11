@@ -127,7 +127,10 @@ async function pageFor(t, options = {}) {
   const nativePosts = [];
   const created = [];
   const renamed = [];
+  const copied = [];
   const browseRequests = [];
+  let copyActiveReads = 0;
+  let latestCopy = null;
   page.on('pageerror', error => errors.push(error.message));
   await page.route('**/Shares/Browse?*',route=>route.fulfill({status:200,contentType:'text/html',body:html}));
   let rootFailures = options.rootFailures || 0;
@@ -145,15 +148,22 @@ async function pageFor(t, options = {}) {
     const oldPath=renamed.reduceRight((result,rename)=>
       result===rename.target || result.startsWith(rename.target+'/')
         ? rename.source+result.slice(rename.target.length) : result,path);
-    const originalRows=contents[oldPath] || [];
+    const sourceForCopied=copied.find(item=>oldPath===item.target || oldPath.startsWith(item.target+'/'));
+    const sourcePath=sourceForCopied?
+      sourceForCopied.source + oldPath.slice(sourceForCopied.target.length) : oldPath;
+    const originalRows=contents[sourcePath] || [];
     const mappedRows=originalRows.map(([name,folder])=>{
       const oldEntry=oldPath+'/'+name;
       const changed=renamed.find(item=>item.source===oldEntry);
       return [changed ? changed.target.split('/').pop() : name,folder];
     });
+    const copyRows=copied.filter(item=>item.destinationDir===path)
+      .map(item=>[item.name,item.folder]);
+    const conflictRows=options.copyConflictDest===path ? [['notes.txt',false]] : [];
     const response=options.bulkCount && path==='/mnt/user/TimeMachine' ?
       bulkRows(path,options.bulkCount) : responseFor(path,
-        path==='/mnt/user/TimeMachine' ? created.map(name=>[name,true]) : [], mappedRows);
+        [...(path==='/mnt/user/TimeMachine' ? created.map(name=>[name,true]) : []),
+         ...copyRows,...conflictRows], mappedRows);
     await route.fulfill({status:200,contentType:'text/html',body:response}).catch(()=>{});
   });
   await page.route('**/webGui/include/Control.php',async route=>{
@@ -166,7 +176,10 @@ async function pageFor(t, options = {}) {
     }
     if (mode==='read') {
       const busy=options.nativeBusy ?
-        JSON.stringify({action:'6',source:'/mnt/user/TimeMachine/backup',target:''}) : '';
+        JSON.stringify({action:'6',source:'/mnt/user/TimeMachine/backup',target:''}) :
+        latestCopy && ++copyActiveReads===1 ? JSON.stringify({
+          action:latestCopy.folder?'3':'8',source:latestCopy.source,
+          target:latestCopy.destinationDir+'/'}) : '';
       await route.fulfill({status:200,body:busy});
       return;
     }
@@ -184,10 +197,21 @@ async function pageFor(t, options = {}) {
       await route.fulfill({status:200,body:''});
       return;
     }
+    if(mode==='file' && ['3','8'].includes(body.get('action'))) {
+      const source=decodeURIComponent(body.get('source')||'');
+      const destinationDir=decodeURIComponent(body.get('target')||'').replace(/\/$/,'');
+      const name=source.slice(source.lastIndexOf('/')+1);
+      const folder=body.get('action')==='3';
+      latestCopy={source,destinationDir,name,folder,target:destinationDir+'/'+name};
+      copyActiveReads=0;
+      if(!options.dropCopy) copied.push(latestCopy);
+      await route.fulfill({status:200,body:''});
+      return;
+    }
     await route.fulfill({status:400,body:'Unexpected native operation'});
   });
   await page.goto(base + '/Shares/Browse?dir=%2Fmnt%2Fuser');
-  return {page,errors,nativePosts,created,renamed,browseRequests};
+  return {page,errors,nativePosts,created,renamed,copied,browseRequests};
 }
 
 const currentLabel = page => page.locator('.ufs-tab.ufs-active .ufs-tab-name');
@@ -678,5 +702,92 @@ test('v0.2.2.1 返回原生模式后不接管 filemonitor，原生延迟监听�
   assert.equal(native.stopCalls,0);
   assert.equal(native.active,true);
   assert.equal(native.extra,1);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+
+async function openCopyDialog(page, name) {
+  await page.locator('.ufs-entry').filter({hasText:name}).first().click({button:'right'});
+  await page.getByRole('menuitem',{name:'复制到…'}).click();
+  await page.locator('.ufs-copy-dialog').waitFor();
+  await page.getByRole('button',{name:'选择 downloads'}).waitFor();
+}
+
+test('v0.2.3 单文件复制到另一个 Share，不覆盖且不删除原文件',async t=>{
+  const {page,errors,nativePosts,copied}=await pageFor(t);
+  await openCopyDialog(page,'notes.txt');
+  assert.equal(await page.locator('.ufs-copy-submit').isDisabled(),true);
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  assert.equal(await page.locator('.ufs-copy-destination').innerText(),'目标：/mnt/user/downloads');
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-dialog').waitFor({state:'detached'});
+  assert.equal(copied.length,1);
+  assert.equal(copied[0].source,'/mnt/user/TimeMachine/notes.txt');
+  assert.equal(copied[0].target,'/mnt/user/downloads/notes.txt');
+  const writes=nativePosts.filter(x=>x.mode==='file');
+  assert.equal(writes.length,1);
+  assert.equal(writes[0].action,'8');
+  assert.equal(writes[0].csrf,'test-csrf');
+  assert.equal(decodeURIComponent(writes[0].source),'/mnt/user/TimeMachine/notes.txt');
+  assert.equal(decodeURIComponent(writes[0].target),'/mnt/user/downloads/');
+  assert.equal(await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).count(),1);
+  await page.locator('.ufs-tree-row').filter({hasText:'downloads'}).first().click();
+  await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).first().waitFor();
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.3 复制文件夹到子目录，保留文件夹名和源文件',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t);
+  await openCopyDialog(page,'Photos');
+  await page.getByRole('button',{name:'展开 downloads'}).click();
+  await page.getByRole('button',{name:'选择 completed'}).waitFor();
+  await page.getByRole('button',{name:'选择 completed'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-dialog').waitFor({state:'detached'});
+  assert.equal(nativePosts.filter(x=>x.action==='3').length,1);
+  await page.locator('.ufs-tree-row').filter({hasText:'downloads'}).first().click();
+  await page.locator('.ufs-entry').filter({hasText:'completed'}).first().dblclick();
+  await page.locator('.ufs-entry').filter({hasText:'Photos'}).first().dblclick();
+  await page.locator('.ufs-entry').filter({hasText:'sunset.jpg'}).first().waitFor();
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.3 源父目录与源子目录不可作为目标，多选不出现复制入口',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t);
+  await openCopyDialog(page,'Photos');
+  await page.getByRole('button',{name:'展开 TimeMachine'}).click();
+  const parent=page.getByRole('button',{name:'选择 TimeMachine'});
+  await parent.waitFor();
+  assert.equal(await parent.isDisabled(),true);
+  await page.getByRole('button',{name:'展开 Photos'}).waitFor();
+  const self=page.getByRole('button',{name:'选择 Photos'});
+  assert.equal(await self.isDisabled(),true);
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,0);
+  await page.locator('.ufs-copy-cancel').click();
+  await page.locator('.ufs-entry').filter({hasText:'backup'}).first().click();
+  await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).first().click({modifiers:['Control']});
+  await page.locator('.ufs-operations').click();
+  assert.equal(await page.getByRole('menuitem',{name:'复制到…'}).count(),0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.3 同名目标阻止原生写入，结果不确定时锁住提交',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t,{copyConflictDest:'/mnt/user/downloads'});
+  await openCopyDialog(page,'notes.txt');
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-feedback',{hasText:'已有同名项目'}).waitFor();
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.3 已提交但复制结果无法确认时不误报成功也不重复提交',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t,{dropCopy:true});
+  await openCopyDialog(page,'notes.txt');
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-feedback',{hasText:'结果不确定'}).waitFor();
+  assert.equal(await page.locator('.ufs-copy-submit').isDisabled(),true);
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,1);
   assert.equal(errors.length,0,errors.join('\n'));
 });
