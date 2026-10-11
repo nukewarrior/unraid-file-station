@@ -1337,7 +1337,8 @@ test('v0.2.3.9 主文件列表与复制目标子目录排序一致，行内创�
     .filter({has:page.locator('.ufs-tree-name',{hasText:'downloads'})}).first().click();
   await currentLabel(page).filter({hasText:'downloads'}).waitFor();
   await page.locator('.ufs-filename',{hasText:'新建文件夹33'}).waitFor();
-  const mainOrder=await page.locator('.ufs-entry .ufs-filename').allInnerTexts();
+  const mainOrder=(await page.locator('.ufs-entry .ufs-filename').allInnerTexts())
+    .filter(name=>name!=='large.zip'); // Copy picker lists folders, never files.
   assert.deepEqual(mainOrder,[...mainOrder].sort(new Intl.Collator('zh-CN',{numeric:true}).compare));
 
   await page.locator('.ufs-tree-row')
