@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.3.4
+// @version      0.2.3.5
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -888,8 +888,10 @@
     "#ufs-app .ufs-copy-progress-state-text{min-width:0;overflow-wrap:anywhere}",
     "#ufs-app .ufs-copy-progress-spinner{width:16px;height:16px;flex:0 0 16px;border:2px solid rgba(235,120,37,.19);border-top-color:var(--ufs-accent);border-radius:50%;animation:ufs-copy-spin .9s linear infinite}",
     "#ufs-app .ufs-copy-progress-indicator{font-size:11px;color:var(--ufs-accent);white-space:nowrap}",
-    "#ufs-app .ufs-copy-progress-track{position:relative;height:6px;border-radius:8px;background:var(--ufs-panel);overflow:hidden}",
-    "#ufs-app .ufs-copy-progress-fill{position:absolute;top:0;bottom:0;left:0;width:35%;border-radius:8px;background:linear-gradient(90deg,transparent,rgba(235,120,37,.76),var(--ufs-accent),transparent);animation:ufs-copy-flow 1.7s cubic-bezier(.4,0,.2,1) infinite}",
+    "#ufs-app .ufs-copy-progress-track{position:relative;height:8px;border-radius:8px;background:var(--ufs-panel);overflow:hidden}",
+    "#ufs-app .ufs-copy-progress-fill{position:absolute;top:0;bottom:0;left:0;width:35%;border-radius:8px;background:var(--ufs-accent)}",
+    "#ufs-app .ufs-copy-progress-panel[data-progress-mode=indeterminate] .ufs-copy-progress-fill{background:linear-gradient(90deg,transparent,rgba(235,120,37,.76),var(--ufs-accent),transparent);animation:ufs-copy-flow 1.7s cubic-bezier(.4,0,.2,1) infinite}",
+    "#ufs-app .ufs-copy-progress-panel[data-progress-mode=determinate] .ufs-copy-progress-fill{background:var(--ufs-accent);background-image:none;animation:none;transition:width .2s ease-out}",
     "#ufs-app .ufs-copy-progress-stages{display:flex;justify-content:space-between;gap:7px;margin-top:14px;font-size:11px;line-height:1.5}",
     "#ufs-app .ufs-copy-progress-stage{color:var(--ufs-muted);white-space:nowrap}",
     "#ufs-app .ufs-copy-progress-stage[data-status=active]{color:var(--ufs-accent);font-weight:600}",
@@ -904,7 +906,7 @@
     "#ufs-app .ufs-copy-progress-panel[data-phase=uncertain] .ufs-copy-progress-state,#ufs-app .ufs-copy-progress-panel[data-phase=uncertain] .ufs-copy-progress-indicator,#ufs-app .ufs-copy-progress-panel[data-phase=uncertain] .ufs-copy-progress-note{color:#c13d37}",
     "@keyframes ufs-copy-spin{to{transform:rotate(360deg)}}",
     "@keyframes ufs-copy-flow{from{transform:translateX(-110%)}to{transform:translateX(305%)}}",
-    "@media(prefers-reduced-motion:reduce){#ufs-app .ufs-copy-progress-spinner,#ufs-app .ufs-copy-progress-fill{animation:none}}",
+    "@media(prefers-reduced-motion:reduce){#ufs-app .ufs-copy-progress-spinner,#ufs-app .ufs-copy-progress-fill{animation:none}#ufs-app .ufs-copy-progress-panel[data-progress-mode=determinate] .ufs-copy-progress-fill{transition:none}}",
     "#ufs-app .ufs-copy-task-trigger{margin:0 3px;min-width:0;padding:4px 9px;border:1px solid var(--ufs-border);font-size:12px;color:var(--ufs-accent);background:var(--ufs-panel)}",
     "#ufs-app .ufs-copy-task-trigger[hidden],#ufs-app .ufs-copy-background[hidden],#ufs-app .ufs-copy-cancel[hidden]{display:none!important}",
     "#ufs-app .ufs-copy-background{display:inline-flex;align-items:center;justify-content:center;height:34px;min-height:34px;min-width:85px;margin:0;padding:6px 10px;border:1px solid var(--ufs-border);border-radius:5px;background:var(--ufs-bg);color:var(--ufs-text);font-size:12px}",
@@ -2202,6 +2204,7 @@
     // This is an indeterminate animation, never a synthetic percentage.
     const progressPanel=element('div','ufs-copy-progress-panel');
     progressPanel.dataset.phase='checking';
+    progressPanel.dataset.progressMode='indeterminate';
     progressPanel.append(element('label','ufs-create-label','复制到'));
     const progressTarget=element('div','ufs-copy-progress-target');
     progressTarget.append(icon('folder','ufs-folder-icon'));
@@ -2269,7 +2272,7 @@
         phase==='uncertain'?'复制结果无法确认':'复制任务进行中，进度未知');
       if(phase==='success') {fill.style.width='100%';track.setAttribute('aria-valuenow','100');}
       if(phase==='uncertain' || phase==='cancelled') {fill.style.animation='none';}
-      if(phase==='checking') {fill.style.width='35%';fill.style.animation='';track.removeAttribute('aria-valuenow');}
+      if(phase==='checking') {progressPanel.dataset.progressMode='indeterminate';fill.style.width='35%';fill.style.animation='';track.removeAttribute('aria-valuenow');}
     }
     let lastActiveCopyStep=0;
     function updateCopyProgress(message,phase,info) {
@@ -2285,6 +2288,7 @@
           progressFile.title=current;
         }
         if(info?.percent!=null) {
+          progressPanel.dataset.progressMode='determinate';
           fill.style.animation='none';
           fill.style.width=info.percent+'%';
           track.setAttribute('aria-valuenow',String(info.percent));
@@ -2609,7 +2613,7 @@
       ['重置文件列表列宽', resetColumnWidths],
       ['返回原生文件管理器（其他写入操作）', nativeMode],
       [state.theme === 'unraid' ? '切换至 DSM 经典主题' : '切换至 Unraid 融合主题', toggleTheme],
-      ['关于 File Station v0.2.3.4', () => notify('File Station v0.2.3.4 · Unraid 7.2.2 · 修复 rsync -h 实际进度格式')]
+      ['关于 File Station v0.2.3.5', () => notify('File Station v0.2.3.5 · Unraid 7.2.2 · 实心橙色复制进度条')]
     ];
     actions.forEach(([label, fn]) => {
       const button = element('button', '', label);
