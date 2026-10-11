@@ -2439,21 +2439,21 @@
           expand.setAttribute('aria-label',(opened.has(path)?'折叠 ':'展开 ')+item.name);
           expand.append(icon(opened.has(path)?'chevron-down':'chevron-right'));
           expand.addEventListener('click',()=>{
-            if(busy) return;
+            if(busy || inlineDraft || mkdirUncertain) return;
             if(opened.has(path)) {opened.delete(path);renderPicker();}
             else {opened.add(path);renderPicker();void loadChildren(path);}
           });
           const choose=element('button','ufs-copy-choose');
           choose.type='button';
-          choose.disabled=!permitted || busy;
+          choose.disabled=!permitted || busy || !!inlineDraft || mkdirUncertain;
           choose.setAttribute('aria-label','选择 '+item.name);
           choose.append(icon(opened.has(path)?'folder-open':'folder','ufs-folder-icon'),
             element('span','',item.name));
           choose.addEventListener('click',()=>{
-            if(busy || !permitted) return;
+            if(busy || inlineDraft || mkdirUncertain || !permitted) return;
             selected=path;
             destinationText.textContent='目标：'+path;
-            submit.disabled=false;
+            submit.disabled=!!inlineDraft || mkdirUncertain;
             // Choosing a destination also expands it. Clicking an already
             // expanded folder keeps it open; only the arrow can collapse it.
             opened.add(path);
