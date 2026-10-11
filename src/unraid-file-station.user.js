@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.3.6
+// @version      0.2.3.7
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -750,7 +750,9 @@
   // Small local SVG set: no external fonts, CDNs or global icon CSS.
   const ICONS = {
     folder:['M3 7a2 2 0 0 1 2-2h4l2 2h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'],
-    'folder-open':['M3 7a2 2 0 0 1 2-2h4l2 2h9a2 2 0 0 1 2 2','M3 11h17a2 2 0 0 1 1.9 2.6L20 19H4a2 2 0 0 1-1.9-2.6z'],
+    'folder-open':['M3 7a2 2 0 0 1 2-2h4l2 2 2h9a2 2 0 0 1 2 2','M3 11h17a2 2 0 0 1 1.9 2.6L20 19H4a2 2 0 0 1-1.9-2.6z'],
+    'folder-plus':['M3 7a2 2 0 0 1 2-2h4l2 2h10a2 2 0 0 1 2 2v4','M3 9v10a2 2 0 0 0 2 2h9','M18 16v7','m-3.5-3.5 3.5 0 3.5 0'],
+    check:['m5 12 4 4 10-10'],
     file:['M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z','M14 2v6h6'],
     more:['M5 12h.01','M12 12h.01','M19 12h.01'],
     archive:['M4 4h16v16H4z','M4 9h16','M12 9v8','M10 13h4'],
@@ -871,12 +873,24 @@
     "#ufs-app .ufs-copy-tree-group{padding:5px 11px 7px;color:var(--ufs-muted);font-size:12px;font-weight:600}",
     "#ufs-app .ufs-copy-tree-row{display:flex;align-items:center;height:32px;min-height:32px;gap:0;padding-right:7px}",
     "#ufs-app .ufs-copy-expand{display:flex;align-items:center;justify-content:center;flex:0 0 24px;width:24px;min-width:24px;max-width:24px;height:28px;min-height:28px;margin:0;padding:0;border:0;background:transparent;color:var(--ufs-muted)}",
-    "#ufs-app .ufs-copy-choose{display:flex;align-items:center;gap:7px;flex:1;min-width:0;height:30px;min-height:30px;margin:0;padding:4px 7px;border:0;background:transparent;color:var(--ufs-text);text-align:left;border-radius:4px;font-size:13px}",
+    "#ufs-app .ufs-copy-choose{display:flex;align-items:center;gap:7px;flex:0 1 auto;min-width:0;max-width:calc(100% - 55px);height:30px;min-height:30px;margin:0;padding:4px 7px;border:0;background:transparent;color:var(--ufs-text);text-align:left;border-radius:4px;font-size:13px}",
     "#ufs-app .ufs-copy-choose span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
-    "#ufs-app .ufs-copy-tree-row.ufs-copy-selected .ufs-copy-choose{background:rgba(235,120,37,.11);color:var(--ufs-text);font-weight:600}",
+    "#ufs-app .ufs-copy-tree-row.ufs-copy-selected{background:rgba(235,120,37,.11);border-radius:4px}",
+    "#ufs-app .ufs-copy-tree-row.ufs-copy-selected .ufs-copy-choose{color:var(--ufs-text);font-weight:600}",
     "#ufs-app .ufs-copy-choose:hover:not(:disabled){background:var(--ufs-hover)}",
     "#ufs-app .ufs-copy-choose:disabled{opacity:.38;cursor:not-allowed}",
     "#ufs-app .ufs-copy-tree-status{padding-top:6px;padding-bottom:7px;font-size:12px;color:var(--ufs-muted)}",
+    "#ufs-app .ufs-copy-mkdir-trigger{display:flex;align-items:center;justify-content:center;flex:0 0 25px;width:25px;min-width:25px;max-width:25px;height:27px;min-height:27px;margin:0 0 0 2px;padding:4px;border:0;background:transparent;color:var(--ufs-accent);opacity:0;visibility:hidden}",
+    "#ufs-app .ufs-copy-tree-row:hover .ufs-copy-mkdir-trigger,#ufs-app .ufs-copy-tree-row.ufs-copy-selected .ufs-copy-mkdir-trigger,#ufs-app .ufs-copy-tree-row:focus-within .ufs-copy-mkdir-trigger{opacity:1;visibility:visible}",
+    "#ufs-app .ufs-copy-mkdir-trigger:hover:not(:disabled){background:var(--ufs-accent-soft)}",
+    "#ufs-app .ufs-copy-inline-row{display:flex;align-items:center;gap:5px;height:36px;min-height:36px;padding-right:7px;min-width:0}",
+    "#ufs-app .ufs-copy-inline-row>.ufs-folder-icon{flex:0 0 16px;margin:0 3px 0 24px}",
+    "#ufs-app .ufs-copy-inline-input{flex:1 1 auto;width:0;min-width:40px;height:28px;min-height:28px;margin:0;padding:3px 7px;border:1px solid var(--ufs-accent);border-radius:4px;background:var(--ufs-bg);color:var(--ufs-text);font-size:13px;outline:none}",
+    "#ufs-app .ufs-copy-inline-action{flex:0 0 26px;display:flex;justify-content:center;align-items:center;width:26px;min-width:26px;height:28px;min-height:28px;margin:0;padding:4px;border:0;background:transparent;color:var(--ufs-muted)}",
+    "#ufs-app .ufs-copy-inline-action.ufs-copy-inline-confirm{color:var(--ufs-accent)}",
+    "#ufs-app .ufs-copy-inline-action:hover:not(:disabled){background:var(--ufs-hover)}",
+    "#ufs-app .ufs-copy-inline-error{color:#c13d37;font-size:12px;line-height:1.45;white-space:normal;overflow-wrap:anywhere;padding:3px 7px 6px}",
+    "#ufs-app .ufs-copy-dialog[data-inline-mkdir=active] .ufs-copy-submit{opacity:.42;cursor:not-allowed}",
     "#ufs-app .ufs-copy-destination{margin-top:9px;color:var(--ufs-muted);font-size:12px;overflow-wrap:anywhere}",
     "#ufs-app .ufs-copy-dialog .ufs-create-feedback{margin-top:8px}",
     "@media(max-height:650px){#ufs-app .ufs-copy-picker{height:min(200px,30vh)}}",
@@ -2617,7 +2631,7 @@
       ['重置文件列表列宽', resetColumnWidths],
       ['返回原生文件管理器（其他写入操作）', nativeMode],
       [state.theme === 'unraid' ? '切换至 DSM 经典主题' : '切换至 Unraid 融合主题', toggleTheme],
-      ['关于 File Station v0.2.3.6', () => notify('File Station v0.2.3.6 · Unraid 7.2.2 · 选择目标文件夹同时展开子目录')]
+      ['关于 File Station v0.2.3.7', () => notify('File Station v0.2.3.7 · Unraid 7.2.2 · 复制目标目录树支持行内新建文件夹')]
     ];
     actions.forEach(([label, fn]) => {
       const button = element('button', '', label);
