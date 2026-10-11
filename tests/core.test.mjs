@@ -197,7 +197,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.3\.11\b/);
+  assert.match(script, /@version\s+0\.2\.3\.12\b/);
 });
 
 
@@ -501,7 +501,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.3\.11\b/);
+  assert.match(script, /@version\s+0\.2\.3\.12\b/);
 });
 
 
@@ -1526,12 +1526,26 @@ test('v0.2.3.10 复制菜单及提交前必须验证原生 Browse 文件名一�
   assert.match(script,/const RENAME_ENABLED = true/);
 });
 
-test('v0.2.3.11 复制弹窗独立滚动区域仅作用于复制，不改通用创建/重命名样式',()=>{
-  assert.match(script,/#ufs-app \.ufs-copy-dialog\{width:min\(465px,100%\);min-height:0;overflow:hidden\}/);
-  assert.match(script,/#ufs-app \.ufs-copy-dialog>\.ufs-create-head\{flex:0 0 auto\}/);
-  assert.match(script,/#ufs-app \.ufs-copy-dialog>\.ufs-copy-form\{flex:1 1 auto;min-height:0;overflow:hidden\}/);
-  assert.match(script,/#ufs-app \.ufs-copy-dialog \.ufs-create-fields\{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain\}/);
-  assert.match(script,/#ufs-app \.ufs-copy-dialog \.ufs-create-buttons\{flex:0 0 auto;background:var\(--ufs-bg\)\}/);
-  assert.match(script,/#ufs-app \.ufs-create-dialog\{[^}]*overflow-y:auto/);
+test('v0.2.3.12 全部弹窗统一 52px 标题、64px 底栏和独立滚动内容',()=>{
+  assert.match(script,/#ufs-app \.ufs-create-dialog\{[^}]*max-height:calc\(100% - 16px\);min-height:0;overflow:hidden/);
+  assert.match(script,/#ufs-app \.ufs-create-head\{[^}]*height:52px;min-height:52px;flex:0 0 52px/);
+  assert.match(script,/#ufs-app \.ufs-create-form\{[^}]*flex:1 1 auto;[^}]*min-height:0;overflow:hidden/);
+  assert.match(script,/#ufs-app \.ufs-create-fields\{[^}]*flex:1 1 auto;[^}]*min-height:0;overflow-y:auto;overscroll-behavior:contain/);
+  assert.match(script,/#ufs-app \.ufs-create-buttons\{[^}]*height:64px;min-height:64px;flex:0 0 64px/);
+  assert.match(script,/#ufs-app \.ufs-copy-dialog\{width:min\(465px,100%\)\}/);
   assert.match(script,/form\.append\(fields,footer\);\s*dialog\.append\(header,form\);/);
+  assert.match(script,/form\.append\(fields, buttons\);\s*dialog\.append\(top, form\);/);
+  assert.match(script,/form\.append\(fields, buttons\);\s*dialog\.append\(header, form\);/);
+});
+test('v0.2.3.12 弹窗及目录树复用细滚动条和滚动触发显示，避免双滚动条同时突出',()=>{
+  assert.match(script,/#ufs-app \.ufs-create-dialog \.ufs-create-fields,#ufs-app \.ufs-copy-picker\{scrollbar-width:thin;scrollbar-color:transparent transparent\}/);
+  assert.match(script,/#ufs-app \.ufs-copy-dialog \.ufs-create-fields:has\(\.ufs-copy-picker:hover\)\{scrollbar-color:transparent transparent\}/);
+  assert.match(script,/#ufs-app \.ufs-copy-dialog \.ufs-create-fields:has\(\.ufs-copy-picker:hover\)::-webkit-scrollbar-thumb/);
+  assert.equal((script.match(/setupListScrollbars\(fields\);/g)||[]).length,3,
+    '新建、重命名和复制的内容区都应复用滚动条监听');
+  assert.equal((script.match(/setupListScrollbars\(picker\);/g)||[]).length,1,
+    '复制目录树仅注册一次滚动监听');
+  assert.match(script,/onCleanup\(setupListScrollbars\(\$\('\.ufs-list', app\)\)\)/,
+    '保留主文件列表原有滚动条绑定');
+  assert.match(script,/window\.confirm\(/,'不改动原生取消复制确认交互');
 });

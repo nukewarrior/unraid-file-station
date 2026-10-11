@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.3.11
+// @version      0.2.3.12
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -874,13 +874,13 @@
     '#ufs-app .ufs-empty{padding:48px 20px;text-align:center;color:var(--ufs-muted)}#ufs-app .ufs-error{color:#c13d37}#ufs-app .ufs-menu{position:fixed;z-index:2147483647;background:var(--ufs-bg);border:1px solid var(--ufs-border);border-radius:7px;box-shadow:0 10px 32px #0002;min-width:190px;padding:5px}',
     '#ufs-app .ufs-menu button{background:transparent;border:0;display:block;width:100%;text-align:left;padding:8px 12px;color:var(--ufs-text)}#ufs-app .ufs-menu button:hover{background:var(--ufs-hover)}#ufs-app .ufs-toast{position:absolute;bottom:42px;right:25px;background:#30363c;color:#fff;padding:10px 14px;border-radius:6px;box-shadow:0 5px 18px #0003;max-width:360px}',
     "#ufs-app .ufs-dialog-overlay{position:absolute;inset:0;z-index:2147483640;display:flex;align-items:center;justify-content:center;background:rgba(22,28,36,.40);backdrop-filter:blur(1px);padding:16px}",
-    "#ufs-app .ufs-create-dialog{width:min(440px,100%);max-height:calc(100% - 16px);overflow-y:auto;background:var(--ufs-bg);border:1px solid var(--ufs-border);border-radius:10px;box-shadow:0 20px 55px rgba(0,0,0,.24);display:flex;flex-direction:column;padding:0;gap:0}",
-    "#ufs-app .ufs-create-head{display:flex;align-items:center;justify-content:space-between;min-height:57px;gap:12px;padding:14px 20px;border-bottom:1px solid var(--ufs-border)}",
+    "#ufs-app .ufs-create-dialog{width:min(440px,100%);max-height:calc(100% - 16px);min-height:0;overflow:hidden;background:var(--ufs-bg);border:1px solid var(--ufs-border);border-radius:10px;box-shadow:0 20px 55px rgba(0,0,0,.24);display:flex;flex-direction:column;padding:0;gap:0}",
+    "#ufs-app .ufs-create-head{display:flex;align-items:center;justify-content:space-between;height:52px;min-height:52px;flex:0 0 52px;gap:12px;padding:0 20px;border-bottom:1px solid var(--ufs-border)}",
     "#ufs-app .ufs-create-head h3{font-size:16px;line-height:1.4;margin:0;font-weight:650;color:var(--ufs-text)}",
     "#ufs-app .ufs-create-head .ufs-create-dismiss{border:0;background:transparent;color:var(--ufs-muted);padding:4px;display:flex;align-items:center;justify-content:center;width:28px;height:28px;min-width:28px;flex:0 0 28px}",
     "#ufs-app .ufs-create-head .ufs-create-dismiss:hover:not(:disabled){color:var(--ufs-text);background:var(--ufs-hover)}",
-    "#ufs-app .ufs-create-form{display:flex;flex-direction:column;gap:0;margin:0;min-width:0}",
-    "#ufs-app .ufs-create-fields{display:flex;flex-direction:column;gap:17px;padding:18px 20px 20px;min-width:0}",
+    "#ufs-app .ufs-create-form{display:flex;flex:1 1 auto;flex-direction:column;gap:0;margin:0;min-width:0;min-height:0;overflow:hidden}",
+    "#ufs-app .ufs-create-fields{display:flex;flex:1 1 auto;flex-direction:column;gap:17px;padding:18px 20px 20px;min-width:0;min-height:0;overflow-y:auto;overscroll-behavior:contain}",
     "#ufs-app .ufs-create-field{min-width:0}",
     "#ufs-app .ufs-create-dialog .ufs-create-label{display:block;font-size:12px;font-weight:500;color:var(--ufs-muted);line-height:1.5;margin:0 0 7px}",
     "#ufs-app .ufs-create-location{display:block;width:100%;min-height:36px;padding:8px 10px;background:var(--ufs-panel);border:1px solid var(--ufs-border);border-radius:5px;color:var(--ufs-text);font-size:13px;line-height:19px;overflow-wrap:anywhere}",
@@ -889,20 +889,16 @@
     "#ufs-app .ufs-create-input::selection{background:var(--ufs-accent);color:#fff}",
     "#ufs-app .ufs-create-feedback{min-height:17px;margin-top:8px;font-size:12px;line-height:1.5;color:var(--ufs-muted);overflow-wrap:anywhere}",
     "#ufs-app .ufs-create-feedback.ufs-error{color:#c13d37}",
-    "#ufs-app .ufs-create-buttons{display:flex;align-items:center;justify-content:flex-end;gap:9px;padding:13px 20px 16px;border-top:1px solid var(--ufs-border)}",
+    "#ufs-app .ufs-create-buttons{display:flex;align-items:center;justify-content:flex-end;height:64px;min-height:64px;flex:0 0 64px;gap:9px;padding:0 20px;background:var(--ufs-bg);border-top:1px solid var(--ufs-border)}",
     "#ufs-app .ufs-create-buttons button{display:inline-flex;align-items:center;justify-content:center;min-width:85px;min-height:34px;height:34px;padding:6px 16px;margin:0;border-radius:5px;border:1px solid var(--ufs-border);background:var(--ufs-bg);color:var(--ufs-text);font-weight:500;line-height:1.4}",
     "#ufs-app .ufs-create-buttons .ufs-create-cancel:hover:not(:disabled){background:var(--ufs-hover)}",
     "#ufs-app .ufs-create-buttons .ufs-create-submit{background:var(--ufs-accent);color:#fff;border-color:var(--ufs-accent)}",
     "#ufs-app .ufs-create-buttons .ufs-create-submit:hover:not(:disabled){filter:brightness(.96)}",
-    "@media(max-width:560px){#ufs-app .ufs-dialog-overlay{padding:10px}#ufs-app .ufs-create-head{padding:12px 15px}#ufs-app .ufs-create-fields{padding:15px}#ufs-app .ufs-create-buttons{padding:12px 15px 14px}}",
+    "@media(max-width:560px){#ufs-app .ufs-dialog-overlay{padding:10px}#ufs-app .ufs-create-head{padding:0 15px}#ufs-app .ufs-create-fields{padding:15px}#ufs-app .ufs-create-buttons{padding:0 15px}}",
     '#ufs-app .ufs-rename-original{display:block;min-height:20px;padding:1px 0;color:var(--ufs-text);font-size:13px;line-height:1.5;overflow-wrap:anywhere}',
-    // The copy dialog has a fixed header/footer and a separately scrolling
-    // middle region. Do not change the shared mkdir/rename modal layout.
-    "#ufs-app .ufs-copy-dialog{width:min(465px,100%);min-height:0;overflow:hidden}",
-    "#ufs-app .ufs-copy-dialog>.ufs-create-head{flex:0 0 auto}",
-    "#ufs-app .ufs-copy-dialog>.ufs-copy-form{flex:1 1 auto;min-height:0;overflow:hidden}",
-    "#ufs-app .ufs-copy-dialog .ufs-create-fields{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain}",
-    "#ufs-app .ufs-copy-dialog .ufs-create-buttons{flex:0 0 auto;background:var(--ufs-bg)}",
+    // v0.2.3.12: All dialogs share one fixed header/footer and scrolling body.
+    // Copy alone keeps a wider shell and an independently scrolling picker.
+    "#ufs-app .ufs-copy-dialog{width:min(465px,100%)}",
     "#ufs-app .ufs-copy-summary{display:flex;align-items:center;gap:10px;padding:10px;background:var(--ufs-panel);border:1px solid var(--ufs-border);border-radius:5px;min-width:0}",
     "#ufs-app .ufs-copy-summary-info{display:flex;flex:1;flex-direction:column;gap:3px;min-width:0;font-size:13px;overflow-wrap:anywhere}",
     "#ufs-app .ufs-copy-summary-info span{color:var(--ufs-muted);font-size:12px}",
@@ -979,6 +975,19 @@
     // File Station-only thin native scrollbar. Keep scrolling and thumb dragging intact:
     // scroll activity and hover show the thumb; idle leaves a transparent track.
     '#ufs-app .ufs-list{scrollbar-width:thin;scrollbar-color:transparent transparent}#ufs-app .ufs-list:hover,#ufs-app .ufs-list.ufs-scroll-active{scrollbar-color:rgba(105,115,126,.48) transparent}#ufs-app .ufs-list::-webkit-scrollbar{width:6px;height:6px;background:transparent}#ufs-app .ufs-list::-webkit-scrollbar-track{background:transparent}#ufs-app .ufs-list::-webkit-scrollbar-thumb{background:transparent;border-radius:8px}#ufs-app .ufs-list:hover::-webkit-scrollbar-thumb,#ufs-app .ufs-list.ufs-scroll-active::-webkit-scrollbar-thumb{background:rgba(105,115,126,.48)}#ufs-app .ufs-list::-webkit-scrollbar-thumb:hover{background:rgba(94,104,115,.7)}#ufs-app .ufs-list::-webkit-scrollbar-corner{background:transparent}',
+    // Use the same native idle/hover/scroll scrollbar policy in every modal body
+    // and the copy destination tree. Keep wheel, trackpad and thumb dragging native.
+    '#ufs-app .ufs-create-dialog .ufs-create-fields,#ufs-app .ufs-copy-picker{scrollbar-width:thin;scrollbar-color:transparent transparent}',
+    '#ufs-app .ufs-create-dialog .ufs-create-fields:hover,#ufs-app .ufs-create-dialog .ufs-create-fields.ufs-scroll-active,#ufs-app .ufs-copy-picker:hover,#ufs-app .ufs-copy-picker.ufs-scroll-active{scrollbar-color:rgba(105,115,126,.48) transparent}',
+    '#ufs-app .ufs-create-dialog .ufs-create-fields::-webkit-scrollbar,#ufs-app .ufs-copy-picker::-webkit-scrollbar{width:6px;height:6px;background:transparent}',
+    '#ufs-app .ufs-create-dialog .ufs-create-fields::-webkit-scrollbar-track,#ufs-app .ufs-copy-picker::-webkit-scrollbar-track{background:transparent}',
+    '#ufs-app .ufs-create-dialog .ufs-create-fields::-webkit-scrollbar-thumb,#ufs-app .ufs-copy-picker::-webkit-scrollbar-thumb{background:transparent;border-radius:8px}',
+    '#ufs-app .ufs-create-dialog .ufs-create-fields:hover::-webkit-scrollbar-thumb,#ufs-app .ufs-create-dialog .ufs-create-fields.ufs-scroll-active::-webkit-scrollbar-thumb,#ufs-app .ufs-copy-picker:hover::-webkit-scrollbar-thumb,#ufs-app .ufs-copy-picker.ufs-scroll-active::-webkit-scrollbar-thumb{background:rgba(105,115,126,.48)}',
+    '#ufs-app .ufs-create-dialog .ufs-create-fields::-webkit-scrollbar-thumb:hover,#ufs-app .ufs-copy-picker::-webkit-scrollbar-thumb:hover{background:rgba(94,104,115,.7)}',
+    '#ufs-app .ufs-create-dialog .ufs-create-fields::-webkit-scrollbar-corner,#ufs-app .ufs-copy-picker::-webkit-scrollbar-corner{background:transparent}',
+    // Hovering the inner picker should not illuminate the outer body's scrollbar.
+    '#ufs-app .ufs-copy-dialog .ufs-create-fields:has(.ufs-copy-picker:hover){scrollbar-color:transparent transparent}',
+    '#ufs-app .ufs-copy-dialog .ufs-create-fields:has(.ufs-copy-picker:hover)::-webkit-scrollbar-thumb{background:transparent}',
 
     '#ufs-app .ufs-menu .ufs-location-copy{width:auto;flex:0 0 auto;white-space:nowrap;padding:4px 9px;font-size:12px;color:var(--ufs-accent);border:1px solid var(--ufs-border)}',
     '.ufs-hide-native{display:none!important}#ufs-native-enable{margin:8px;padding:7px 12px;background:#e87526;color:#fff;border:0;border-radius:5px;cursor:pointer}',
@@ -2041,6 +2050,7 @@
     dialog.append(top, form);
     overlay.append(dialog);
     app.append(overlay);
+    setupListScrollbars(fields);
     const close = () => { if (!createFolderBusy) overlay.remove(); };
     dismissButton.addEventListener('click', close);
     cancel.addEventListener('click', close);
@@ -2163,6 +2173,7 @@
     dialog.append(header, form);
     overlay.append(dialog);
     app.append(overlay);
+    setupListScrollbars(fields);
     let busy = false;
     const close = () => { if (!busy) overlay.remove(); };
     dismiss.addEventListener('click', close);
@@ -2384,6 +2395,8 @@
     dialog.append(header,form);
     overlay.append(dialog);
     app.append(overlay);
+    setupListScrollbars(fields);
+    setupListScrollbars(picker);
     let busy=false, closed=false, selected=null, requestVersion=0;
     let finalPhase='picker', cancelSubmitting=false;
     let control={cancelRequested:false,observedOwnTask:false};

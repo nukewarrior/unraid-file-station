@@ -1546,3 +1546,93 @@ test('v0.2.3.11 复制进度与完成界面仍沿用固定底部，常规窗口�
   await page.locator('.ufs-copy-dialog').waitFor({state:'detached'});
   assert.equal(errors.length,0,errors.join('\n'));
 });
+
+test('v0.2.3.12 三种弹窗使用统一标题、底栏与滚动内容，长路径不遮挡按钮',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t,{width:960,height:480});
+  const inspect=()=>page.locator('.ufs-create-dialog').evaluate(dialog=>{
+    const rect=el=>{const r=el.getBoundingClientRect();
+      return {top:r.top,bottom:r.bottom,height:r.height};};
+    const header=dialog.querySelector('.ufs-create-head');
+    const fields=dialog.querySelector('.ufs-create-fields');
+    const footer=dialog.querySelector('.ufs-create-buttons');
+    return {dialog:rect(dialog),header:rect(header),fields:rect(fields),
+      footer:rect(footer),scrollHeight:fields.scrollHeight,
+      clientHeight:fields.clientHeight,scrollTop:fields.scrollTop,
+      outerOverflow:getComputedStyle(dialog).overflowY,
+      bodyOverflow:getComputedStyle(fields).overflowY};
+  });
+  const verify=async(label)=>{
+    const before=await inspect();
+    assert.ok(Math.abs(before.header.height-52)<1,label+JSON.stringify(before));
+    assert.ok(Math.abs(before.footer.height-64)<1,label+JSON.stringify(before));
+    assert.ok(before.header.bottom<=before.fields.top+1,label+JSON.stringify(before));
+    assert.ok(before.fields.bottom<=before.footer.top+1,label+JSON.stringify(before));
+    assert.ok(before.footer.bottom<=before.dialog.bottom+1,label+JSON.stringify(before));
+    assert.equal(before.outerOverflow,'hidden',label);
+    assert.equal(before.bodyOverflow,'auto',label);
+    assert.ok(before.scrollHeight>before.clientHeight,label+' 应让过长路径在正文滚动');
+    await page.locator('.ufs-create-fields').evaluate(el=>{el.scrollTop=el.scrollHeight;});
+    const after=await inspect();
+    assert.ok(after.scrollTop>0,label);
+    assert.ok(Math.abs(after.header.top-before.header.top)<1,label);
+    assert.ok(Math.abs(after.footer.top-before.footer.top)<1,label);
+  };
+  await newFolderDialog(page);
+  await page.locator('.ufs-create-location').evaluate(el=>{
+    el.textContent='/mnt/user/'+('very-long-parent-folder-name-').repeat(32);
+  });
+  await verify('新建文件夹');
+  await page.locator('.ufs-create-cancel').click();
+
+  await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).first().click();
+  await page.keyboard.press('F2');
+  await page.locator('.ufs-rename-dialog').waitFor();
+  await page.locator('.ufs-rename-original').evaluate(el=>{
+    el.textContent='[VeryLongName]'.repeat(64)+'.txt';
+  });
+  await verify('重命名');
+  await page.locator('.ufs-rename-cancel').click();
+
+  await openCopyDialog(page,'notes.txt');
+  await page.locator('.ufs-copy-summary-info strong').evaluate(el=>{
+    el.textContent='Long Filename '.repeat(36);
+  });
+  await verify('复制到');
+  assert.equal(await page.locator('.ufs-copy-dialog .ufs-copy-submit').isVisible(),true);
+  await page.locator('.ufs-copy-cancel').click();
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.3.12 复制目录树与正文滚动条空闲隐藏，操作时仅显示当前区域',async t=>{
+  const folders=Array.from({length:22},(_,i)=>['folder'+i,true]);
+  const {page,errors}=await pageFor(t,{width:960,height:520,
+    extraEntries:{'/mnt/user/downloads':folders}});
+  await openCopyDialog(page,'notes.txt');
+  await page.getByRole('button',{name:'展开 downloads'}).click();
+  await page.getByRole('button',{name:'选择 folder21'}).waitFor();
+  const body=page.locator('.ufs-copy-dialog .ufs-create-fields');
+  const picker=page.locator('.ufs-copy-picker');
+  const scrollColor=async el=>el.evaluate(e=>getComputedStyle(e).scrollbarColor);
+  const transparent=color=>color==='transparent transparent' ||
+    color==='rgba(0, 0, 0, 0) rgba(0, 0, 0, 0)';
+  await page.mouse.move(2,2);
+  assert.ok(transparent(await scrollColor(body)),'外层空闲应透明: '+await scrollColor(body));
+  assert.ok(transparent(await scrollColor(picker)),'目录树空闲应透明: '+await scrollColor(picker));
+  await picker.hover();
+  assert.ok(!transparent(await scrollColor(picker)),'目录树悬停显示滚动条');
+  assert.ok(transparent(await scrollColor(body)),'目录树悬停不应同时显示外层滚动条');
+  await picker.evaluate(el=>{el.scrollTop=el.scrollHeight;});
+  await page.locator('.ufs-copy-picker.ufs-scroll-active').waitFor();
+  assert.ok(!transparent(await scrollColor(picker)),'目录树滚动应显示滚动条');
+  await page.mouse.move(2,2);
+  await page.locator('.ufs-copy-picker.ufs-scroll-active').waitFor({state:'detached'});
+  assert.ok(transparent(await scrollColor(picker)),'滚动结束且未悬停应自动隐藏');
+  await page.locator('.ufs-copy-dialog .ufs-create-fields').evaluate(el=>{el.scrollTop=el.scrollHeight;});
+  await page.locator('.ufs-copy-dialog .ufs-create-fields.ufs-scroll-active').waitFor();
+  assert.ok(!transparent(await scrollColor(body)),'外层正文滚动时显示滚动条');
+  await page.mouse.move(2,2);
+  await page.locator('.ufs-copy-dialog .ufs-create-fields.ufs-scroll-active').waitFor({state:'detached'});
+  assert.ok(transparent(await scrollColor(body)),'外层正文空闲再次隐藏');
+  assert.equal(errors.length,0,errors.join('\n'));
+});
