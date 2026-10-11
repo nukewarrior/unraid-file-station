@@ -188,7 +188,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.3\.3\b/);
+  assert.match(script, /@version\s+0\.2\.3\.4\b/);
 });
 
 
@@ -492,7 +492,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.3\.3\b/);
+  assert.match(script, /@version\s+0\.2\.3\.4\b/);
 });
 
 
@@ -1345,4 +1345,29 @@ test('v0.2.3.3 后台任务、手动完成与取消确认的保护逻辑存在',
   assert.match(script,/Unraid 使用全局停止接口/);
   assert.match(script,/requestCancelNativeCopy\(activeCopySession\.plan,control\)/);
   assert.doesNotMatch(script,/await waitNative\(850\)/);
+});
+
+
+test('v0.2.3.4 真实 rsync -h 输出 557.06K、1.08M、2.50G 可被解析并随进度更新',()=>{
+  const {api}=createAPI();
+  const samples=[
+    ['         32.77K   1%    0.00kB/s    0:00:00  ',1,'32.77K','0.00kB/s','0:00:00'],
+    ['        557.06K  17%  500.49kB/s    0:00:05  ',17,'557.06K','500.49kB/s','0:00:05'],
+    ['          1.08M  34%  500.24kB/s    0:00:04  ',34,'1.08M','500.24kB/s','0:00:04'],
+    ['          2.50G  72%  122.18MB/s    0:00:07  ',72,'2.50G','122.18MB/s','0:00:07'],
+    ['          4.19M 100%    1.94GB/s    0:00:00 (xfr#1, to-chk=0/1)',100,'4.19M','1.94GB/s','0:00:00']
+  ];
+  for(const [line,percent,transferred,speed,eta] of samples){
+    const parsed=api.parseRsyncProgress('Copying... /mnt/user/downloads/test.zip\n'+line);
+    assert.equal(parsed.percent,percent,line);
+    assert.equal(parsed.transferred,transferred,line);
+    assert.equal(parsed.speed,speed,line);
+    assert.equal(parsed.eta,eta,line);
+    assert.equal(parsed.bytes,null,'-h 输出四舍五入的数量，不能宣称精确字节数');
+  }
+  const exact=api.parseRsyncProgress(' 10,485,760  42%  5.10MB/s  0:00:06');
+  assert.equal(exact.bytes,10485760);
+  assert.equal(exact.transferred,'10,485,760');
+  assert.equal(api.parseRsyncProgress('Copying... test.zip').percent,null);
+  assert.equal(api.parseRsyncProgress('Not a progress 250% 40MB/s 0:01:00').percent,null);
 });
