@@ -188,7 +188,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.3\.2\b/);
+  assert.match(script, /@version\s+0\.2\.3\.3\b/);
 });
 
 
@@ -492,7 +492,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.3\.2\b/);
+  assert.match(script, /@version\s+0\.2\.3\.3\b/);
 });
 
 
@@ -1295,4 +1295,54 @@ test('v0.2.3.2 复制阶段由原生任务流程发出，不虚构完成比例',
   assert.deepEqual(observed.map(x=>x.phase),['checking','copying','verifying']);
   assert.match(observed[0].text,/检查/);
   assert.match(observed[2].text,/核对/);
+});
+
+
+test('v0.2.3.3 rsync 八进制转义按 UTF-8 还原且不更改异常字节',()=>{
+  const {api}=createAPI();
+  assert.equal(api.decodeRsyncFilename('中文\\#344\\#270\\#255.txt'),'中文中.txt');
+  assert.equal(api.decodeRsyncFilename('\\#344\\#270\\#255\\#346\\#226\\#207.jpg'),'中文.jpg');
+  assert.equal(api.decodeRsyncFilename('\\#377\\#377.dat'),'\\#377\\#377.dat');
+  assert.equal(api.shortenCopyName('testing.bin',90),'testing.bin');
+});
+
+test('v0.2.3.3 解析 rsync progress2 原始行的真实百分比速度 ETA 和文件名',()=>{
+  const {api}=createAPI();
+  const progress=api.parseRsyncProgress(
+    '<i class="fa fa-spin"></i>Copying... mnt/user/downloads/\\#344\\#270\\#255\\#346\\#226\\#207.jpg'+
+    '\n 10,485,760  42%  5.10MB/s  0:00:06 (xfr#1, to-chk=3/5)');
+  assert.equal(progress.percent,42);
+  assert.equal(progress.bytes,10485760);
+  assert.equal(progress.speed,'5.10MB/s');
+  assert.equal(progress.eta,'0:00:06');
+  assert.equal(progress.filename,'mnt/user/downloads/中文.jpg');
+  assert.equal(api.parseRsyncProgress('Copying... file.txt').percent,null);
+  assert.equal(api.parseRsyncProgress('Done').percent,null);
+});
+
+test('v0.2.3.3 取消任务需持有当前写入锁，拒绝未归属的全局停止',async()=>{
+  let reads=0;
+  const actions=[];
+  const {api}=createAPI({fetch:async(_url,opts)=>{
+    const data=new URLSearchParams(opts.body);
+    if(data.get('mode')==='read') ++reads;
+    if(data.get('mode')==='file')actions.push(data.get('action'));
+    return {ok:true,text:async()=>''};
+  }});
+  const plan=api.planFileOperation({type:'copy',source:'/mnt/user/a/x.bin',
+    destinationDir:'/mnt/user/b',folder:false});
+  await assert.rejects(api.requestCancelNativeCopy(plan,{observedOwnTask:true}),/无法确认/);
+  assert.equal(reads,0);
+  assert.deepEqual(actions,[]);
+});
+
+test('v0.2.3.3 后台任务、手动完成与取消确认的保护逻辑存在',()=>{
+  assert.match(script,/ufs-copy-task-trigger/);
+  assert.match(script,/activeCopySession=\{dialog,plan,phase:'copying',reopen\}/);
+  assert.match(script,/await copyNativeEntry\(plan,updateCopyProgress,control\)/);
+  assert.match(script,/button\.hidden=!activeCopySession/);
+  assert.match(script,/background\.addEventListener\('click',minimize\)/);
+  assert.match(script,/Unraid 使用全局停止接口/);
+  assert.match(script,/requestCancelNativeCopy\(activeCopySession\.plan,control\)/);
+  assert.doesNotMatch(script,/await waitNative\(850\)/);
 });
