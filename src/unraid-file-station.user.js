@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.3.2
+// @version      0.2.3.3
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -536,6 +536,59 @@
   }
 
 
+
+  // rsync --out-format=%f quotes non-ASCII UTF-8 bytes as octal \#NNN.
+  // Decode *consecutive* escaped bytes as one UTF-8 sequence. Preserve
+  // malformed escape groups literally rather than replacing filenames.
+  function decodeRsyncFilename(text) {
+    return String(text ?? '').replace(/(?:\\#[0-7]{3})+/g, escaped => {
+      try {
+        return decodeURIComponent(escaped.replace(/\\#([0-7]{3})/g,
+          (_,digits)=>'%' + Number.parseInt(digits,8).toString(16).padStart(2,'0')));
+      } catch (_) { return escaped; }
+    });
+  }
+  function stripNativeStatusHtml(status) {
+    const text=String(status??'');
+    // Strip markup before decoding into text nodes; never inject native output as HTML.
+    const clean=text.replace(/<[^>]*>/g,'').replace(/&nbsp;/g,' ')
+      .replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>');
+    return decodeRsyncFilename(clean);
+  }
+  function parseRsyncProgress(status) {
+    const text=stripNativeStatusHtml(status).replace(/\r/g,'\n');
+    const lines=text.split('\n').map(line=>line.trim()).filter(Boolean);
+    // In Unraid, progress2 output normally follows the current filename.
+    // Accept decimal percentages, speed and ETA only from a real rsync line.
+    const matched=[...text.matchAll(/(?:^|\s)([\d,.]+)\s+(\d{1,3}(?:\.\d+)?)%\s+([\d,.]+\s*[kMGTPE]?B\/s)\s+(\d{1,3}:\d\d(?::\d\d)?)/g)].pop();
+    let percent=null,bytes=null,speed='',eta='';
+    if(matched) {
+      const value=Number(matched[2]);
+      if(Number.isFinite(value) && value>=0 && value<=100) {
+        percent=value;
+        bytes=Number(matched[1].replace(/,/g,''));
+        speed=matched[3].replace(/\s+/g,'');
+        eta=matched[4];
+      }
+    }
+    let filename='';
+    for(const line of lines) {
+      if(/\b(?:Copying|复制中|正在复制)\s*\.{2,3}\s*/i.test(line)) {
+        filename=line.replace(/^.*?\b(?:Copying|复制中|正在复制)\s*\.{2,3}\s*/i,'').trim();
+        break;
+      }
+    }
+    if(!filename && lines.length && !/\d{1,3}(?:\.\d+)?%/.test(lines[0])) {
+      filename=lines[0];
+    }
+    return {percent,bytes,speed,eta,filename,text};
+  }
+  function shortenCopyName(value,max=96) {
+    const name=String(value??'');
+    return name.length>max ? name.slice(0,Math.ceil((max-1)/2))+'…'+
+      name.slice(-(Math.floor((max-1)/2))) : name;
+  }
+
   // Copy source intentionally has no trailing slash: rsync copies the source
   // entry (including a folder's name), not only the folder's contents.
   // Copy target is the existing destination directory WITH a trailing slash.
@@ -550,7 +603,7 @@
     return !plan.folder || (destinationDir !== plan.source &&
       !destinationDir.startsWith(plan.source + '/'));
   }
-  async function copyNativeEntry(plan, progress = () => {}) {
+  async function copyNativeEntry(plan, progress = () => {}, control = {}) {
     return withNativeWriteLock(async () => {
       if (!COPY_ENABLED || !plan || plan.type !== 'copy' ||
           plan.conflictPolicy !== 'fail' || plan.previewOnly !== true ||
@@ -583,9 +636,9 @@
       let observedOwnTask = false;
       const unwatch = observeNativeProgress(data => {
         if (typeof data.status === 'string' && data.status) {
-          progress(data.status.replace(/<[^>]*>/g, '').slice(0, 160));
+          progress(stripNativeStatusHtml(data.status), null, parseRsyncProgress(data.status));
         }
-        if (data.error) eventError = String(data.error).replace(/<[^>]*>/g, '').slice(0, 200);
+        if (data.error) eventError = stripNativeStatusHtml(data.error).slice(0, 200);
         if (data.done === 1) eventDone = true;
       });
       try {
@@ -604,13 +657,21 @@
         let consecutiveIdle = 0;
         while (Date.now() < deadline) {
           await waitNative(700);
-          if (eventError) throw new Error('Unraid 报告复制错误：' + eventError);
+          if (eventError && !control.cancelRequested) throw new Error('Unraid 报告复制错误：' + eventError);
           const active = await readNativeActive();
+          if (control.cancelRequested) {
+            if (active && matchesCopyTask(active, plan)) { consecutiveIdle=0; continue; }
+            if (active && Number(active.action)===99) { consecutiveIdle=0; continue; }
+            if (active) throw new Error('取消后出现其他原生任务，无法确认停止结果');
+            if (++consecutiveIdle>=2) throw new Error('复制已请求停止；目标可能留有不完整文件');
+            continue;
+          }
           if (active) {
             if (!matchesCopyTask(active, plan)) {
               throw new Error('原生任务被其他操作占用，无法确认复制结果');
             }
             observedOwnTask = true;
+            control.observedOwnTask=true;
             consecutiveIdle = 0;
           } else {
             ++consecutiveIdle;
@@ -625,6 +686,7 @@
         if (consecutiveIdle < 2 || !(observedOwnTask || eventDone)) {
           throw new Error('复制任务尚未结束或无法确认结束');
         }
+        if (control.cancelRequested) throw new Error('复制已请求停止；目标可能留有不完整文件');
         if (eventError) throw new Error('Unraid 报告复制错误：' + eventError);
         progress('正在核对复制结果…', 'verifying');
         const verified = await listDirectory(plan.destinationDir);
@@ -643,6 +705,10 @@
         // job's completion is required; we do not claim checksum verification.
         return result;
       } catch (error) {
+        if (control.cancelRequested && submitted) {
+          throw new Error('复制已请求取消；目标目录可能留有不完整文件，请手动检查。详情：'+
+            String(error?.message||error));
+        }
         if (submitted) throw new Error(
           '复制请求可能已被 Unraid 接收；结果不确定，请检查目标目录及原生任务状态，切勿直接重试。详情：' +
           String(error?.message || error)
@@ -652,6 +718,30 @@
         unwatch();
       }
     });
+  }
+
+
+  async function requestCancelNativeCopy(plan, control={}) {
+    if (!nativeWriteBusy || !plan || !control || control.cancelRequested ||
+        !control.observedOwnTask) {
+      throw new Error('无法确认当前复制任务归属，拒绝发送全局停止指令');
+    }
+    // Not atomic! Control.php mode=file action=99 replaces the global task.
+    // Check twice and only send while a confirmed matching task is active.
+    const first=await readNativeActive();
+    if (!matchesCopyTask(first,plan)) throw new Error('原生任务已改变，拒绝取消');
+    await waitNative(300);
+    const second=await readNativeActive();
+    if (!matchesCopyTask(second,plan)) throw new Error('原生任务已改变，拒绝取消');
+    control.cancelRequested=true;
+    try {
+      const reply=await postNativeControl({mode:'file',action:'99'});
+      if(reply.trim()) throw new Error('原生取消请求返回非预期内容');
+    } catch(error) {
+      // Do not reset cancelRequested: status can now be uncertain and a retry
+      // could kill a different user's newly started task.
+      throw new Error('停止指令提交结果不确定，请检查 NAS 原生文件任务：'+String(error?.message||error));
+    }
   }
 
   // Small local SVG set: no external fonts, CDNs or global icon CSS.
@@ -2882,7 +2972,7 @@
   }
   // Explicit opt-in hook for pure-function tests; never enabled on production WebGUI.
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
-    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, COPY_ENABLED, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, nativeCopyTarget, matchesCopyTask, copyDestinationAllowed, copyNativeEntry, takeOverNativeFileMonitor, availableHeight, visibleEntries, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
+    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, COPY_ENABLED, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, nativeCopyTarget, matchesCopyTask, copyDestinationAllowed, copyNativeEntry, decodeRsyncFilename, parseRsyncProgress, shortenCopyName, requestCancelNativeCopy, takeOverNativeFileMonitor, availableHeight, visibleEntries, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();
