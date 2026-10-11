@@ -1249,7 +1249,7 @@ test('v0.2.3.1 复制目录选择器按钮独立覆盖 Unraid 的最小宽度与
   assert.match(script,/#ufs-app \.ufs-copy-tree-row\{[^}]*height:32px/);
   assert.match(script,/#ufs-app \.ufs-copy-expand\{[^}]*width:24px;min-width:24px;max-width:24px/);
   assert.match(script,/#ufs-app \.ufs-copy-expand\{[^}]*margin:0;padding:0/);
-  assert.match(script,/#ufs-app \.ufs-copy-choose\{[^}]*min-width:0;height:30px/);
+  assert.match(script,/#ufs-app \.ufs-copy-choose\{[^}]*min-width:0;max-width:calc\(100% - 55px\);height:30px/);
   assert.match(script,/#ufs-app \.ufs-copy-choose\{[^}]*margin:0;padding:4px 7px/);
   assert.match(script,/expand\.addEventListener\('click',/);
   assert.match(script,/choose\.addEventListener\('click',/);
