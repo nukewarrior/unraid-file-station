@@ -902,6 +902,15 @@
     "@keyframes ufs-copy-spin{to{transform:rotate(360deg)}}",
     "@keyframes ufs-copy-flow{from{transform:translateX(-110%)}to{transform:translateX(305%)}}",
     "@media(prefers-reduced-motion:reduce){#ufs-app .ufs-copy-progress-spinner,#ufs-app .ufs-copy-progress-fill{animation:none}}",
+    "#ufs-app .ufs-copy-task-trigger{margin:0 3px;min-width:0;padding:4px 9px;border:1px solid var(--ufs-border);font-size:12px;color:var(--ufs-accent);background:var(--ufs-panel)}",
+    "#ufs-app .ufs-copy-task-trigger[hidden],#ufs-app .ufs-copy-background[hidden],#ufs-app .ufs-copy-cancel[hidden]{display:none!important}",
+    "#ufs-app .ufs-copy-background{display:inline-flex;align-items:center;justify-content:center;height:34px;min-height:34px;min-width:85px;margin:0;padding:6px 10px;border:1px solid var(--ufs-border);border-radius:5px;background:var(--ufs-bg);color:var(--ufs-text);font-size:12px}",
+    "#ufs-app .ufs-copy-current-file{min-height:18px;margin-top:10px;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ufs-text)}",
+    "#ufs-app .ufs-copy-progress-metrics{min-height:18px;margin-top:4px;font-size:12px;color:var(--ufs-muted);font-variant-numeric:tabular-nums}",
+    "#ufs-app .ufs-copy-progress-panel[data-phase=success] .ufs-copy-progress-note{color:#34895e}",
+    "#ufs-app .ufs-copy-progress-panel[data-phase=success] .ufs-copy-progress-track{background:#d8f2e2}",
+    "#ufs-app .ufs-copy-progress-panel[data-phase=cancelled] .ufs-copy-progress-fill{animation:none}",
+    "@media(max-width:560px){#ufs-app .ufs-copy-background{min-width:70px;padding:6px 7px}#ufs-app .ufs-copy-progress-stages{font-size:10px}}",
     // Only the enhanced Browse view is locked; the native view and every other Unraid page scroll normally.
     'html.ufs-active-page,html.ufs-active-page body{overflow-y:hidden!important;overscroll-behavior-y:none}',
     // Unraid adds two fixed global page-scroll arrows; neither applies to our internally scrolling browser.
@@ -2329,7 +2338,8 @@
     cancel.addEventListener('click',()=>{
       if(!busy || finalPhase==='success' || finalPhase==='uncertain' ||
           finalPhase==='cancelled') {close();return;}
-      if(finalPhase!=='copying' || cancelSubmitting) return;
+      if(finalPhase==='cancelling') {minimize();return;}
+      if(finalPhase!=='copying' || cancelSubmitting || control.cancelRequested) return;
       if(!control.observedOwnTask) {
         progressNote.textContent='原生任务归属尚未确认，暂时无法安全停止。可选择后台运行。';
         return;
@@ -2340,6 +2350,7 @@
       );
       if(!yes) return;
       cancelSubmitting=true;
+      finalPhase='cancelling';
       cancel.disabled=true;
       cancel.textContent='正在停止…';
       void requestCancelNativeCopy(activeCopySession.plan,control).then(()=>{
@@ -2352,7 +2363,8 @@
         }
       }).finally(()=>{
         cancelSubmitting=false;
-        if(!closed) {cancel.disabled=false;cancel.textContent='关闭';}
+        // Do not offer a second kill request while the first is in flight.
+        if(!closed) {cancel.disabled=false;cancel.textContent='后台运行';}
       });
     });
     overlay.addEventListener('click',event=>{if(event.target===overlay) close();});
