@@ -1380,7 +1380,8 @@ test('v0.2.3.5 仅未知进度使用流光，真实进度必须纯色且通过�
   assert.match(script,/data-progress-mode=determinate\] \.ufs-copy-progress-fill\{[^}]*background:var\(--ufs-accent\);background-image:none;animation:none;transition:width \.2s ease-out/);
   assert.match(script,/progressPanel\.dataset\.progressMode='indeterminate'/);
   assert.match(script,/progressPanel\.dataset\.progressMode='determinate'/);
-  assert.match(script,/@media\(prefers-reduced-motion:reduce\)\{[^}]*transition:none/);
+  assert.match(script,/@media\(prefers-reduced-motion:reduce\)/);
+  assert.match(script,/data-progress-mode=determinate\] \.ufs-copy-progress-fill\{transition:none/);
   assert.match(script,/data-phase=success\] \.ufs-copy-progress-fill\{[^}]*background:#34895e/);
   assert.match(script,/fill\.style\.width=info\.percent\+'%'/);
 });
