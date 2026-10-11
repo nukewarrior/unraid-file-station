@@ -906,7 +906,7 @@
     "#ufs-app .ufs-copy-progress-panel[data-phase=uncertain] .ufs-copy-progress-state,#ufs-app .ufs-copy-progress-panel[data-phase=uncertain] .ufs-copy-progress-indicator,#ufs-app .ufs-copy-progress-panel[data-phase=uncertain] .ufs-copy-progress-note{color:#c13d37}",
     "@keyframes ufs-copy-spin{to{transform:rotate(360deg)}}",
     "@keyframes ufs-copy-flow{from{transform:translateX(-110%)}to{transform:translateX(305%)}}",
-    "@media(prefers-reduced-motion:reduce){#ufs-app .ufs-copy-progress-spinner,#ufs-app .ufs-copy-progress-fill{animation:none}#ufs-app .ufs-copy-progress-panel[data-progress-mode=determinate] .ufs-copy-progress-fill{transition:none}}",
+    "@media(prefers-reduced-motion:reduce){#ufs-app .ufs-copy-progress-spinner,#ufs-app .ufs-copy-progress-panel[data-progress-mode=indeterminate] .ufs-copy-progress-fill,#ufs-app .ufs-copy-progress-panel[data-progress-mode=determinate] .ufs-copy-progress-fill{animation:none}#ufs-app .ufs-copy-progress-panel[data-progress-mode=determinate] .ufs-copy-progress-fill{transition:none}}",
     "#ufs-app .ufs-copy-task-trigger{margin:0 3px;min-width:0;padding:4px 9px;border:1px solid var(--ufs-border);font-size:12px;color:var(--ufs-accent);background:var(--ufs-panel)}",
     "#ufs-app .ufs-copy-task-trigger[hidden],#ufs-app .ufs-copy-background[hidden],#ufs-app .ufs-copy-cancel[hidden]{display:none!important}",
     "#ufs-app .ufs-copy-background{display:inline-flex;align-items:center;justify-content:center;height:34px;min-height:34px;min-width:85px;margin:0;padding:6px 10px;border:1px solid var(--ufs-border);border-radius:5px;background:var(--ufs-bg);color:var(--ufs-text);font-size:12px}",
