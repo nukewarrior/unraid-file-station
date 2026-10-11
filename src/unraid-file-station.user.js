@@ -761,6 +761,23 @@
     "#ufs-app .ufs-create-buttons .ufs-create-submit:hover:not(:disabled){filter:brightness(.96)}",
     "@media(max-width:560px){#ufs-app .ufs-dialog-overlay{padding:10px}#ufs-app .ufs-create-head{padding:12px 15px}#ufs-app .ufs-create-fields{padding:15px}#ufs-app .ufs-create-buttons{padding:12px 15px 14px}}",
     '#ufs-app .ufs-rename-original{display:block;min-height:20px;padding:1px 0;color:var(--ufs-text);font-size:13px;line-height:1.5;overflow-wrap:anywhere}',
+    "#ufs-app .ufs-copy-dialog{width:min(465px,100%)}",
+    "#ufs-app .ufs-copy-summary{display:flex;align-items:center;gap:10px;padding:10px;background:var(--ufs-panel);border:1px solid var(--ufs-border);border-radius:5px;min-width:0}",
+    "#ufs-app .ufs-copy-summary-info{display:flex;flex:1;flex-direction:column;gap:3px;min-width:0;font-size:13px;overflow-wrap:anywhere}",
+    "#ufs-app .ufs-copy-summary-info span{color:var(--ufs-muted);font-size:12px}",
+    "#ufs-app .ufs-copy-picker{height:225px;overflow:auto;border:1px solid var(--ufs-border);border-radius:5px;padding:6px 0;background:var(--ufs-bg)}",
+    "#ufs-app .ufs-copy-tree-group{padding:5px 11px 7px;color:var(--ufs-muted);font-size:12px;font-weight:600}",
+    "#ufs-app .ufs-copy-tree-row{display:flex;align-items:center;min-height:31px;gap:0;padding-right:7px}",
+    "#ufs-app .ufs-copy-expand{display:flex;align-items:center;justify-content:center;flex:0 0 24px;width:24px;height:27px;border:0;background:transparent;color:var(--ufs-muted);padding:4px}",
+    "#ufs-app .ufs-copy-choose{display:flex;align-items:center;gap:7px;flex:1;min-width:0;min-height:29px;padding:5px 7px;border:0;background:transparent;color:var(--ufs-text);text-align:left;border-radius:4px;font-size:13px}",
+    "#ufs-app .ufs-copy-choose span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+    "#ufs-app .ufs-copy-tree-row.ufs-copy-selected .ufs-copy-choose{background:rgba(235,120,37,.11);color:var(--ufs-text);font-weight:600}",
+    "#ufs-app .ufs-copy-choose:hover:not(:disabled){background:var(--ufs-hover)}",
+    "#ufs-app .ufs-copy-choose:disabled{opacity:.38;cursor:not-allowed}",
+    "#ufs-app .ufs-copy-tree-status{padding-top:6px;padding-bottom:7px;font-size:12px;color:var(--ufs-muted)}",
+    "#ufs-app .ufs-copy-destination{margin-top:9px;color:var(--ufs-muted);font-size:12px;overflow-wrap:anywhere}",
+    "#ufs-app .ufs-copy-dialog .ufs-create-feedback{margin-top:8px}",
+    "@media(max-height:650px){#ufs-app .ufs-copy-picker{height:min(200px,30vh)}}",
     // Only the enhanced Browse view is locked; the native view and every other Unraid page scroll normally.
     'html.ufs-active-page,html.ufs-active-page body{overflow-y:hidden!important;overscroll-behavior-y:none}',
     // Unraid adds two fixed global page-scroll arrows; neither applies to our internally scrolling browser.
@@ -1700,6 +1717,7 @@
     if (chosen.length) {
       if (chosen.length === 1 && safeWritePath(chosen[0].path) && !nativeWriteBusy) {
         actions.push(['重命名', () => showRenameDialog(chosen[0])]);
+        actions.push(['复制到…', () => showCopyDialog(chosen[0])]);
       }
       actions.push(['复制路径（' + chosen.length + ' 项）', copySelectedPaths]);
       if (chosen.length === 1 && !chosen[0].folder)
@@ -1990,6 +2008,207 @@
     input.setSelectionRange(0, renameSelectionEnd(entry.name, entry.folder));
   }
 
+
+  function showCopyDialog(entry) {
+    if (!COPY_ENABLED || destroyed || !entry || !activeTab() || state.busy ||
+        nativeWriteBusy || $('.ufs-dialog-overlay', app) ||
+        !safeWritePath(entry.path) || currentPath() !== parentPath(entry.path)) return;
+    const source = entry.path;
+    const overlay = element('div','ufs-dialog-overlay');
+    const dialog = element('div','ufs-create-dialog ufs-copy-dialog');
+    dialog.setAttribute('role','dialog');
+    dialog.setAttribute('aria-modal','true');
+    dialog.setAttribute('aria-label','复制到');
+    const header = element('div','ufs-create-head');
+    header.append(element('h3','','复制到'));
+    const dismiss = element('button','ufs-create-dismiss');
+    dismiss.type='button';
+    dismiss.setAttribute('aria-label','关闭复制窗口');
+    dismiss.append(icon('close'));
+    header.append(dismiss);
+    const form=element('form','ufs-create-form ufs-copy-form');
+    const fields=element('div','ufs-create-fields');
+    const summary=element('div','ufs-create-field');
+    summary.append(element('label','ufs-create-label','已选择'));
+    const summaryContent=element('div','ufs-copy-summary');
+    summaryContent.append(icon(entry.folder?'folder':'file','ufs-folder-icon'));
+    const details=element('div','ufs-copy-summary-info');
+    details.append(element('strong','',entry.name));
+    details.append(element('span','', (entry.folder?'文件夹':'文件')+' · '+parentPath(source)));
+    summaryContent.append(details);
+    summary.append(summaryContent);
+    const location=element('div','ufs-create-field');
+    location.append(element('label','ufs-create-label','目标位置'));
+    const picker=element('div','ufs-copy-picker');
+    picker.setAttribute('role','tree');
+    picker.setAttribute('aria-label','选择复制目标文件夹');
+    const destinationText=element('div','ufs-copy-destination','请选择目标文件夹');
+    location.append(picker,destinationText);
+    const feedback=element('div','ufs-create-feedback ufs-copy-feedback',
+      '已存在同名项目时拒绝复制；不允许将文件夹复制到自身内部');
+    feedback.setAttribute('role','status');
+    location.append(feedback);
+    fields.append(summary,location);
+    const footer=element('div','ufs-create-buttons');
+    const cancel=element('button','ufs-create-cancel ufs-copy-cancel','取消');
+    cancel.type='button';
+    const submit=element('button','ufs-create-submit ufs-copy-submit','开始复制');
+    submit.type='submit';
+    submit.disabled=true;
+    footer.append(cancel,submit);
+    form.append(fields,footer);
+    dialog.append(header,form);
+    overlay.append(dialog);
+    app.append(overlay);
+    let busy=false, closed=false, selected=null, requestVersion=0;
+    const nodes=new Map();
+    const opened=new Set([PREFIX]);
+    const pending=new Map();
+    const close=()=>{
+      if(busy) return;
+      closed=true; ++requestVersion;
+      overlay.remove();
+    };
+    dismiss.addEventListener('click',close);
+    cancel.addEventListener('click',close);
+    overlay.addEventListener('click',event=>{if(event.target===overlay) close();});
+    dialog.addEventListener('keydown',event=>{
+      if(event.key==='Escape' && !busy) {event.stopPropagation();close();}
+    });
+    const setFeedback=(message,isError=false)=>{
+      if(closed || !dialog.isConnected) return;
+      feedback.textContent=message;
+      feedback.classList.toggle('ufs-error',isError);
+    };
+    function renderPicker() {
+      if(closed || !dialog.isConnected) return;
+      picker.replaceChildren();
+      const root=element('div','ufs-copy-tree-group','共享文件夹');
+      picker.append(root);
+      function renderChildren(parent,depth) {
+        const children=nodes.get(parent);
+        if(!children) {
+          const status=element('div','ufs-copy-tree-status',
+            pending.has(parent)?'正在读取文件夹…':'尚未读取');
+          status.style.paddingLeft=(12+depth*15)+'px';
+          picker.append(status);
+          return;
+        }
+        if(children.length===0) {
+          const empty=element('div','ufs-copy-tree-status','没有子文件夹');
+          empty.style.paddingLeft=(12+depth*15)+'px';
+          picker.append(empty);
+        }
+        for(const item of children) {
+          const path=item.path;
+          const permitted=copyDestinationAllowed({source,folder:entry.folder},path);
+          const row=element('div','ufs-copy-tree-row');
+          row.style.paddingLeft=(5+depth*15)+'px';
+          row.setAttribute('role','treeitem');
+          row.setAttribute('aria-selected',String(selected===path));
+          row.classList.toggle('ufs-copy-selected',selected===path);
+          const expand=element('button','ufs-copy-expand');
+          expand.type='button';
+          expand.setAttribute('aria-label',(opened.has(path)?'折叠 ':'展开 ')+item.name);
+          expand.append(icon(opened.has(path)?'chevron-down':'chevron-right'));
+          expand.addEventListener('click',()=>{
+            if(busy) return;
+            if(opened.has(path)) {opened.delete(path);renderPicker();}
+            else {opened.add(path);renderPicker();void loadChildren(path);}
+          });
+          const choose=element('button','ufs-copy-choose');
+          choose.type='button';
+          choose.disabled=!permitted || busy;
+          choose.setAttribute('aria-label','选择 '+item.name);
+          choose.append(icon(opened.has(path)?'folder-open':'folder','ufs-folder-icon'),
+            element('span','',item.name));
+          choose.addEventListener('click',()=>{
+            if(busy || !permitted) return;
+            selected=path;
+            destinationText.textContent='目标：'+path;
+            submit.disabled=false;
+            renderPicker();
+          });
+          row.append(expand,choose);
+          picker.append(row);
+          if(opened.has(path)) renderChildren(path,depth+1);
+        }
+      }
+      renderChildren(PREFIX,0);
+    }
+    async function loadChildren(path) {
+      if(nodes.has(path) || pending.has(path) || closed) return pending.get(path);
+      const request=requestVersion;
+      const task=(async()=>{
+        try {
+          const entries=await listDirectory(path);
+          if(closed || request!==requestVersion) return;
+          nodes.set(path, entries.filter(item=>item.folder && safeWritePath(item.path,true)));
+          setFeedback('已存在同名项目时拒绝复制；不允许将文件夹复制到自身内部');
+        } catch(error) {
+          if(closed || request!==requestVersion) return;
+          opened.delete(path);
+          setFeedback('无法读取目标文件夹：'+String(error?.message||error),true);
+        } finally {
+          pending.delete(path);
+          renderPicker();
+        }
+      })();
+      pending.set(path,task);
+      renderPicker();
+      return task;
+    }
+    form.addEventListener('submit',async event=>{
+      event.preventDefault();
+      if(busy || submit.disabled || !selected || nativeWriteBusy) return;
+      let plan;
+      try {
+        plan=planFileOperation({type:'copy',source,destinationDir:selected,folder:entry.folder});
+        if(!copyDestinationAllowed(plan,selected)) throw new Error('不能选择源位置或文件夹自身内部');
+      } catch(error) {
+        setFeedback(String(error?.message||error),true);
+        return;
+      }
+      busy=true;
+      submit.disabled=true;
+      cancel.disabled=true;
+      dismiss.disabled=true;
+      submit.textContent='复制中…';
+      renderPicker();
+      setFeedback('正在检查源文件和目标目录…');
+      try {
+        await copyNativeEntry(plan,message=>setFeedback(message));
+        if(closed || destroyed) return;
+        overlay.remove();
+        closed=true;
+        state.tree.delete(plan.destinationDir);
+        if(currentPath()===plan.destinationDir) await refreshDirectory();
+        else if(state.expanded.has(plan.destinationDir)) void loadTree(plan.destinationDir,true);
+        notify('复制完成：'+fileName(plan.target));
+      } catch(error) {
+        if(closed || destroyed) return;
+        const message=String(error?.message||error);
+        setFeedback(message,true);
+        if(message.includes('结果不确定')) {
+          submit.textContent='请核实复制状态';
+          submit.disabled=true;
+        }
+      } finally {
+        busy=false;
+        if(dialog.isConnected) {
+          cancel.disabled=false;
+          dismiss.disabled=false;
+          if(submit.textContent!=='请核实复制状态') {
+            submit.textContent='开始复制';
+            submit.disabled=!selected;
+          }
+          renderPicker();
+        }
+      }
+    });
+    void loadChildren(PREFIX);
+  }
+
   function showOperationsMenu() {
     const trigger = $('.ufs-operations', app);
     if (currentMenu && trigger.getAttribute('aria-expanded') === 'true') {
@@ -2052,7 +2271,7 @@
       ['重置文件列表列宽', resetColumnWidths],
       ['返回原生文件管理器（其他写入操作）', nativeMode],
       [state.theme === 'unraid' ? '切换至 DSM 经典主题' : '切换至 Unraid 融合主题', toggleTheme],
-      ['关于 File Station v0.2.2.1', () => notify('File Station v0.2.2.1 · Unraid 7.2.2 · 已修复文件操作整页刷新')]
+      ['关于 File Station v0.2.3', () => notify('File Station v0.2.3 · Unraid 7.2.2 · 已开放单项复制')]
     ];
     actions.forEach(([label, fn]) => {
       const button = element('button', '', label);
@@ -2130,7 +2349,7 @@
       renderHeaderMarkup(),
       renderWorkspaceMarkup(),
       '<div class="ufs-status"><span class="ufs-count">准备就绪</span>',
-      '<span>支持新建文件夹、重命名 · 其他写入请使用原生文件管理器</span></div>'
+      '<span>支持新建文件夹、重命名、复制 · 其他写入请使用原生文件管理器</span></div>'
     ].join('');
     $$('[data-ufs-icon]', app).forEach((placeholder) => {
       placeholder.replaceWith(icon(placeholder.dataset.ufsIcon,
