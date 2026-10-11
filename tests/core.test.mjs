@@ -1222,3 +1222,24 @@ test('v0.2.3 复制与重命名复用写入锁，第二个操作不触发 Contro
   unlock();
   await assert.rejects(active,/结果不确定/);
 });
+
+
+test('v0.2.3 文件复制完成但大小与源文件不一致时不能报告成功',async()=>{
+  let reads=0;
+  const {api,sandbox}=createAPI({fetch:async(_url,opts)=>{
+    const b=new URLSearchParams(opts.body);
+    if(b.get('mode')==='read' && ++reads===2) return {
+      ok:true,text:async()=>JSON.stringify({
+        action:8,source:'/mnt/user/a/data.bin',target:'/mnt/user/b/'})
+    };
+    if(b.get('mode')==='file'){
+      sandbox.window.__UFS_DEMO__['/mnt/user/b']=[{name:'data.bin',folder:false,size:99}];
+    }
+    return {ok:true,text:async()=>''};
+  }});
+  sandbox.window.__UFS_DEMO__['/mnt/user/a']=[{name:'data.bin',folder:false,size:1024}];
+  sandbox.window.__UFS_DEMO__['/mnt/user/b']=[];
+  const plan=api.planFileOperation({type:'copy',source:'/mnt/user/a/data.bin',
+    destinationDir:'/mnt/user/b',folder:false});
+  await assert.rejects(api.copyNativeEntry(plan),/结果不确定.*大小与源文件不一致/);
+});
