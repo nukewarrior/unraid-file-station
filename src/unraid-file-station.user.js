@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.3.3
+// @version      0.2.3.4
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -560,13 +560,16 @@
     const lines=text.split('\n').map(line=>line.trim()).filter(Boolean);
     // In Unraid, progress2 output normally follows the current filename.
     // Accept decimal percentages, speed and ETA only from a real rsync line.
-    const matched=[...text.matchAll(/(?:^|\s)([\d,.]+)\s+(\d{1,3}(?:\.\d+)?)%\s+([\d,.]+\s*[kMGTPE]?B\/s)\s+(\d{1,3}:\d\d(?::\d\d)?)/g)].pop();
-    let percent=null,bytes=null,speed='',eta='';
+    const matched=[...text.matchAll(/(?:^|\s)([\d,.]+[kKMGTPE]?(?:i?B)?)\s+(\d{1,3}(?:\.\d+)?)%\s+([\d,.]+\s*[kKMGTPE]?(?:i?B)?\/s)\s+(\d{1,4}:\d\d(?::\d\d)?)/g)].pop();
+    let percent=null,bytes=null,transferred='',speed='',eta='';
     if(matched) {
       const value=Number(matched[2]);
       if(Number.isFinite(value) && value>=0 && value<=100) {
         percent=value;
-        bytes=Number(matched[1].replace(/,/g,''));
+        transferred=matched[1];
+        // A human-readable -h quantity is rounded, not an exact byte count.
+        // Only expose exact bytes when rsync gives an unsuffixed integer.
+        bytes=/^[\d,]+$/.test(transferred)?Number(transferred.replace(/,/g,'')):null;
         speed=matched[3].replace(/\s+/g,'');
         eta=matched[4];
       }
@@ -581,7 +584,7 @@
     if(!filename && lines.length && !/\d{1,3}(?:\.\d+)?%/.test(lines[0])) {
       filename=lines[0];
     }
-    return {percent,bytes,speed,eta,filename,text};
+    return {percent,bytes,transferred,speed,eta,filename,text};
   }
   function shortenCopyName(value,max=96) {
     const name=String(value??'');
@@ -2287,7 +2290,7 @@
           track.setAttribute('aria-valuenow',String(info.percent));
           track.setAttribute('aria-label','复制进度 '+info.percent+'%');
           progressIndicator.textContent=info.percent+'%';
-          progressMetrics.textContent=[info.bytes!=null?info.bytes.toLocaleString()+' 字节':'',info.speed,info.eta?'剩余 '+info.eta:''].filter(Boolean).join(' · ');
+          progressMetrics.textContent=[info.transferred?'已传输 '+info.transferred:(info.bytes!=null?info.bytes.toLocaleString()+' 字节':''),info.speed,info.eta?'剩余 '+info.eta:''].filter(Boolean).join(' · ');
         }
         // Do not dump full rsync paths and octal bytes into a multi-line panel.
         progressNote.textContent='正在复制，请保持此页面打开。';
@@ -2606,7 +2609,7 @@
       ['重置文件列表列宽', resetColumnWidths],
       ['返回原生文件管理器（其他写入操作）', nativeMode],
       [state.theme === 'unraid' ? '切换至 DSM 经典主题' : '切换至 Unraid 融合主题', toggleTheme],
-      ['关于 File Station v0.2.3.3', () => notify('File Station v0.2.3.3 · Unraid 7.2.2 · 复制真实进度、后台任务与安全取消')]
+      ['关于 File Station v0.2.3.4', () => notify('File Station v0.2.3.4 · Unraid 7.2.2 · 修复 rsync -h 实际进度格式')]
     ];
     actions.forEach(([label, fn]) => {
       const button = element('button', '', label);
