@@ -1173,3 +1173,110 @@ test('v0.2.3.6 箭头展开不自动选中，无效目标仍不可选但可展�
   assert.equal(nativePosts.filter(entry=>entry.mode==='file').length,0);
   assert.equal(errors.length,0,errors.join('\n'));
 });
+
+
+test('v0.2.3.7 行内创建子目录自动选中，不会开始复制，按钮紧邻文件夹名称',async t=>{
+  const {page,errors,nativePosts,createdAnywhere}=await pageFor(t);
+  await openCopyDialog(page,'notes.txt');
+  const row=page.getByRole('button',{name:'选择 downloads'}).locator('..');
+  await row.hover();
+  const add=page.getByRole('button',{name:'在 downloads 下新建文件夹'});
+  await add.waitFor({state:'visible'});
+  const layout=await row.evaluate(el=>{
+    const name=el.querySelector('.ufs-copy-choose').getBoundingClientRect();
+    const plus=el.querySelector('.ufs-copy-mkdir-trigger').getBoundingClientRect();
+    return {gap:plus.left-name.right,width:plus.width};
+  });
+  assert.ok(layout.gap>=0 && layout.gap<=4,JSON.stringify(layout));
+  assert.ok(layout.width<=27,JSON.stringify(layout));
+  await add.click();
+  const input=page.getByRole('textbox',{name:'新文件夹名称'});
+  await input.waitFor();
+  assert.equal(await input.inputValue(),'新建文件夹');
+  assert.deepEqual(await input.evaluate(el=>[el.selectionStart,el.selectionEnd]),[0,5]);
+  assert.equal(await page.locator('.ufs-copy-submit').isDisabled(),true);
+  await input.fill('电影备份');
+  await input.press('Enter');
+  await page.getByRole('button',{name:'选择 电影备份'}).waitFor();
+  assert.equal(await page.locator('.ufs-copy-destination').innerText(),
+    '目标：/mnt/user/downloads/电影备份');
+  assert.equal(await page.locator('.ufs-copy-submit').isEnabled(),true);
+  assert.equal(await page.getByRole('button',{name:'折叠 电影备份'}).count(),1);
+  assert.deepEqual(createdAnywhere,[{parent:'/mnt/user/downloads',name:'电影备份'}]);
+  const writes=nativePosts.filter(x=>x.mode==='file');
+  assert.equal(writes.length,1);
+  assert.equal(writes[0].action,'0');
+  assert.equal(decodeURIComponent(writes[0].source),'/mnt/user/downloads');
+  assert.equal(decodeURIComponent(writes[0].target),'电影备份');
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.3.7 源文件所在父目录虽然禁止直接复制，但可以在其下行内新建',async t=>{
+  const {page,errors,nativePosts,created}=await pageFor(t);
+  await openCopyDialog(page,'notes.txt');
+  const parent=page.getByRole('button',{name:'选择 TimeMachine'});
+  assert.equal(await parent.isDisabled(),true);
+  await parent.locator('..').hover();
+  await page.getByRole('button',{name:'在 TimeMachine 下新建文件夹'}).click();
+  await page.getByRole('textbox',{name:'新文件夹名称'}).fill('备份用');
+  await page.getByRole('button',{name:'确认新建文件夹'}).click();
+  await page.getByRole('button',{name:'选择 备份用'}).waitFor();
+  assert.equal(await page.locator('.ufs-copy-destination').innerText(),'目标：/mnt/user/TimeMachine/备份用');
+  assert.deepEqual(created,['备份用']);
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,1);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.3.7 行内编辑可取消、同名失败保留输入，修正后再创建',async t=>{
+  const {page,errors,nativePosts,createdAnywhere}=await pageFor(t);
+  await openCopyDialog(page,'notes.txt');
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.getByRole('button',{name:'在 downloads 下新建文件夹'}).click();
+  let input=page.getByRole('textbox',{name:'新文件夹名称'});
+  await input.fill('临时');
+  await input.press('Escape');
+  assert.equal(await page.locator('.ufs-copy-inline-row').count(),0);
+  assert.equal(await page.locator('.ufs-copy-submit').isEnabled(),true);
+  await page.getByRole('button',{name:'在 downloads 下新建文件夹'}).click();
+  input=page.getByRole('textbox',{name:'新文件夹名称'});
+  await input.fill('completed');
+  await page.getByRole('button',{name:'确认新建文件夹'}).click();
+  await page.locator('.ufs-copy-inline-error',{hasText:'同名'}).waitFor();
+  assert.equal(await input.inputValue(),'completed');
+  assert.equal(await page.locator('.ufs-copy-submit').isDisabled(),true);
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,0);
+  await input.fill('完成-新');
+  await page.getByRole('button',{name:'确认新建文件夹'}).click();
+  await page.getByRole('button',{name:'选择 完成-新'}).waitFor();
+  assert.deepEqual(createdAnywhere,[{parent:'/mnt/user/downloads',name:'完成-新'}]);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.3.7 目录懒加载不会清空行内输入或抢走焦点',async t=>{
+  const {page,errors}=await pageFor(t,{delayDownloads:300});
+  await openCopyDialog(page,'notes.txt');
+  await page.getByRole('button',{name:'在 downloads 下新建文件夹'}).click();
+  const input=page.getByRole('textbox',{name:'新文件夹名称'});
+  await input.fill('中文目录输入中');
+  await input.evaluate(el=>el.setSelectionRange(3,3));
+  await page.waitForTimeout(450);
+  assert.equal(await input.inputValue(),'中文目录输入中');
+  assert.equal(await input.evaluate(el=>document.activeElement===el),true);
+  assert.deepEqual(await input.evaluate(el=>[el.selectionStart,el.selectionEnd]),[3,3]);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.3.7 创建结果不确定时禁用重复创建和复制',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t,{dropCreate:true});
+  await openCopyDialog(page,'notes.txt');
+  await page.getByRole('button',{name:'在 downloads 下新建文件夹'}).click();
+  await page.getByRole('textbox',{name:'新文件夹名称'}).fill('不会出现');
+  await page.getByRole('button',{name:'确认新建文件夹'}).click();
+  await page.locator('.ufs-copy-inline-error',{hasText:'结果不确定'}).waitFor();
+  assert.equal(await page.getByRole('button',{name:'确认新建文件夹'}).isDisabled(),true);
+  assert.equal(await page.locator('.ufs-copy-submit').isDisabled(),true);
+  await page.getByRole('button',{name:'取消新建文件夹'}).click();
+  assert.equal(await page.getByRole('button',{name:'在 downloads 下新建文件夹'}).isDisabled(),true);
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,1);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
