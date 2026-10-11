@@ -188,7 +188,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.2\.1\b/);
+  assert.match(script, /@version\s+0\.2\.3\b/);
 });
 
 
@@ -492,7 +492,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.2\.1\b/);
+  assert.match(script, /@version\s+0\.2\.3\b/);
 });
 
 
@@ -1089,4 +1089,136 @@ test('v0.2.2.1 仅接管 Browse 页面 filemonitor，不覆盖 Unraid 全局 ref
   assert.match(script,/if \(localWriteInProgress\(\)\) return/);
   assert.match(script,/void refreshDirectory\(\)/);
   assert.doesNotMatch(script,/(?:window\.)?refresh\s*=\s*function/);
+});
+
+
+test('v0.2.3 复制计划仅允许单项和真实共享目录，阻止源父目录及递归目标',()=>{
+  const {api}=createAPI();
+  assert.equal(api.COPY_ENABLED,true);
+  const src='/mnt/user/TimeMachine/Photos';
+  const good=api.planFileOperation({type:'copy',source:src,destinationDir:'/mnt/user/downloads',folder:true});
+  assert.equal(good.target,'/mnt/user/downloads/Photos');
+  assert.equal(api.nativeCopyTarget(good),'/mnt/user/downloads/');
+  assert.equal(api.previewNativeOperationRequest(good).action,3);
+  assert.equal(api.copyDestinationAllowed(good,'/mnt/user/downloads'),true);
+  assert.equal(api.copyDestinationAllowed(good,'/mnt/user/TimeMachine'),false);
+  assert.equal(api.copyDestinationAllowed(good,src),false);
+  assert.equal(api.copyDestinationAllowed(good,src+'/child'),false);
+  assert.equal(api.copyDestinationAllowed(good,'/mnt/user'),false);
+  for(const target of ['/mnt/user/TimeMachine','/mnt/user/TimeMachine/Photos',
+    '/mnt/user/TimeMachine/Photos/sub','/mnt/disk1', '/mnt/user']) {
+    assert.throws(()=>api.planFileOperation({type:'copy',source:src,destinationDir:target,folder:true}),
+      /不能|无效|相同|文件夹/);
+  }
+  const file=api.planFileOperation({type:'copy',source:'/mnt/user/TimeMachine/notes.txt',
+    destinationDir:'/mnt/user/downloads',folder:false});
+  assert.equal(api.previewNativeOperationRequest(file).action,8);
+  assert.equal(api.nativeCopyTarget(file),'/mnt/user/downloads/');
+  assert.equal(api.copyDestinationAllowed(file,'/mnt/user/TimeMachine'),false);
+});
+
+test('v0.2.3 原生文件/目录复制 action、源路径和目标目录带末尾斜杠',()=>{
+  const {api}=createAPI();
+  const file={type:'copy',source:'/mnt/user/a/test.txt',destinationDir:'/mnt/user/b',folder:false};
+  assert.equal(api.matchesCopyTask({action:'8',source:file.source,target:'/mnt/user/b/'},file),true);
+  assert.equal(api.matchesCopyTask({action:'8',source:file.source+'/',target:'/mnt/user/b/'},file),false);
+  assert.equal(api.matchesCopyTask({action:'3',source:file.source,target:'/mnt/user/b/'},file),false);
+  const folder={...file,folder:true};
+  assert.equal(api.matchesCopyTask({action:'3',source:file.source,target:'/mnt/user/b/'},folder),true);
+});
+
+test('v0.2.3 复制目标冲突与源文件消失时不允许提交文件操作',async()=>{
+  const modes=[];
+  const {api,sandbox}=createAPI({fetch:async(_url,opts)=>{
+    modes.push(new URLSearchParams(opts.body).get('mode'));
+    return {ok:true,text:async()=>''};
+  }});
+  const demo=sandbox.window.__UFS_DEMO__;
+  demo['/mnt/user/a']=[{name:'data.bin',folder:false}];
+  demo['/mnt/user/b']=[{name:'data.bin',folder:false}];
+  const plan=api.planFileOperation({type:'copy',source:'/mnt/user/a/data.bin',
+    destinationDir:'/mnt/user/b',folder:false});
+  await assert.rejects(api.copyNativeEntry(plan),/已有同名项目/);
+  assert.deepEqual(modes,[]);
+  demo['/mnt/user/b']=[];
+  demo['/mnt/user/a']=[];
+  await assert.rejects(api.copyNativeEntry(plan),/已不存在/);
+  assert.deepEqual(modes,[]);
+});
+
+test('v0.2.3 复制 HTTP 200 但未观察到原生任务，不得凭目录出现误报成功',async()=>{
+  const modes=[];
+  const {api,sandbox}=createAPI({fetch:async(_url,opts)=>{
+    const data=new URLSearchParams(opts.body);
+    modes.push(data.get('mode'));
+    if(data.get('mode')==='file'){
+      assert.equal(data.get('action'),'8');
+      assert.equal(decodeURIComponent(data.get('source')),'/mnt/user/a/data.bin');
+      assert.equal(decodeURIComponent(data.get('target')),'/mnt/user/b/');
+      sandbox.window.__UFS_DEMO__['/mnt/user/b']=[{name:'data.bin',folder:false}];
+    }
+    return {ok:true,text:async()=>''};
+  }});
+  const demo=sandbox.window.__UFS_DEMO__;
+  demo['/mnt/user/a']=[{name:'data.bin',folder:false}];
+  demo['/mnt/user/b']=[];
+  const plan=api.planFileOperation({type:'copy',source:'/mnt/user/a/data.bin',
+    destinationDir:'/mnt/user/b',folder:false});
+  await assert.rejects(api.copyNativeEntry(plan),/结果不确定.*无法确认原生复制任务已执行完毕/);
+  assert.equal(modes.filter(mode=>mode==='file').length,1);
+});
+
+test('v0.2.3 复制观察原生任务完成后核对目录并保留源文件',async()=>{
+  const modes=[];
+  let progressCount=0;
+  const {api,sandbox}=createAPI({fetch:async(_url,opts)=>{
+    const body=new URLSearchParams(opts.body);
+    const mode=body.get('mode');
+    modes.push(mode);
+    if(mode==='read'){
+      if(++progressCount===2)return {ok:true,text:async()=>JSON.stringify({
+        action:'8',source:'/mnt/user/a/data.bin',target:'/mnt/user/b/'})};
+    }
+    if(mode==='file'){
+      assert.equal(body.get('csrf_token'),'test-csrf');
+      assert.equal(body.get('action'),'8');
+      sandbox.window.__UFS_DEMO__['/mnt/user/b']=[{name:'data.bin',folder:false}];
+    }
+    return {ok:true,text:async()=>''};
+  }});
+  const demo=sandbox.window.__UFS_DEMO__;
+  demo['/mnt/user/a']=[{name:'data.bin',folder:false}];
+  demo['/mnt/user/b']=[];
+  const plan=api.planFileOperation({type:'copy',source:'/mnt/user/a/data.bin',
+    destinationDir:'/mnt/user/b',folder:false});
+  const result=await api.copyNativeEntry(plan);
+  assert.equal(result.path,'/mnt/user/b/data.bin');
+  assert.equal(demo['/mnt/user/a'].length,1);
+  assert.equal(modes.filter(x=>x==='file').length,1);
+});
+
+test('v0.2.3 复制与重命名复用写入锁，第二个操作不触发 Control.php',async()=>{
+  let entered;
+  let unlock;
+  const start=new Promise(resolve=>{entered=resolve;});
+  const gate=new Promise(resolve=>{unlock=resolve;});
+  const modes=[];
+  const {api,sandbox}=createAPI({fetch:async(_url,opts)=>{
+    const mode=new URLSearchParams(opts.body).get('mode');
+    modes.push(mode);
+    if(mode==='read'){entered();await gate;}
+    return {ok:true,text:async()=>''};
+  }});
+  const demo=sandbox.window.__UFS_DEMO__;
+  demo['/mnt/user/a']=[{name:'data.bin',folder:false}];
+  demo['/mnt/user/b']=[];
+  const plan=api.planFileOperation({type:'copy',source:'/mnt/user/a/data.bin',
+    destinationDir:'/mnt/user/b',folder:false});
+  const active=api.copyNativeEntry(plan);
+  await start;
+  const second=api.planFileOperation({type:'mkdir',parent:'/mnt/user/b',name:'new'});
+  await assert.rejects(api.createNativeFolder(second),/已有文件操作正在执行/);
+  assert.deepEqual(modes,['read']);
+  unlock();
+  await assert.rejects(active,/结果不确定/);
 });
