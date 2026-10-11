@@ -188,7 +188,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.3\.4\b/);
+  assert.match(script, /@version\s+0\.2\.3\.5\b/);
 });
 
 
@@ -492,7 +492,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.3\.4\b/);
+  assert.match(script, /@version\s+0\.2\.3\.5\b/);
 });
 
 
@@ -1370,4 +1370,17 @@ test('v0.2.3.4 真实 rsync -h 输出 557.06K、1.08M、2.50G 可被解析并随
   assert.equal(exact.transferred,'10,485,760');
   assert.equal(api.parseRsyncProgress('Copying... test.zip').percent,null);
   assert.equal(api.parseRsyncProgress('Not a progress 250% 40MB/s 0:01:00').percent,null);
+});
+
+
+test('v0.2.3.5 仅未知进度使用流光，真实进度必须纯色且通过宽度表示',()=>{
+  assert.match(script,/#ufs-app \.ufs-copy-progress-track\{[^}]*height:8px/);
+  assert.match(script,/#ufs-app \.ufs-copy-progress-fill\{[^}]*background:var\(--ufs-accent\)/);
+  assert.match(script,/data-progress-mode=indeterminate\] \.ufs-copy-progress-fill\{[^}]*linear-gradient/);
+  assert.match(script,/data-progress-mode=determinate\] \.ufs-copy-progress-fill\{[^}]*background:var\(--ufs-accent\);background-image:none;animation:none;transition:width \.2s ease-out/);
+  assert.match(script,/progressPanel\.dataset\.progressMode='indeterminate'/);
+  assert.match(script,/progressPanel\.dataset\.progressMode='determinate'/);
+  assert.match(script,/@media\(prefers-reduced-motion:reduce\)\{[^}]*transition:none/);
+  assert.match(script,/data-phase=success\] \.ufs-copy-progress-fill\{[^}]*background:#34895e/);
+  assert.match(script,/fill\.style\.width=info\.percent\+'%'/);
 });
