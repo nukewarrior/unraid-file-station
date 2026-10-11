@@ -197,7 +197,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.3\.12\b/);
+  assert.match(script, /@version\s+0\.2\.3\.13\b/);
 });
 
 
@@ -501,7 +501,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.3\.12\b/);
+  assert.match(script, /@version\s+0\.2\.3\.13\b/);
 });
 
 
@@ -1548,4 +1548,18 @@ test('v0.2.3.12 弹窗及目录树复用细滚动条和滚动触发显示，避�
   assert.match(script,/onCleanup\(setupListScrollbars\(\$\('\.ufs-list', app\)\)\)/,
     '保留主文件列表原有滚动条绑定');
   assert.match(script,/window\.confirm\(/,'不改动原生取消复制确认交互');
+});
+
+test('v0.2.3.13 复制弹窗焦点、Esc 分层处理和原生取消安全行为',()=>{
+  assert.match(script,/const opener = document\.activeElement/);
+  assert.match(script,/dialog\.tabIndex = -1/);
+  assert.match(script,/const focusDialog = \(\) =>/);
+  assert.match(script,/const restoreFocus = \(preferred\) =>/);
+  assert.match(script,/const reopen=\(\)=>\{[\s\S]*?focusDialog\(\)/);
+  assert.match(script,/dialog\.addEventListener\('keydown',event=>\{\s*if\(event\.key!=='Escape'\) return;\s*event\.preventDefault\(\);\s*event\.stopPropagation\(\);/);
+  assert.match(script,/if\(inlineDraft && !inlineDraft\.busy\) \{cancelInlineCreate\(\);return;\}/);
+  assert.match(script,/close\(\); \/\/ During an active copy this minimizes/);
+  assert.match(script,/fields\.replaceChildren\(summary,progressPanel\);[\s\S]*?focusDialog\(\);/);
+  assert.match(script,/const yes=window\.confirm\(/);
+  assert.match(script,/requestCancelNativeCopy\(activeCopySession\.plan,control\)/);
 });

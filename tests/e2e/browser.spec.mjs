@@ -1641,3 +1641,99 @@ test('v0.2.3.12 复制目录树与正文滚动条空闲隐藏，操作时仅显�
   assert.ok(transparent(await scrollColor(body)),'外层正文空闲再次隐藏');
   assert.equal(errors.length,0,errors.join('\n'));
 });
+
+test('v0.2.3.13 复制窗口打开后无需点击就能 Esc 关闭，回到文件列表',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t);
+  await openCopyDialog(page,'notes.txt');
+  assert.equal(await page.evaluate(()=>document.activeElement?.classList.contains('ufs-copy-dialog')),true,
+    '复制弹窗打开应主动获得键盘焦点');
+  await page.keyboard.press('Escape');
+  await page.locator('.ufs-copy-dialog').waitFor({state:'detached'});
+  assert.equal(await page.evaluate(()=>document.activeElement?.classList.contains('ufs-list')),true,
+    '关闭后键盘焦点回到文件列表');
+  assert.equal(await page.locator('.ufs-entry.ufs-selected').count(),1,
+    'Esc 不应触发全局取消文件选择');
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.3.13 行内新建优先响应 Esc，第二次 Esc 关闭复制窗口',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t);
+  await openCopyDialog(page,'notes.txt');
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.getByRole('button',{name:'在 downloads 下新建文件夹'}).click();
+  const input=page.getByRole('textbox',{name:'新文件夹名称'});
+  await input.waitFor();
+  await input.fill('临时目录');
+  await input.press('Escape');
+  assert.equal(await page.locator('.ufs-copy-dialog').count(),1);
+  assert.equal(await page.locator('.ufs-copy-inline-row').count(),0);
+  assert.equal(await page.evaluate(()=>document.activeElement?.classList.contains('ufs-copy-dialog')),true,
+    '退出内联编辑后将焦点返回复制窗口');
+  await page.keyboard.press('Escape');
+  await page.locator('.ufs-copy-dialog').waitFor({state:'detached'});
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,0,
+    '取消行内编辑和退出复制弹窗不能产生写入');
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.3.13 复制任务执行中 Esc 只转后台，重新打开后 Esc 再次生效',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t,{longCopy:true});
+  await openCopyDialog(page,'notes.txt');
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-progress-panel[data-phase="copying"]').waitFor();
+  assert.equal(await page.evaluate(()=>document.activeElement?.classList.contains('ufs-copy-dialog')),true,
+    '切换到进度面板后应恢复窗口焦点');
+  await page.keyboard.press('Escape');
+  await page.locator('.ufs-copy-dialog').waitFor({state:'detached'});
+  assert.equal(await page.locator('.ufs-copy-task-trigger').isVisible(),true);
+  assert.equal(nativePosts.filter(post=>post.action==='99').length,0,
+    'Esc 不得调用 Unraid 全局停止接口');
+  await page.locator('.ufs-copy-task-trigger').click();
+  await page.locator('.ufs-copy-dialog').waitFor();
+  assert.equal(await page.evaluate(()=>document.activeElement?.classList.contains('ufs-copy-dialog')),true,
+    '后台恢复时应重新获得焦点');
+  await page.keyboard.press('Escape');
+  await page.locator('.ufs-copy-dialog').waitFor({state:'detached'});
+  assert.equal(nativePosts.filter(post=>post.action==='99').length,0);
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,1,
+    '用户只提交过一次复制任务');
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.3.13 复制成功后 Esc 关闭结果，新建和重命名 Esc 行为不回归',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t);
+  await newFolderDialog(page);
+  assert.equal(await page.evaluate(()=>document.activeElement?.classList.contains('ufs-create-input')),true);
+  await page.keyboard.press('Escape');
+  await page.locator('.ufs-create-dialog').waitFor({state:'detached'});
+  await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).first().click();
+  await page.keyboard.press('F2');
+  await page.locator('.ufs-rename-dialog').waitFor();
+  await page.keyboard.press('Escape');
+  await page.locator('.ufs-rename-dialog').waitFor({state:'detached'});
+  await openCopyDialog(page,'notes.txt');
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-progress-panel[data-phase="success"]').waitFor();
+  await page.keyboard.press('Escape');
+  await page.locator('.ufs-copy-dialog').waitFor({state:'detached'});
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,1,
+    '新建/重命名 Esc 不能写入；仅保留明确执行的复制请求');
+  assert.equal(nativePosts.filter(post=>post.action==='99').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.3.13 结果不确定时 Esc 关闭但不重试也不发送取消指令',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t,{dropCopy:true});
+  await openCopyDialog(page,'notes.txt');
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-progress-panel[data-phase="uncertain"]').waitFor();
+  await page.keyboard.press('Escape');
+  await page.locator('.ufs-copy-dialog').waitFor({state:'detached'});
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,1);
+  assert.equal(nativePosts.filter(post=>post.action==='99').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});

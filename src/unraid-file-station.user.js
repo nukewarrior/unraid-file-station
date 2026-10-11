@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.3.12
+// @version      0.2.3.13
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -2245,8 +2245,12 @@
         nativeWriteBusy || $('.ufs-dialog-overlay', app) ||
         copyBlockedReason(entry) || currentPath() !== parentPath(entry.path)) return;
     const source = entry.path;
+    // The menu action may remove the opener before this dialog is constructed.
+    // Fall back to the file list when returning focus to a detached opener.
+    const opener = document.activeElement;
     const overlay = element('div','ufs-dialog-overlay');
     const dialog = element('div','ufs-create-dialog ufs-copy-dialog');
+    dialog.tabIndex = -1;
     dialog.setAttribute('role','dialog');
     dialog.setAttribute('aria-modal','true');
     dialog.setAttribute('aria-label','复制到');
@@ -2397,6 +2401,17 @@
     app.append(overlay);
     setupListScrollbars(fields);
     setupListScrollbars(picker);
+    const focusDialog = () => {
+      if (!destroyed && dialog.isConnected) dialog.focus({preventScroll:true});
+    };
+    const restoreFocus = (preferred) => {
+      if (destroyed) return;
+      const target = preferred?.isConnected && app.contains(preferred) ? preferred
+        : opener?.isConnected && app.contains(opener) ? opener : $('.ufs-list', app);
+      if (target?.isConnected) target.focus({preventScroll:true});
+    };
+    // Unlike create/rename there is no text input to focus automatically.
+    focusDialog();
     let busy=false, closed=false, selected=null, requestVersion=0;
     let finalPhase='picker', cancelSubmitting=false;
     let control={cancelRequested:false,observedOwnTask:false};
@@ -2414,17 +2429,20 @@
         activeCopySession=null;
         updateCopyTaskButton();
       }
+      restoreFocus();
     };
     const minimize=()=>{
       if(!busy || closed) return;
       overlay.remove();
       updateCopyTaskButton();
+      restoreFocus($('.ufs-copy-task-trigger',app));
       notify('复制继续在当前页面运行；点击「复制任务进行中」可查看。请勿刷新页面。');
     };
     const reopen=()=>{
       if(closed || destroyed || $('.ufs-dialog-overlay',app)) return;
       app.append(overlay);
       updateCopyTaskButton();
+      focusDialog();
     };
     dismiss.addEventListener('click',close);
     background.addEventListener('click',minimize);
@@ -2462,7 +2480,13 @@
     });
     overlay.addEventListener('click',event=>{if(event.target===overlay) close();});
     dialog.addEventListener('keydown',event=>{
-      if(event.key==='Escape') {event.stopPropagation();close();}
+      if(event.key!=='Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      // Inline mkdir is an editor inside the dialog: first Esc cancels that
+      // editor, while the next Esc dismisses the copy picker.
+      if(inlineDraft && !inlineDraft.busy) {cancelInlineCreate();return;}
+      close(); // During an active copy this minimizes; it never sends action=99.
     });
     const setFeedback=(message,isError=false)=>{
       if(closed || !dialog.isConnected) return;
@@ -2590,6 +2614,7 @@
       submit.disabled=!selected || mkdirUncertain;
       if(mkdirUncertain) setFeedback('新建结果不确定，请刷新页面并检查目录后再操作。',true);
       renderPicker();
+      focusDialog();
     }
     function beginInlineCreate(parent) {
       if(closed || busy || inlineDraft || nativeWriteBusy || mkdirUncertain ||
@@ -2759,6 +2784,9 @@
       heading.textContent='正在复制';
       lastActiveCopyStep=0;
       fields.replaceChildren(summary,progressPanel);
+      // The selected folder button was removed; keep Esc available while
+      // the native copy task runs and the modal switches to progress.
+      focusDialog();
       renderCopyProgress('checking');
       try {
         await copyNativeEntry(plan,updateCopyProgress,control);
