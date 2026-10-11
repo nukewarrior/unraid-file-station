@@ -2054,7 +2054,8 @@
     dialog.setAttribute('aria-modal','true');
     dialog.setAttribute('aria-label','复制到');
     const header = element('div','ufs-create-head');
-    header.append(element('h3','','复制到'));
+    const heading=element('h3','','复制到');
+    header.append(heading);
     const dismiss = element('button','ufs-create-dismiss');
     dismiss.type='button';
     dismiss.setAttribute('aria-label','关闭复制窗口');
@@ -2083,6 +2084,84 @@
     feedback.setAttribute('role','status');
     location.append(feedback);
     fields.append(summary,location);
+    // Prepared once; shown in place of the picker only after the user submits.
+    // This is an indeterminate animation, never a synthetic percentage.
+    const progressPanel=element('div','ufs-copy-progress-panel');
+    progressPanel.dataset.phase='checking';
+    progressPanel.append(element('label','ufs-create-label','复制到'));
+    const progressTarget=element('div','ufs-copy-progress-target');
+    progressTarget.append(icon('folder','ufs-folder-icon'));
+    const progressTargetPath=element('span','ufs-copy-progress-target-text');
+    progressTarget.append(progressTargetPath);
+    progressPanel.append(progressTarget);
+    const progressStatus=element('div','ufs-copy-progress-status');
+    const progressState=element('div','ufs-copy-progress-state');
+    const progressSpinner=element('span','ufs-copy-progress-spinner');
+    progressSpinner.setAttribute('aria-hidden','true');
+    const progressStateText=element('span','ufs-copy-progress-state-text','正在检查目标…');
+    progressState.append(progressSpinner,progressStateText);
+    const progressIndicator=element('span','ufs-copy-progress-indicator','准备中');
+    progressStatus.append(progressState,progressIndicator);
+    progressPanel.append(progressStatus);
+    const track=element('div','ufs-copy-progress-track');
+    track.setAttribute('role','progressbar');
+    track.setAttribute('aria-label','复制任务进行中，进度未知');
+    // No aria-valuenow or made-up percentage: rsync does not reliably provide it.
+    const fill=element('div','ufs-copy-progress-fill');
+    track.append(fill);
+    progressPanel.append(track);
+    const progressStages=element('div','ufs-copy-progress-stages');
+    const stages=[
+      ['checking','目标检查'],['copying','文件复制'],['verifying','完成核对']
+    ];
+    const stageNodes=stages.map(([phase,title])=>{
+      const node=element('span','ufs-copy-progress-stage','○ '+title);
+      node.dataset.step=phase;
+      progressStages.append(node);
+      return node;
+    });
+    progressPanel.append(progressStages);
+    const progressNote=element('div','ufs-copy-progress-note');
+    progressNote.setAttribute('role','status');
+    progressNote.setAttribute('aria-live','polite');
+    progressPanel.append(progressNote);
+    let visibleCopyPhase='checking';
+    function renderCopyProgress(phase,message='') {
+      visibleCopyPhase=phase;
+      progressPanel.dataset.phase=phase;
+      const stageIndex=stages.findIndex(([key])=>key===phase);
+      stageNodes.forEach((node,index)=>{
+        const state=phase==='success'?'done':phase==='uncertain'
+          ?(index<lastActiveCopyStep?'done':index===lastActiveCopyStep?'error':'pending')
+          :(index<stageIndex?'done':index===stageIndex?'active':'pending');
+        node.dataset.status=state;
+        node.textContent=(state==='done'?'✓ ':state==='active'?'● ':state==='error'?'! ':'○ ')+stages[index][1];
+      });
+      const labels={
+        checking:['正在检查目标…','准备中','正在检查源文件和目标目录…'],
+        copying:['正在复制文件…','进行中','正在等待 Unraid 完成文件操作，请勿关闭页面。'],
+        verifying:['正在核对复制结果…','核对中','正在检查目标目录和复制结果…'],
+        success:['复制完成','已完成','复制结果已核对，窗口即将关闭。'],
+        uncertain:['无法确认复制结果','需核实','结果不确定，请检查目标目录及原生任务状态，切勿直接重试。']
+      };
+      const info=labels[phase] || labels.checking;
+      progressStateText.textContent=info[0];
+      progressIndicator.textContent=info[1];
+      progressNote.textContent=message || info[2];
+      track.setAttribute('aria-label',phase==='success'?'复制完成':
+        phase==='uncertain'?'复制结果无法确认':'复制任务进行中，进度未知');
+    }
+    let lastActiveCopyStep=0;
+    function updateCopyProgress(message,phase) {
+      if(closed || destroyed || !dialog.isConnected) return;
+      if(phase) {
+        const next=stages.findIndex(([key])=>key===phase);
+        if(next>=0) lastActiveCopyStep=Math.max(lastActiveCopyStep,next);
+        renderCopyProgress(phase);
+      } else if(visibleCopyPhase==='copying' && message) {
+        progressNote.textContent=message.slice(0,160);
+      }
+    }
     const footer=element('div','ufs-create-buttons');
     const cancel=element('button','ufs-create-cancel ufs-copy-cancel','取消');
     cancel.type='button';
@@ -2208,13 +2287,23 @@
       cancel.disabled=true;
       dismiss.disabled=true;
       submit.textContent='复制中…';
-      renderPicker();
-      setFeedback('正在检查源文件和目标目录…');
+      progressTargetPath.textContent=plan.destinationDir;
+      heading.textContent='正在复制';
+      lastActiveCopyStep=0;
+      fields.replaceChildren(summary,progressPanel);
+      renderCopyProgress('checking');
       try {
-        await copyNativeEntry(plan,message=>setFeedback(message));
+        await copyNativeEntry(plan,updateCopyProgress);
         if(closed || destroyed) return;
-        overlay.remove();
+        heading.textContent='复制完成';
+        renderCopyProgress('success');
+        submit.textContent='已完成';
+        // Briefly display completion rather than instantly dismissing
+        // the successful verification; keep the dialog non-dismissible.
+        await waitNative(850);
+        if(closed || destroyed) return;
         closed=true;
+        overlay.remove();
         state.tree.delete(plan.destinationDir);
         if(currentPath()===plan.destinationDir) await refreshDirectory();
         else if(state.expanded.has(plan.destinationDir)) void loadTree(plan.destinationDir,true);
@@ -2222,10 +2311,17 @@
       } catch(error) {
         if(closed || destroyed) return;
         const message=String(error?.message||error);
-        setFeedback(message,true);
         if(message.includes('结果不确定')) {
+          heading.textContent='复制结果待核实';
+          renderCopyProgress('uncertain',message);
           submit.textContent='请核实复制状态';
           submit.disabled=true;
+        } else {
+          // Preflight failures happened without a native write. Let the user
+          // choose another destination and retry from the original picker.
+          heading.textContent='复制到';
+          fields.replaceChildren(summary,location);
+          setFeedback(message,true);
         }
       } finally {
         busy=false;
@@ -2236,7 +2332,7 @@
             submit.textContent='开始复制';
             submit.disabled=!selected;
           }
-          renderPicker();
+          if(fields.contains(location)) renderPicker();
         }
       }
     });
