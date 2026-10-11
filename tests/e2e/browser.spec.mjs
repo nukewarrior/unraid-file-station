@@ -113,6 +113,10 @@ async function pageFor(t, options = {}) {
         setTimeout(() => window.filemonitor.start(), 3000);
         window.__ufsMonitorTest = {
           subscribers,
+          emitFileManager(data) {
+            subscribers.filter(s=>s.url==='/sub/filemanager' && s.active)
+              .forEach(s=>s.handlers.forEach(fn=>fn(JSON.stringify(data))));
+          },
           emit(value) {
             subscribers.filter(s => s.url === '/sub/filemonitor' && s.active)
               .forEach(s => s.handlers.forEach(fn => fn(value)));
@@ -131,6 +135,7 @@ async function pageFor(t, options = {}) {
   const browseRequests = [];
   let copyActiveReads = 0;
   let latestCopy = null;
+  let copyStopped = false;
   page.on('pageerror', error => errors.push(error.message));
   await page.route('**/Shares/Browse?*',route=>route.fulfill({status:200,contentType:'text/html',body:html}));
   let rootFailures = options.rootFailures || 0;
@@ -177,7 +182,7 @@ async function pageFor(t, options = {}) {
     if (mode==='read') {
       const busy=options.nativeBusy ?
         JSON.stringify({action:'6',source:'/mnt/user/TimeMachine/backup',target:''}) :
-        latestCopy && ++copyActiveReads===1 ? JSON.stringify({
+        latestCopy && (options.longCopy ? !copyStopped : ++copyActiveReads===1) ? JSON.stringify({
           action:latestCopy.folder?'3':'8',source:latestCopy.source,
           target:latestCopy.destinationDir+'/'}) : '';
       await route.fulfill({status:200,body:busy});
@@ -203,8 +208,16 @@ async function pageFor(t, options = {}) {
       const name=source.slice(source.lastIndexOf('/')+1);
       const folder=body.get('action')==='3';
       latestCopy={source,destinationDir,name,folder,target:destinationDir+'/'+name};
+      copyStopped=false;
       copyActiveReads=0;
       if(!options.dropCopy) copied.push(latestCopy);
+      await route.fulfill({status:200,body:''});
+      return;
+    }
+    if(mode==='file' && body.get('action')==='99') {
+      copyStopped=true;
+      latestCopy=null;
+      copied.length=0;
       await route.fulfill({status:200,body:''});
       return;
     }
@@ -720,6 +733,9 @@ test('v0.2.3 单文件复制到另一个 Share，不覆盖且不删除原文件'
   await page.getByRole('button',{name:'选择 downloads'}).click();
   assert.equal(await page.locator('.ufs-copy-destination').innerText(),'目标：/mnt/user/downloads');
   await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-progress-panel[data-phase="success"]').waitFor();
+  assert.equal(await page.locator('.ufs-copy-dialog').count(),1);
+  await page.locator('.ufs-copy-submit',{hasText:'完成'}).click();
   await page.locator('.ufs-copy-dialog').waitFor({state:'detached'});
   assert.equal(copied.length,1);
   assert.equal(copied[0].source,'/mnt/user/TimeMachine/notes.txt');
@@ -743,6 +759,9 @@ test('v0.2.3 复制文件夹到子目录，保留文件夹名和源文件',async
   await page.getByRole('button',{name:'选择 completed'}).waitFor();
   await page.getByRole('button',{name:'选择 completed'}).click();
   await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-progress-panel[data-phase="success"]').waitFor();
+  assert.equal(await page.locator('.ufs-copy-dialog').count(),1);
+  await page.locator('.ufs-copy-submit',{hasText:'完成'}).click();
   await page.locator('.ufs-copy-dialog').waitFor({state:'detached'});
   assert.equal(nativePosts.filter(x=>x.action==='3').length,1);
   await page.locator('.ufs-tree-row').filter({hasText:'downloads'}).first().click();
@@ -856,7 +875,7 @@ test('v0.2.3.2 复制时从目录选择器切到流动进度与真实任务阶�
   await panel.waitFor();
   assert.equal(await page.locator('.ufs-copy-picker').count(),0);
   assert.equal(await page.locator('.ufs-copy-progress-target-text').innerText(),'/mnt/user/downloads');
-  assert.equal(await page.locator('.ufs-copy-cancel').isDisabled(),true);
+  assert.equal(await page.locator('.ufs-copy-cancel').isEnabled(),true);
   assert.equal(await page.locator('.ufs-copy-submit').isDisabled(),true);
   const progressBar=panel.getByRole('progressbar');
   assert.equal(await progressBar.getAttribute('aria-valuenow'),null);
@@ -871,6 +890,9 @@ test('v0.2.3.2 复制时从目录选择器切到流动进度与真实任务阶�
   const fill=panel.locator('.ufs-copy-progress-fill');
   assert.equal(await fill.evaluate(el=>getComputedStyle(el).animationName),'none');
   assert.equal(await fill.evaluate(el=>getComputedStyle(el).width),await fill.evaluate(el=>getComputedStyle(el.parentElement).width));
+  await page.locator('.ufs-copy-progress-panel[data-phase="success"]').waitFor();
+  assert.equal(await page.locator('.ufs-copy-dialog').count(),1);
+  await page.locator('.ufs-copy-submit',{hasText:'完成'}).click();
   await page.locator('.ufs-copy-dialog').waitFor({state:'detached'});
   assert.equal(nativePosts.filter(x=>x.mode==='file').length,1);
   assert.equal(errors.length,0,errors.join('\n'));
@@ -907,5 +929,65 @@ test('v0.2.3.2 减少动态效果时停止旋转与流动，但仍显示复制�
   ]);
   assert.deepEqual(animations,['none','none']);
   assert.match(await panel.getByRole('progressbar').getAttribute('aria-label'),/进度未知/);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+
+test('v0.2.3.3 真实进度显示 UTF-8 文件名、传输百分比、速度和 ETA',async t=>{
+  const {page,errors}=await pageFor(t,{simulateNativeMonitor:true,longCopy:true});
+  await openCopyDialog(page,'Photos');
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-progress-panel[data-phase="copying"]').waitFor();
+  await page.evaluate(()=>{
+    window.__ufsMonitorTest.emitFileManager({
+      status:'<i class="fa fa-spin"></i>Copying... mnt/user/downloads/\\#344\\#270\\#255\\#346\\#226\\#207.jpg\n  10,485,760  42%   5.10MB/s   0:00:06 (xfr#1, to-chk=3/5)'
+    });
+  });
+  await page.locator('.ufs-copy-progress-indicator',{hasText:'42%'}).waitFor();
+  assert.equal(await page.locator('.ufs-copy-progress-panel [role="progressbar"]').getAttribute('aria-valuenow'),'42');
+  assert.match(await page.locator('.ufs-copy-current-file').innerText(),/测试\.jpg/);
+  assert.match(await page.locator('.ufs-copy-progress-metrics').innerText(),/5\.10MB\/s/);
+  assert.match(await page.locator('.ufs-copy-progress-metrics').innerText(),/0:00:06/);
+  assert.doesNotMatch(await page.locator('.ufs-copy-current-file').innerText(),/\\#\d{3}/);
+  await page.locator('.ufs-copy-background').click();
+  assert.equal(await page.locator('.ufs-copy-dialog').count(),0);
+  assert.equal(await page.locator('.ufs-copy-task-trigger').isVisible(),true);
+  await page.locator('.ufs-copy-task-trigger').click();
+  assert.equal(await page.locator('.ufs-copy-progress-indicator').innerText(),'42%');
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.3.3 完成后保留窗口，用户自行关闭且后台任务入口可重新打开',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t);
+  await openCopyDialog(page,'notes.txt');
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-progress-panel[data-phase="success"]').waitFor();
+  await page.waitForTimeout(1100);
+  assert.equal(await page.locator('.ufs-copy-dialog').count(),1);
+  assert.equal(await page.locator('.ufs-copy-submit').innerText(),'完成');
+  await page.locator('.ufs-create-dismiss').last().click();
+  assert.equal(await page.locator('.ufs-copy-dialog').count(),0);
+  assert.equal(await page.locator('.ufs-copy-task-trigger').isVisible(),false);
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,1);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.3.3 取消复制需二次确认，确认后仅发送一次 action 99 并提示残留文件',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t,{longCopy:true});
+  await openCopyDialog(page,'notes.txt');
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-progress-panel[data-phase="copying"]').waitFor();
+  await page.waitForTimeout(1000);
+  page.once('dialog',dialog=>dialog.accept());
+  await page.locator('.ufs-copy-cancel').click();
+  await page.locator('.ufs-copy-progress-panel[data-phase="uncertain"]').waitFor();
+  await page.locator('.ufs-copy-progress-note',{hasText:/可能留有不完整文件|不完整文件/}).waitFor();
+  assert.equal(nativePosts.filter(x=>x.action==='99').length,1);
+  assert.equal(await page.locator('.ufs-copy-submit').isDisabled(),true);
+  await page.locator('.ufs-copy-cancel').click();
+  assert.equal(await page.locator('.ufs-copy-dialog').count(),0);
   assert.equal(errors.length,0,errors.join('\n'));
 });
