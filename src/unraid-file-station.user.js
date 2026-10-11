@@ -630,6 +630,13 @@
         if (!result || result.folder !== plan.folder) {
           throw new Error('目标目录未出现预期文件或文件夹，请检查复制状态');
         }
+        // For individual files, compare the reported byte size when both
+        // directory readings provide it. This catches obvious partial copies,
+        // but does not constitute cryptographic content verification.
+        if (!plan.folder && Number.isFinite(sourceEntry.size) &&
+            Number.isFinite(result.size) && sourceEntry.size !== result.size) {
+          throw new Error('复制后目标文件大小与源文件不一致，请检查文件完整性');
+        }
         // A directory appearing proves only its top-level presence. The native
         // job's completion is required; we do not claim checksum verification.
         return result;
