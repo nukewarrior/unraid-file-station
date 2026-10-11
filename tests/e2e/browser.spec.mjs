@@ -1617,6 +1617,11 @@ test('v0.2.3.12 复制目录树与正文滚动条空闲隐藏，操作时仅显�
   const transparent=color=>color==='transparent transparent' ||
     color==='rgba(0, 0, 0, 0) rgba(0, 0, 0, 0)';
   await page.mouse.move(2,2);
+  // Expanding the folder tree can itself scroll the parent body, temporarily
+  // revealing its scrollbar. Wait for the intentional 1.1s idle period.
+  await page.locator('.ufs-copy-dialog .ufs-create-fields.ufs-scroll-active')
+    .waitFor({state:'detached'});
+  await page.locator('.ufs-copy-picker.ufs-scroll-active').waitFor({state:'detached'});
   assert.ok(transparent(await scrollColor(body)),'外层空闲应透明: '+await scrollColor(body));
   assert.ok(transparent(await scrollColor(picker)),'目录树空闲应透明: '+await scrollColor(picker));
   await picker.hover();
