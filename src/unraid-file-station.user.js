@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.3.16
+// @version      0.2.4
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -221,6 +221,33 @@
     }
     return '';
   }
+
+  // Only update bytes for regular files whose sizes are known. Unraid Browse.php
+  // does not report recursive folder sizes, so a folder's rsync percentage can
+  // never be used as a trustworthy total-folder percentage.
+  function batchCopyOverallProgress(rows,currentIndex=-1,currentPercent=null) {
+    if (!Array.isArray(rows) || !rows.length) return {percent:0,mode:'items'};
+    const success=rows.filter(row=>row.status==='success').length;
+    if(success===rows.length) return {percent:100,mode:rows.every(row=>!row.entry.folder &&
+      Number.isFinite(row.entry.size))?'bytes':'items'};
+    const allSizedFiles=rows.every(row=>!row.entry.folder && Number.isFinite(row.entry.size) &&
+      row.entry.size>=0);
+    const total=allSizedFiles?rows.reduce((sum,row)=>sum+row.entry.size,0):0;
+    const current=rows[currentIndex];
+    const fraction=current && current.status==='copying' && !current.entry.folder &&
+      Number.isFinite(currentPercent) && currentPercent>=0 && currentPercent<=100
+      ?currentPercent/100:0;
+    let value;
+    if (allSizedFiles && total>0) {
+      const verified=rows.reduce((sum,row)=>sum+(row.status==='success'?row.entry.size:0),0);
+      value=100*(verified+(current?current.entry.size*fraction:0))/total;
+    } else {
+      value=100*(success+fraction)/rows.length;
+    }
+    return {percent:Math.min(99.9,Math.max(0,Math.round(value*100)/100)),
+      mode:allSizedFiles && total>0?'bytes':'items'};
+  }
+
   function parentPath(path) { return path.slice(0, path.lastIndexOf('/')); }
   function fileName(path) { return path.slice(path.lastIndexOf('/') + 1); }
 
@@ -957,7 +984,7 @@
     "@keyframes ufs-copy-spin{to{transform:rotate(360deg)}}",
     "@keyframes ufs-copy-flow{from{transform:translateX(-110%)}to{transform:translateX(305%)}}",
     "@media(prefers-reduced-motion:reduce){#ufs-app .ufs-copy-progress-spinner,#ufs-app .ufs-copy-progress-panel[data-progress-mode=indeterminate] .ufs-copy-progress-fill,#ufs-app .ufs-copy-progress-panel[data-progress-mode=determinate] .ufs-copy-progress-fill{animation:none}#ufs-app .ufs-copy-progress-panel[data-progress-mode=determinate] .ufs-copy-progress-fill{transition:none}}",
-    "#ufs-app .ufs-copy-task-trigger{margin:0 3px;min-width:0;padding:4px 9px;border:1px solid var(--ufs-border);font-size:12px;color:var(--ufs-accent);background:var(--ufs-panel)}",
+    "#ufs-app .ufs-status .ufs-status-hint{margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}#ufs-app .ufs-status .ufs-count{flex:0 0 auto;max-width:48%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#ufs-app .ufs-status .ufs-copy-task-trigger{flex:0 0 auto;max-width:55%;height:24px;min-height:24px;margin:0;padding:1px 9px;border:1px solid #f4d7c3;border-radius:4px;background:var(--ufs-accent-soft);color:var(--ufs-accent);font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#ufs-app .ufs-status .ufs-copy-task-trigger:hover{background:#fce1cb}#ufs-app .ufs-status .ufs-copy-task-trigger[data-phase=success]{background:#eaf7ef;color:#258755;border-color:#cdebd9}#ufs-app .ufs-status .ufs-copy-task-trigger[data-phase=uncertain],#ufs-app .ufs-status .ufs-copy-task-trigger[data-phase=failed]{background:#fff1e4;color:#a74c13}",
     "#ufs-app .ufs-copy-task-trigger[hidden],#ufs-app .ufs-copy-background[hidden],#ufs-app .ufs-copy-cancel[hidden]{display:none!important}",
     "#ufs-app .ufs-copy-background{display:inline-flex;align-items:center;justify-content:center;height:34px;min-height:34px;min-width:85px;margin:0;padding:6px 10px;border:1px solid var(--ufs-border);border-radius:5px;background:var(--ufs-bg);color:var(--ufs-text);font-size:12px}",
     "#ufs-app .ufs-copy-current-file{min-height:18px;margin-top:10px;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ufs-text)}",
@@ -966,6 +993,12 @@
     "#ufs-app .ufs-copy-progress-panel[data-phase=success] .ufs-copy-progress-track{background:#d8f2e2}",
     "#ufs-app .ufs-copy-progress-panel[data-phase=cancelled] .ufs-copy-progress-fill{animation:none}",
     "@media(max-width:560px){#ufs-app .ufs-copy-background{min-width:70px;padding:6px 7px}#ufs-app .ufs-copy-progress-stages{font-size:10px}}",
+
+    // v0.2.4 batch copy: keep the 52px header, 64px footer, and one scrollable body.
+    "#ufs-app .ufs-batch-summary-heading{font-size:12px;color:var(--ufs-muted);margin-bottom:8px}#ufs-app .ufs-batch-preview{background:var(--ufs-panel);border:1px solid var(--ufs-border);padding:8px 10px;border-radius:5px;display:flex;flex-direction:column;gap:8px;min-width:0}#ufs-app .ufs-batch-preview-row{display:flex;align-items:center;gap:8px;min-width:0;font-size:12px}#ufs-app .ufs-batch-preview-row span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}#ufs-app .ufs-batch-open-list{display:block;margin:7px 0 0 auto;padding:3px 0;border:0;background:transparent;color:var(--ufs-accent);font-size:12px;cursor:pointer}",
+    "#ufs-app .ufs-batch-panel{display:flex;flex-direction:column;gap:12px;min-width:0}#ufs-app .ufs-batch-line{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13px}#ufs-app .ufs-batch-percent{font-weight:650;font-size:19px;color:var(--ufs-accent);font-variant-numeric:tabular-nums}#ufs-app .ufs-batch-track{height:10px;border-radius:10px;background:var(--ufs-border);overflow:hidden}#ufs-app .ufs-batch-fill{height:100%;width:0;border-radius:10px;background:var(--ufs-accent);transition:width .2s ease-out}#ufs-app .ufs-batch-meta{font-size:12px;color:var(--ufs-muted)}#ufs-app .ufs-batch-current{background:var(--ufs-panel);border-radius:5px;padding:12px;overflow-wrap:anywhere;font-size:12px;display:flex;flex-direction:column;gap:6px}#ufs-app .ufs-batch-current-name{font-size:13px;font-weight:600;color:var(--ufs-text)}#ufs-app .ufs-batch-stats{display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--ufs-muted)}",
+    "#ufs-app .ufs-batch-list-back{align-self:flex-start;display:flex;align-items:center;gap:5px;border:0;background:transparent;color:var(--ufs-accent);padding:3px 0;font-size:12px}#ufs-app .ufs-batch-list-search{height:33px;flex:0 0 33px;width:100%;min-width:0;border:1px solid var(--ufs-border);border-radius:4px;padding:6px 9px;background:var(--ufs-bg);color:var(--ufs-text)}#ufs-app .ufs-batch-list-scroll{height:min(320px,40vh);min-height:120px;max-height:40vh;overflow-y:auto;overscroll-behavior:contain;border:1px solid var(--ufs-border);border-radius:5px}#ufs-app .ufs-batch-list-row{display:flex;align-items:center;gap:7px;min-width:0;min-height:36px;padding:6px 8px;border-bottom:1px solid var(--ufs-border)}#ufs-app .ufs-batch-list-row[data-status=copying]{background:var(--ufs-accent-soft)}#ufs-app .ufs-batch-list-index{flex:0 0 26px;color:var(--ufs-muted);font-size:11px}#ufs-app .ufs-batch-list-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}#ufs-app .ufs-batch-list-state{flex:0 0 auto;font-size:11px;color:var(--ufs-muted)}#ufs-app .ufs-batch-list-row[data-status=success] .ufs-batch-list-state{color:#258755}#ufs-app .ufs-batch-list-row[data-status=failed] .ufs-batch-list-state,#ufs-app .ufs-batch-list-row[data-status=uncertain] .ufs-batch-list-state{color:#c13d37}",
+    "#ufs-app .ufs-batch-stop-choices{border:1px solid var(--ufs-border);border-radius:5px;padding:10px;display:flex;flex-direction:column;gap:8px}#ufs-app .ufs-batch-stop-choices button{padding:7px 9px;border:1px solid var(--ufs-border);border-radius:5px;background:var(--ufs-bg);color:var(--ufs-text);text-align:left}#ufs-app .ufs-batch-stop-choices button:hover{background:var(--ufs-hover)}#ufs-app .ufs-batch-warning{color:#a74c13;font-size:12px;overflow-wrap:anywhere}#ufs-app .ufs-batch-result-title{font-weight:600;font-size:14px}#ufs-app .ufs-batch-result-title[data-phase=success]{color:#258755}#ufs-app .ufs-batch-result-title[data-phase=uncertain]{color:#c13d37}",
     // Only the enhanced Browse view is locked; the native view and every other Unraid page scroll normally.
     'html.ufs-active-page,html.ufs-active-page body{overflow-y:hidden!important;overscroll-behavior-y:none}',
     // Unraid adds two fixed global page-scroll arrows; neither applies to our internally scrolling browser.
@@ -1199,10 +1232,25 @@
     if (!button) return;
     button.hidden=!activeCopySession;
     if (activeCopySession) {
-      const phase=activeCopySession.phase;
-      button.textContent=phase==='success'?'复制已完成':phase==='uncertain'?'复制待核实':
-        phase==='cancelled'?'复制已停止':'复制任务进行中';
+      const {phase,batch}=activeCopySession;
+      button.dataset.phase=phase;
+      if(batch) {
+        const done=batch.rows.filter(row=>row.status==='success').length;
+        const progress=Number.isFinite(batch.percent) ?
+          ' · '+batch.percent.toFixed(batch.percent%1===0?0:1)+'%' : '';
+        button.textContent=phase==='success'?'✓ 复制完成 · '+done+' 项':
+          phase==='uncertain'?'! 复制待核实 · '+done+'/'+batch.rows.length:
+          phase==='failed'?'! 复制失败 · '+done+'/'+batch.rows.length:
+          phase==='stopped'?'复制已停止 · '+done+'/'+batch.rows.length:
+          '◌ 复制中 · '+done+'/'+batch.rows.length+progress;
+      } else {
+        button.textContent=phase==='success'?'复制已完成':phase==='uncertain'?'复制待核实':
+          phase==='cancelled'?'复制已停止':'复制任务进行中';
+      }
       button.setAttribute('aria-label','查看'+button.textContent);
+      button.title='点击恢复复制窗口：'+button.textContent;
+    } else {
+      delete button.dataset.phase;
     }
   }
   let nativeElements = [];
@@ -1942,12 +1990,15 @@
       if (entry.folder) actions.push(['在新标签页中打开', () => addTab(entry.path)]);
     }
     if (chosen.length) {
-      if (chosen.length === 1 && !nativeWriteBusy) {
-        if (safeWritePath(chosen[0].path) && chosen[0].copyPathVerified !== false) {
-          actions.push(['重命名', () => showRenameDialog(chosen[0])]);
-        }
-        actions.push(['复制到…', () => showCopyDialog(chosen[0]),
-          copyBlockedReason(chosen[0])]);
+      if (chosen.length === 1 && !nativeWriteBusy &&
+          safeWritePath(chosen[0].path) && chosen[0].copyPathVerified !== false) {
+        actions.push(['重命名', () => showRenameDialog(chosen[0])]);
+      }
+      if (!nativeWriteBusy) {
+        const blocked = chosen.map(copyBlockedReason).find(Boolean) || '';
+        actions.push(['复制到…', () => showCopyDialog(chosen),
+          blocked || (chosen.some(item => parentPath(item.path) !== currentPath()) ?
+            '只能复制当前目录下已选择的项目' : '')]);
       }
       actions.push(['复制路径（' + chosen.length + ' 项）', copySelectedPaths]);
       if (chosen.length === 1 && !chosen[0].folder)
@@ -2224,11 +2275,18 @@
   }
 
 
-  function showCopyDialog(entry) {
+  function showCopyDialog(entryOrEntries) {
+    // Snapshot the selection: navigation or re-selection must not alter this batch.
+    const entries=Array.isArray(entryOrEntries)?entryOrEntries.slice():[entryOrEntries];
+    const entry=entries[0];
+    const multi=entries.length>1;
     if (!COPY_ENABLED || destroyed || !entry || !activeTab() || state.busy ||
         nativeWriteBusy || $('.ufs-dialog-overlay', app) ||
-        copyBlockedReason(entry) || currentPath() !== parentPath(entry.path)) return;
+        entries.some(item => !item || copyBlockedReason(item) ||
+          currentPath() !== parentPath(item.path))) return;
     const source = entry.path;
+    const copyDestinationAllowedForAll=dir=>entries.every(item =>
+      copyDestinationAllowed({source:item.path,folder:item.folder},dir));
     // The menu action may remove the opener before this dialog is constructed.
     // Fall back to the file list when returning focus to a detached opener.
     const opener = document.activeElement;
@@ -2256,7 +2314,26 @@
     details.append(element('strong','',entry.name));
     details.append(element('span','', (entry.folder?'文件夹':'文件')+' · '+parentPath(source)));
     summaryContent.append(details);
-    summary.append(summaryContent);
+    if(multi) {
+      summaryContent.replaceChildren();
+      const files=entries.filter(item=>!item.folder).length;
+      summary.append(element('div','ufs-batch-summary-heading',
+        '已选择 '+entries.length+' 项（'+files+' 个文件、'+(entries.length-files)+' 个文件夹）'));
+      summaryContent.className='ufs-batch-preview';
+      entries.slice(0,3).forEach(item=>{
+        const row=element('div','ufs-batch-preview-row');
+        row.append(icon(item.folder?'folder':'file','ufs-folder-icon'),
+          element('span','',item.name));
+        row.title=item.name;
+        summaryContent.append(row);
+      });
+      const more=element('button','ufs-batch-open-list',
+        '查看全部 '+entries.length+' 项');
+      more.type='button';
+      summary.append(summaryContent,more);
+    } else {
+      summary.append(summaryContent);
+    }
     const location=element('div','ufs-create-field');
     location.append(element('label','ufs-create-label','目标位置'));
     const picker=element('div','ufs-copy-picker');
@@ -2404,8 +2481,13 @@
     const pending=new Map();
     let inlineDraft=null;
     let mkdirUncertain=false;
+    const batch=multi?{
+      rows:entries.map(item=>({entry:{...item},status:'pending',error:''})),
+      currentIndex:-1,currentPercent:null,percent:0,mode:'items',
+      started:false,preflighting:false,finished:false,stopAfterCurrent:false,view:'main',phase:'picker',error:''
+    }:null;
     const close=()=>{
-      if(inlineDraft?.busy) return;
+      if(inlineDraft?.busy || (multi && batch.preflighting)) return;
       if(busy) {minimize();return;}
       closed=true; ++requestVersion;
       overlay.remove();
@@ -2420,7 +2502,7 @@
       overlay.remove();
       updateCopyTaskButton();
       restoreFocus($('.ufs-copy-task-trigger',app));
-      notify('复制继续在当前页面运行；点击「复制任务进行中」可查看。请勿刷新页面。');
+      notify('复制继续在当前页面运行；点击底部右侧任务按钮可恢复窗口。请勿刷新页面。');
     };
     const reopen=()=>{
       if(closed || destroyed || $('.ufs-dialog-overlay',app)) return;
@@ -2431,6 +2513,12 @@
     dismiss.addEventListener('click',close);
     background.addEventListener('click',minimize);
     cancel.addEventListener('click',()=>{
+      if(multi) {
+        if(batch.view==='list') {showBatchMain();return;}
+        if(batch.finished || !batch.started) {close();return;}
+        batchStopChoices.hidden=!batchStopChoices.hidden;
+        return;
+      }
       if(!busy || finalPhase==='success' || finalPhase==='uncertain' ||
           finalPhase==='cancelled') {close();return;}
       if(finalPhase==='cancelling') {minimize();return;}
@@ -2470,6 +2558,7 @@
       // Inline mkdir is an editor inside the dialog: first Esc cancels that
       // editor, while the next Esc dismisses the copy picker.
       if(inlineDraft && !inlineDraft.busy) {cancelInlineCreate();return;}
+      if(multi && batch.view==='list') {showBatchMain();return;}
       close(); // During an active copy this minimizes; it never sends action=99.
     });
     const setFeedback=(message,isError=false)=>{
@@ -2504,7 +2593,7 @@
         }
         for(const item of children) {
           const path=item.path;
-          const permitted=copyDestinationAllowed({source,folder:entry.folder},path);
+          const permitted=copyDestinationAllowedForAll(path);
           const row=element('div','ufs-copy-tree-row');
           row.style.paddingLeft=(5+depth*15)+'px';
           row.setAttribute('role','treeitem');
@@ -2741,8 +2830,318 @@
         }
       }
     }
+
+    // Batch mode reuses this dialog's existing target-tree picker, inline mkdir,
+    // copyNativeEntry write lock, and current-page background session.
+    const batchPanel=element('div','ufs-batch-panel');
+    const batchListPanel=element('div','ufs-batch-panel ufs-batch-list-panel');
+    const batchHeading=element('div','ufs-batch-line');
+    const batchCaption=element('strong','','总体进度');
+    const batchPercentText=element('span','ufs-batch-percent','0%');
+    batchHeading.append(batchCaption,batchPercentText);
+    const batchTrack=element('div','ufs-batch-track');
+    batchTrack.setAttribute('role','progressbar');
+    batchTrack.setAttribute('aria-label','批量复制总体进度');
+    batchTrack.setAttribute('aria-valuemin','0');
+    batchTrack.setAttribute('aria-valuemax','100');
+    const batchFill=element('div','ufs-batch-fill');
+    batchTrack.append(batchFill);
+    const batchMeta=element('div','ufs-batch-line ufs-batch-meta');
+    const batchDone=element('span','','已完成 0 / '+entries.length+' 项');
+    const batchBasis=element('span','','按项目进度计算');
+    batchMeta.append(batchDone,batchBasis);
+    const batchCurrent=element('div','ufs-batch-current');
+    const batchCurrentName=element('span','ufs-batch-current-name','正在准备复制任务…');
+    const batchCurrentInfo=element('span','ufs-batch-meta','等待安全预检');
+    const batchCurrentMetrics=element('span','ufs-batch-meta');
+    batchCurrent.append(batchCurrentName,batchCurrentInfo,batchCurrentMetrics);
+    const batchStats=element('div','ufs-batch-stats');
+    const batchStatsDone=element('span','','成功 0');
+    const batchStatsPending=element('span','','待执行 '+entries.length);
+    batchStats.append(batchStatsDone,batchStatsPending);
+    const batchListOpen=element('button','ufs-batch-open-list','查看全部 '+entries.length+' 项任务 →');
+    batchListOpen.type='button';
+    const batchNote=element('div','ufs-batch-warning','请勿刷新或关闭当前浏览器页面。');
+    const batchStopChoices=element('div','ufs-batch-stop-choices');
+    batchStopChoices.hidden=true;
+    batchStopChoices.append(element('strong','','停止复制队列'));
+    const stopSafely=element('button','','当前项目完成后停止（推荐）');
+    stopSafely.type='button';
+    stopSafely.addEventListener('click',()=>{
+      batch.stopAfterCurrent=true;
+      batchStopChoices.hidden=true;
+      batchNote.textContent='将在当前项目复制完成后停止，后续项目不再开始。';
+      cancel.textContent='等待当前项结束';
+      cancel.disabled=true;
+      renderBatchProgress();
+    });
+    const stopNow=element('button','','尝试停止当前项目及后续队列…');
+    stopNow.type='button';
+    stopNow.addEventListener('click',()=>{
+      if(!busy || batch.currentIndex<0 || !control.observedOwnTask) {
+        batchNote.textContent='尚未确认当前原生任务归属，无法安全发送停止指令；可选择等待当前项完成。';
+        return;
+      }
+      if(!window.confirm('停止当前复制可能留下不完整文件或文件夹。\nUnraid 的停止接口是全局操作，存在误停并发任务的风险。\n确定尝试停止当前任务及后续队列吗？')) return;
+      batch.stopAfterCurrent=true;
+      batchStopChoices.hidden=true;
+      cancel.disabled=true;
+      cancel.textContent='正在尝试停止…';
+      void requestCancelNativeCopy(activeCopySession.plan,control).catch(error=>{
+        batchNote.textContent='停止请求结果待核实：'+String(error?.message||error);
+      });
+    });
+    batchStopChoices.append(stopSafely,stopNow,
+      element('div','ufs-batch-warning','停止当前项目需要原生任务归属检查，结果可能不确定。'));
+    batchPanel.append(batchHeading,batchTrack,batchMeta,batchCurrent,batchStats,
+      batchListOpen,batchStopChoices,batchNote);
+    const batchListBack=element('button','ufs-batch-list-back','← 返回');
+    batchListBack.type='button';
+    const batchListSummary=element('div','ufs-batch-meta','共 '+entries.length+' 项');
+    const batchSearch=element('input','ufs-batch-list-search');
+    batchSearch.type='search';
+    batchSearch.placeholder='搜索文件名或序号…';
+    batchSearch.setAttribute('aria-label','筛选复制任务清单');
+    const batchScroll=element('div','ufs-batch-list-scroll');
+    batchScroll.setAttribute('role','list');
+    batchListPanel.append(batchListBack,batchListSummary,batchSearch,batchScroll,
+      element('div','ufs-batch-meta','清单视图仅用于查看，不改变目标目录和复制顺序。'));
+    function renderBatchRows() {
+      if(!multi || batch.view!=='list') return;
+      const q=batchSearch.value.trim().toLowerCase();
+      const filtered=batch.rows.filter((row,index)=>
+        !q || row.entry.name.toLowerCase().includes(q) || String(index+1)===q);
+      batchListSummary.textContent='共 '+entries.length+' 项 · 当前显示 '+filtered.length+' 项';
+      batchScroll.replaceChildren();
+      // Cap mounted rows for very large selections. Searching can reach any row.
+      const mounted=filtered.slice(0,500);
+      mounted.forEach(row=>{
+        const i=batch.rows.indexOf(row);
+        const item=element('div','ufs-batch-list-row');
+        item.dataset.status=row.status;
+        item.setAttribute('role','listitem');
+        const index=element('span','ufs-batch-list-index',String(i+1));
+        const name=element('span','ufs-batch-list-name',row.entry.name);
+        name.title=row.entry.name;
+        const labels={pending:'等待',copying:'进行中',success:'成功',
+          failed:'失败',uncertain:'待核实'};
+        const status=element('span','ufs-batch-list-state',labels[row.status] || row.status);
+        if(row.error) {status.title=row.error;item.title=row.error;}
+        item.append(index,icon(row.entry.folder?'folder':'file','ufs-folder-icon'),name,status);
+        batchScroll.append(item);
+      });
+      if(filtered.length>500) batchScroll.append(
+        element('div','ufs-batch-meta','列表较长，当前显示前 500 项；可通过搜索定位其他项目。'));
+      if(!filtered.length) batchScroll.append(element('div','ufs-batch-meta','没有匹配项目'));
+    }
+    function showBatchList() {
+      if(!multi) return;
+      batch.view='list';
+      batchListBack.textContent=batch.started?'← 返回复制进度':'← 返回目标选择';
+      heading.textContent=batch.started?'任务清单（'+entries.length+'）':'已选项目（'+entries.length+'）';
+      cancel.hidden=false;
+      cancel.disabled=false;
+      cancel.textContent=batch.started?'返回复制进度':'返回目标选择';
+      submit.hidden=true;
+      background.hidden=true;
+      fields.replaceChildren(batchListPanel);
+      renderBatchRows();
+      batchSearch.focus({preventScroll:true});
+    }
+    function showBatchMain() {
+      if(!multi) return;
+      batch.view='main';
+      heading.textContent=batch.finished?'复制结果':batch.started?'正在复制':'复制到';
+      cancel.hidden=batch.finished;
+      cancel.disabled=batch.stopAfterCurrent && !batch.finished;
+      cancel.textContent=batch.started?
+        (batch.stopAfterCurrent?'等待当前项结束':'停止队列…'):'取消';
+      submit.hidden=batch.started && !batch.finished;
+      background.hidden=!batch.started || batch.finished;
+      fields.replaceChildren(...(batch.started?[batchPanel]:[summary,location]));
+      if(!batch.started) renderPicker();
+      focusDialog();
+    }
+    batchSearch.addEventListener('input',renderBatchRows);
+    batchListBack.addEventListener('click',showBatchMain);
+    batchListOpen.addEventListener('click',showBatchList);
+    if(multi) summary.querySelector('.ufs-batch-open-list').addEventListener('click',showBatchList);
+
+    function renderBatchProgress() {
+      if(!multi) return;
+      const done=batch.rows.filter(row=>row.status==='success').length;
+      const waiting=batch.rows.filter(row=>row.status==='pending').length;
+      const current=batch.rows[batch.currentIndex];
+      const result=batchCopyOverallProgress(batch.rows,batch.currentIndex,batch.currentPercent);
+      batch.percent=Math.max(batch.percent,result.percent);
+      batch.mode=result.mode;
+      batchPercentText.textContent=batch.percent.toFixed(batch.percent%1===0?0:2)+'%';
+      batchFill.style.width=batch.percent+'%';
+      batchTrack.setAttribute('aria-valuenow',String(batch.percent));
+      batchDone.textContent='已完成 '+done+' / '+batch.rows.length+' 项';
+      batchBasis.textContent=batch.mode==='bytes'?'按数据大小计算':'按项目进度计算';
+      batchStatsDone.textContent='成功 '+done;
+      batchStatsPending.textContent=batch.finished
+        ?'未执行 '+waiting
+        :'等待 '+waiting;
+      if(batch.finished) {
+        const problems=batch.rows.filter(row=>row.status==='failed'||row.status==='uncertain').length;
+        batchCaption.textContent='总体进度';
+        batchCurrentName.textContent=batch.phase==='success'?
+          '全部 '+done+' 项复制完成并核验':batch.phase==='stopped'?
+          '队列已停止，后续任务未执行':
+          '复制任务已暂停，需检查失败或待核实项目';
+        batchCurrentInfo.textContent='成功 '+done+' · 问题 '+problems+' · 未执行 '+waiting;
+        batchCurrentMetrics.textContent=batch.error;
+        batchListOpen.textContent='查看全部 '+batch.rows.length+' 项结果 →';
+        batchStopChoices.hidden=true;
+        if(batch.phase==='success') {
+          batchPercentText.style.color='#258755';
+          batchFill.style.background='#258755';
+        }
+      } else if(current) {
+        batchCurrentName.textContent=current.entry.name;
+        batchCurrentInfo.textContent='第 '+(batch.currentIndex+1)+' / '+entries.length+' 项'+
+          (current.entry.folder?' · 文件夹':' · 文件')+
+          (batch.currentPercent!=null && !current.entry.folder?' · 当前项目 '+batch.currentPercent+'%':'');
+      }
+      if(activeCopySession?.batch===batch) updateCopyTaskButton();
+    }
+    async function preflightBatchCopy(plans) {
+      // Take fresh source + destination snapshots before submitting ANY write.
+      if(new Set(plans.map(plan=>plan.target)).size!==plans.length)
+        throw new Error('有多个项目对应同一个目标文件名，拒绝批量复制');
+      const sourceItems=await listDirectory(parentPath(plans[0].source));
+      const destinationItems=await listDirectory(plans[0].destinationDir);
+      for(const [i,plan] of plans.entries()) {
+        const fresh=sourceItems.find(item=>item.path===plan.source);
+        if(!fresh || fresh.folder!==plan.folder || fresh.copyPathVerified===false)
+          throw new Error('源项目已更改或路径不安全：'+fileName(plan.source));
+        if(copyBlockedReason(fresh)) throw new Error(copyBlockedReason(fresh));
+        if(destinationItems.some(item=>item.path===plan.target ||
+            item.name===fileName(plan.source)))
+          throw new Error('目标存在同名项目，未开始复制：'+fileName(plan.source));
+        batch.rows[i].entry={...fresh};
+      }
+      if(await readNativeActive()) throw new Error('Unraid 正在执行其他原生文件任务，请稍后重试');
+      nativeCsrfToken();
+    }
+    async function startBatchCopy() {
+      if(!multi || batch.started || batch.preflighting || batch.finished || busy || inlineDraft ||
+          mkdirUncertain || submit.disabled || !selected || nativeWriteBusy) return;
+      let plans;
+      try {
+        plans=entries.map(item=>planFileOperation({type:'copy',source:item.path,
+          destinationDir:selected,folder:item.folder}));
+        if(!copyDestinationAllowedForAll(selected))
+          throw new Error('目标目录与所选源文件夹冲突');
+      } catch(error) {setFeedback(String(error?.message||error),true);return;}
+      // Refuse an unsafe destination BEFORE starting the batch. No native writes
+      // occur during this phase, so a conflict leaves the target picker usable.
+      batch.preflighting=true;
+      submit.disabled=true;
+      cancel.disabled=true;
+      dismiss.disabled=true;
+      setFeedback('正在检查全部 '+entries.length+' 项源文件及目标目录…');
+      try {
+        await preflightBatchCopy(plans);
+        if(destroyed || closed) return;
+      } catch(error) {
+        setFeedback(String(error?.message||error),true);
+        return;
+      } finally {
+        batch.preflighting=false;
+        submit.disabled=false;
+        cancel.disabled=false;
+        dismiss.disabled=false;
+      }
+      if(destroyed || closed) return;
+      batch.started=true;
+      batch.phase='copying';
+      busy=true;
+      activeCopySession={dialog,plan:null,batch,phase:'copying',reopen};
+      updateCopyTaskButton();
+      heading.textContent='正在复制';
+      submit.hidden=true;
+      submit.disabled=true;
+      cancel.textContent='停止队列…';
+      cancel.disabled=false;
+      background.hidden=false;
+      dismiss.title='后台运行';
+      fields.replaceChildren(batchPanel);
+      focusDialog();
+      try {
+        if(batch.stopAfterCurrent) {
+          batch.phase='stopped';
+        } else {
+          for(let i=0;i<plans.length;i++) {
+            if(batch.stopAfterCurrent) {batch.phase='stopped';break;}
+            batch.currentIndex=i;
+            batch.currentPercent=null;
+            batchCurrentMetrics.textContent='';
+            const row=batch.rows[i];
+            row.status='copying';
+            renderBatchRows();
+            control={cancelRequested:false,observedOwnTask:false};
+            activeCopySession.plan=plans[i];
+            renderBatchProgress();
+            await copyNativeEntry(plans[i],(message,phase,info)=>{
+              if(phase==='checking') batchCurrentInfo.textContent='正在检查源文件和目标目录…';
+              if(phase==='verifying') batchCurrentInfo.textContent='正在核对复制结果…';
+              if(info && Number.isFinite(info.percent) && !row.entry.folder) {
+                batch.currentPercent=Math.max(batch.currentPercent??0,info.percent);
+              }
+              if(info?.speed || info?.eta) batchCurrentMetrics.textContent=
+                [info.speed||'',info.eta?'剩余 '+info.eta:''].filter(Boolean).join(' · ');
+              renderBatchProgress();
+            },control);
+            row.status='success';
+            renderBatchRows();
+            batch.currentPercent=null;
+            renderBatchProgress();
+          }
+        }
+        if(batch.phase!=='stopped') batch.phase='success';
+      } catch(error) {
+        batch.error=String(error?.message||error);
+        const uncertain=control.cancelRequested ||
+          batch.error.includes('结果不确定') || batch.error.includes('已请求取消');
+        if(batch.currentIndex>=0 && batch.rows[batch.currentIndex].status==='copying') {
+          const row=batch.rows[batch.currentIndex];
+          row.status=uncertain?'uncertain':'failed';
+          row.error=batch.error;
+          renderBatchRows();
+        }
+        batch.phase=uncertain?'uncertain':'failed';
+        // A preflight error may have started no native task; it still cannot
+        // automatically retry the batch or silently skip failed entries.
+      } finally {
+        batch.finished=true;
+        busy=false;
+        finalPhase=batch.phase;
+        activeCopySession.phase=batch.phase;
+        cancel.hidden=true;
+        background.hidden=true;
+        submit.hidden=false;
+        submit.textContent='完成';
+        submit.disabled=false;
+        dismiss.title='关闭';
+        renderBatchProgress();
+        renderBatchRows();
+        if(batch.view==='main') heading.textContent='复制结果';
+        state.tree.delete(selected);
+        if(currentPath()===selected) await refreshDirectory().catch(()=>{});
+        else if(state.expanded.has(selected)) void loadTree(selected,true).catch(()=>{});
+        updateCopyTaskButton();
+      }
+    }
     form.addEventListener('submit',async event=>{
       event.preventDefault();
+      if(multi) {
+        if(batch.finished) {close();return;}
+        await startBatchCopy();
+        return;
+      }
       if(finalPhase==='success') {close();return;}
       if(busy || inlineDraft || mkdirUncertain || submit.disabled || !selected || nativeWriteBusy) return;
       let plan;
@@ -2941,7 +3340,6 @@
       '<div class="ufs-file-actions" role="toolbar" aria-label="文件内容和视图">',
       '<button type="button" class="ufs-ico ufs-create-trigger" title="新建文件夹" aria-label="新建文件夹">新建文件夹</button>',
        '<button type="button" class="ufs-ico ufs-operations" title="文件操作" aria-label="文件操作" aria-haspopup="menu" aria-expanded="false">操作 <span data-ufs-icon="chevron-down"></span></button>',
-       '<button type="button" class="ufs-ico ufs-copy-task-trigger" title="查看复制任务" hidden>复制任务进行中</button>',
       '<span class="ufs-spacer"></span>',
       '<div class="ufs-view-controls" role="group" aria-label="文件视图">',
       '<button type="button" class="ufs-ico ufs-list-button" title="列表视图" aria-label="列表视图"><span data-ufs-icon="list"></span></button>',
@@ -2974,7 +3372,8 @@
       renderHeaderMarkup(),
       renderWorkspaceMarkup(),
       '<div class="ufs-status"><span class="ufs-count">准备就绪</span>',
-      '<span>支持新建文件夹、重命名、复制 · 其他写入请使用原生文件管理器</span></div>'
+      '<span class="ufs-status-hint">支持新建文件夹、重命名、复制 · 其他写入请使用原生文件管理器</span>',
+      '<button type="button" class="ufs-copy-task-trigger" title="查看复制任务" hidden>复制任务进行中</button></div>'
     ].join('');
     $$('[data-ufs-icon]', app).forEach((placeholder) => {
       placeholder.replaceWith(icon(placeholder.dataset.ufsIcon,
@@ -3382,7 +3781,7 @@
   }
   // Explicit opt-in hook for pure-function tests; never enabled on production WebGUI.
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
-    window.__UFS_TEST_API__ = { safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, COPY_ENABLED, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, nativeCopyTarget, matchesCopyTask, copyDestinationAllowed, copyNativeEntry, decodeRsyncFilename, parseRsyncProgress, shortenCopyName, requestCancelNativeCopy, takeOverNativeFileMonitor, availableHeight, visibleEntries, sortedCopyFolders, safeCopyName, safeCopyPath, copyBlockedReason, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
+    window.__UFS_TEST_API__ = { batchCopyOverallProgress, safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, COPY_ENABLED, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, nativeCopyTarget, matchesCopyTask, copyDestinationAllowed, copyNativeEntry, decodeRsyncFilename, parseRsyncProgress, shortenCopyName, requestCancelNativeCopy, takeOverNativeFileMonitor, availableHeight, visibleEntries, sortedCopyFolders, safeCopyName, safeCopyPath, copyBlockedReason, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();

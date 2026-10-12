@@ -197,7 +197,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.3\.16\b/);
+  assert.match(script, /@version\s+0\.2\.4\b/);
 });
 
 
@@ -501,7 +501,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.3\.16\b/);
+  assert.match(script, /@version\s+0\.2\.4\b/);
 });
 
 
@@ -1590,4 +1590,70 @@ test('v0.2.3.16 移除文件操作栏的冗余「文件」标签，保留工具�
   assert.match(script, /'<button type="button" class="ufs-ico ufs-operations"/);
   assert.match(script, /#ufs-app \.ufs-file-actions\{display:flex;align-items:center;gap:5px;height:34px/);
   assert.match(script, /#ufs-app \.ufs-file-actions \.ufs-create-trigger,#ufs-app \.ufs-file-actions \.ufs-operations\{[^}]*height:28px;min-height:28px;max-height:28px/);
+});
+
+
+test('v0.2.4 批量复制整体进度按字节加权，避免切换文件时归零或提前满格',()=>{
+  const {api}=createAPI();
+  const rows=[
+    {entry:{name:'a.bin',size:1000,folder:false},status:'success'},
+    {entry:{name:'b.bin',size:9000,folder:false},status:'copying'}
+  ];
+  let v=api.batchCopyOverallProgress(rows,1,50);
+  assert.equal(v.mode,'bytes');
+  assert.equal(v.percent,55);
+  v=api.batchCopyOverallProgress(rows,1,100);
+  assert.equal(v.percent,99.9,'最终核验之前不能显示 100%');
+  rows[1].status='success';
+  assert.equal(api.batchCopyOverallProgress(rows).percent,100);
+});
+
+test('v0.2.4 包含文件夹时按项目完成度，拒绝套用文件夹 rsync 百分比',()=>{
+  const {api}=createAPI();
+  const rows=[
+    {entry:{name:'first.txt',size:1024,folder:false},status:'success'},
+    {entry:{name:'Photos',size:null,folder:true},status:'copying'},
+    {entry:{name:'third.txt',size:10,folder:false},status:'pending'},
+    {entry:{name:'fourth.txt',size:10,folder:false},status:'pending'}
+  ];
+  assert.deepEqual(JSON.parse(JSON.stringify(api.batchCopyOverallProgress(rows,1,67))),
+    {percent:25,mode:'items'},'文件夹当前百分比不得用于整体进度');
+  rows[1].status='success';
+  rows[2].status='copying';
+  assert.equal(api.batchCopyOverallProgress(rows,2,45).percent,61.25);
+  const unknown=[
+    {entry:{folder:false,size:null},status:'success'},
+    {entry:{folder:false,size:0},status:'pending'}
+  ];
+  assert.equal(api.batchCopyOverallProgress(unknown).mode,'items');
+});
+
+test('v0.2.4 文件操作菜单支持多选复制，但批量任务必须顺序执行且严守全局停止保护',()=>{
+  assert.match(script,/chosen\.map\(copyBlockedReason\)\.find\(Boolean\)/);
+  assert.match(script,/showCopyDialog\(chosen\)/);
+  assert.match(script,/const entries=Array\.isArray\(entryOrEntries\)\?entryOrEntries\.slice\(\):\[entryOrEntries\]/);
+  assert.match(script,/copyDestinationAllowedForAll=dir=>entries\.every/);
+  assert.match(script,/async function preflightBatchCopy\(plans\)/);
+  assert.match(script,/await preflightBatchCopy\(plans\)/);
+  assert.match(script,/for\(let i=0;i<plans\.length;i\+\+\)/);
+  assert.match(script,/await copyNativeEntry\(plans\[i\],/);
+  assert.match(script,/if\(batch\.stopAfterCurrent\)/);
+  assert.match(script,/requestCancelNativeCopy\(activeCopySession\.plan,control\)/);
+  assert.match(script,/const batch=multi\?/);
+  assert.match(script,/fields\.replaceChildren\(batchListPanel\)/);
+  assert.match(script,/batchScroll\.replaceChildren\(\)/);
+  assert.match(script,/filtered\.slice\(0,500\)/);
+});
+
+test('v0.2.4 后台入口位于底部右侧状态栏，不占工具栏高度',()=>{
+  const source=script.slice(script.indexOf('function renderFileActionsMarkup()'),
+    script.indexOf('function renderWorkspaceMarkup()'));
+  const status=script.slice(script.indexOf('function renderUI()'),
+    script.indexOf("$$('[data-ufs-icon]', app)"));
+  assert.doesNotMatch(source,/ufs-copy-task-trigger/);
+  assert.match(status,/class="ufs-status-hint"/);
+  assert.match(status,/class="ufs-copy-task-trigger"/);
+  assert.match(script,/#ufs-app \.ufs-status \.ufs-copy-task-trigger\{flex:0 0 auto/);
+  assert.match(script,/const minimize=\(\)=>/);
+  assert.match(script,/const reopen=\(\)=>/);
 });

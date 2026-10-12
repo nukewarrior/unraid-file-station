@@ -1894,3 +1894,123 @@ test('v0.2.3.16 文件操作栏不显示冗余「文件」标签，两个按钮�
   await page.locator('.ufs-create-cancel').click();
   assert.equal(errors.length,0,errors.join('\n'));
 });
+
+
+async function openBatchCopyDialog(page,names) {
+  for(const [i,name] of names.entries()){
+    await page.locator('.ufs-entry').filter({hasText:name}).first()
+      .click(i?{modifiers:['ControlOrMeta']}:{});
+  }
+  assert.equal(await page.locator('.ufs-entry.ufs-selected').count(),names.length);
+  await page.locator('.ufs-operations').click();
+  await page.getByRole('menuitem',{name:'复制到…'}).click();
+  await page.locator('.ufs-copy-dialog').waitFor();
+}
+
+test('v0.2.4 百项文件使用独立清单视图，搜索后返回不丢目标位置',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t,{bulkCount:120});
+  await page.locator('.ufs-entry').first().waitFor();
+  await page.locator('.ufs-list').focus();
+  await page.keyboard.press('ControlOrMeta+a');
+  assert.equal(await page.locator('.ufs-entry.ufs-selected').count(),120);
+  await page.locator('.ufs-operations').click();
+  await page.getByRole('menuitem',{name:'复制到…'}).click();
+  await page.locator('.ufs-copy-dialog').waitFor();
+  assert.equal(await page.locator('.ufs-batch-preview-row').count(),3);
+  await page.getByRole('button',{name:'查看全部 120 项'}).click();
+  await page.locator('.ufs-batch-list-panel').waitFor();
+  assert.equal(await page.locator('.ufs-batch-list-row').count(),120);
+  await page.locator('.ufs-batch-list-search').fill('file-00119');
+  assert.equal(await page.locator('.ufs-batch-list-row').count(),1);
+  assert.match(await page.locator('.ufs-batch-list-name').innerText(),/file-00119/);
+  await page.locator('.ufs-batch-list-back').click();
+  await page.locator('.ufs-copy-picker').waitFor();
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.getByRole('button',{name:'查看全部 120 项'}).click();
+  await page.locator('.ufs-batch-list-back').click();
+  assert.equal(await page.locator('.ufs-copy-destination').innerText(),
+    '目标：/mnt/user/downloads');
+  assert.equal(await page.locator('.ufs-copy-submit').isEnabled(),true);
+  assert.equal(nativePosts.filter(p=>p.mode==='file').length,0);
+  await page.locator('.ufs-copy-cancel').click();
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.4 混合文件及文件夹可依次复制，显示总体进度和逐项成功结果',async t=>{
+  const {page,errors,nativePosts,copied}=await pageFor(t);
+  await openBatchCopyDialog(page,['Photos','notes.txt']);
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-batch-panel').waitFor();
+  const track=page.locator('.ufs-batch-track');
+  assert.equal(await track.getAttribute('aria-label'),'批量复制总体进度');
+  await page.locator('.ufs-copy-submit',{hasText:'完成'}).waitFor({timeout:30000});
+  assert.equal(await page.locator('.ufs-batch-percent').innerText(),'100%');
+  assert.equal(await track.getAttribute('aria-valuenow'),'100');
+  assert.match(await page.locator('.ufs-batch-current-name').innerText(),/全部 2 项复制完成/);
+  assert.equal(copied.length,2);
+  assert.deepEqual(nativePosts.filter(p=>p.mode==='file').map(p=>p.action).sort(),['3','8']);
+  await page.locator('.ufs-batch-open-list').last().click();
+  await page.locator('.ufs-batch-list-panel').waitFor();
+  assert.equal(await page.locator('.ufs-batch-list-row[data-status="success"]').count(),2);
+  await page.locator('.ufs-batch-list-back').click();
+  await page.locator('.ufs-copy-submit',{hasText:'完成'}).click();
+  await page.locator('.ufs-copy-dialog').waitFor({state:'detached'});
+  assert.equal(await page.locator('.ufs-copy-task-trigger').isVisible(),false);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.4 整批预检遇同名项目时不写入并允许更换目标',async t=>{
+  const {page,errors,nativePosts,copied}=await pageFor(t,{copyConflictDest:'/mnt/user/downloads'});
+  await openBatchCopyDialog(page,['Photos','notes.txt']);
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-feedback',{hasText:/目标存在同名项目，未开始复制/}).waitFor();
+  assert.equal(await page.locator('.ufs-copy-picker').isVisible(),true);
+  assert.equal(await page.locator('.ufs-copy-submit').isEnabled(),true);
+  assert.equal(nativePosts.filter(p=>p.mode==='file').length,0,
+    '整批预检失败，任何原生写入都不能发生');
+  await page.getByRole('button',{name:'选择 appdata'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-submit',{hasText:'完成'}).waitFor({timeout:30000});
+  assert.equal(copied.length,2);
+  assert.equal(nativePosts.filter(p=>p.mode==='file').length,2);
+  await page.locator('.ufs-copy-submit',{hasText:'完成'}).click();
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.4 批量后台按钮收纳到底部状态栏，可恢复窗口和安全停止后续队列',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t,{
+    extraEntries:{'/mnt/user/TimeMachine':[['another.mkv',false]]},longCopy:true});
+  await openBatchCopyDialog(page,['notes.txt','another.mkv']);
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-batch-panel').waitFor();
+  await page.waitForFunction(()=>document.querySelectorAll(
+    '.ufs-copy-dialog .ufs-batch-current-name').length &&
+    document.querySelector('.ufs-status .ufs-copy-task-trigger')?.textContent.includes('复制中'));
+  await page.locator('.ufs-copy-background').click();
+  await page.locator('.ufs-copy-dialog').waitFor({state:'detached'});
+  const task=page.locator('.ufs-status .ufs-copy-task-trigger');
+  await task.waitFor({state:'visible'});
+  assert.equal(await page.locator('.ufs-file-actions .ufs-copy-task-trigger').count(),0);
+  const bounds=await page.locator('.ufs-status').evaluate(el=>{
+    const parent=el.getBoundingClientRect();
+    const child=el.querySelector('.ufs-copy-task-trigger').getBoundingClientRect();
+    return {right:parent.right-child.right,top:child.top-parent.top,within:child.bottom<=parent.bottom};
+  });
+  assert.ok(bounds.right<=15 && bounds.right>=0 && bounds.within,JSON.stringify(bounds));
+  await task.click();
+  await page.locator('.ufs-batch-panel').waitFor();
+  assert.equal(await page.locator('.ufs-copy-dialog').count(),1);
+  await page.locator('.ufs-copy-cancel').click();
+  await page.locator('.ufs-batch-stop-choices').waitFor({state:'visible'});
+  await page.getByRole('button',{name:/当前项目完成后停止/}).click();
+  assert.equal(await page.locator('.ufs-copy-cancel').isDisabled(),true);
+  assert.equal(nativePosts.filter(p=>p.action==='99').length,0,
+    '正常停止队列不允许发送 Unraid 全局停止 action=99');
+  await page.keyboard.press('Escape');
+  await page.locator('.ufs-copy-dialog').waitFor({state:'detached'});
+  assert.equal(await task.isVisible(),true);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
