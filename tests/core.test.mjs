@@ -1274,10 +1274,10 @@ test('v0.2.3.2 动画仅显示不确定进度、提供三阶段和减少动态�
   assert.match(script,/track\.setAttribute\('role','progressbar'\)/);
   assert.match(script,/aria-label','复制任务进行中，进度未知'/);
   assert.match(script,/track\.setAttribute\('aria-valuenow','100'\)/);
-  assert.match(script,/fields\.replaceChildren\(summary,progressPanel\)/);
+  assert.match(script,/showCopyFields\(summary,progressPanel\)/);
   assert.match(script,/renderCopyProgress\('success',outcome\.copyOutcome/);
   assert.match(script,/renderCopyProgress\('uncertain',message\)/);
-  assert.match(script,/fields\.replaceChildren\(summary,location\)/);
+  assert.match(script,/showCopyFields\(summary,location\)/);
   assert.doesNotMatch(script,/await waitNative\(850\)/);
 });
 
@@ -1567,7 +1567,7 @@ test('v0.2.3.12 全部弹窗统一 52px 标题、64px 底栏和独立滚动内�
   assert.match(script,/#ufs-app \.ufs-create-fields\{[^}]*flex:1 1 auto;[^}]*min-height:0;overflow-y:auto;overscroll-behavior:contain/);
   assert.match(script,/#ufs-app \.ufs-create-buttons\{[^}]*height:64px;min-height:64px;flex:0 0 64px/);
   assert.match(script,/#ufs-app \.ufs-copy-dialog\{width:min\(465px,100%\)\}/);
-  assert.match(script,/form\.append\(fields,footer\);\s*dialog\.append\(header,form\);/);
+  assert.match(script,/form\.append\(fields,fixedOptions,footer\);[\s\S]*?dialog\.append\(header,form\);/);
   assert.match(script,/form\.append\(fields, buttons\);\s*dialog\.append\(top, form\);/);
   assert.match(script,/form\.append\(fields, buttons\);\s*dialog\.append\(header, form\);/);
 });
@@ -1593,7 +1593,7 @@ test('v0.2.3.13 复制弹窗焦点、Esc 分层处理和原生取消安全行为
   assert.match(script,/dialog\.addEventListener\('keydown',event=>\{\s*if\(event\.key!=='Escape'\) return;\s*event\.preventDefault\(\);\s*event\.stopPropagation\(\);/);
   assert.match(script,/if\(inlineDraft && !inlineDraft\.busy\) \{cancelInlineCreate\(\);return;\}/);
   assert.match(script,/close\(\); \/\/ During an active copy this minimizes/);
-  assert.match(script,/fields\.replaceChildren\(summary,progressPanel\);[\s\S]*?focusDialog\(\);/);
+  assert.match(script,/showCopyFields\(summary,progressPanel\);[\s\S]*?focusDialog\(\);/);
   assert.match(script,/const yes=window\.confirm\(/);
   assert.match(script,/requestCancelNativeCopy\(activeCopySession\.plan,control\)/);
 });
@@ -1674,7 +1674,7 @@ test('v0.2.4 文件操作菜单支持多选复制，但批量任务必须顺序�
   assert.match(script,/if\(batch\.stopAfterCurrent\)/);
   assert.match(script,/requestCancelNativeCopy\(activeCopySession\.plan,control\)/);
   assert.match(script,/const batch=multi\?/);
-  assert.match(script,/fields\.replaceChildren\(batchListPanel\)/);
+  assert.match(script,/showCopyFields\(batchListPanel\)/);
   assert.match(script,/batchScroll\.replaceChildren\(\)/);
   assert.match(script,/filtered\.slice\(0,500\)/);
 });
@@ -1745,8 +1745,8 @@ test('v0.2.5.1 预检收集全部同名冲突，不跳过、不覆盖、不改�
 
 test('v0.2.5.1 预检状态醒目、冲突列表在目标树上方并允许重新选择目标',()=>{
   assert.match(script,/正在检查复制任务…/);
-  assert.match(script,/fields\.replaceChildren\(checkingPanel\)/);
-  assert.match(script,/fields\.replaceChildren\(preflightNotice,summary,location\)/);
+  assert.match(script,/showCopyFields\(checkingPanel\)/);
+  assert.match(script,/showCopyFields\(preflightNotice,summary,location\)/);
   assert.match(script,/fields\.scrollTop=0/);
   assert.match(script,/noticeDetail\.textContent=conflicts\.length/);
   assert.match(script,/showPreflightError\(error,error\.copyConflicts\|\|\[\]\)/);
