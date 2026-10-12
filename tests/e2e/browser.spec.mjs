@@ -1828,8 +1828,8 @@ test('v0.2.3.15 浅灰实体操作按钮的高度、边界、文字和箭头对�
       '按钮视觉间距精确为 6px：'+JSON.stringify(normal));
     assert.ok(Math.abs(normal.arrow.centerY-normal.ops.rect.centerY)<0.5,
       '下拉箭头与文字按钮垂直居中：'+JSON.stringify(normal));
-    assert.equal(normal.rightViewBg,'rgba(0, 0, 0, 0)',
-      '右侧视图切换按钮默认背景不应受到本次改动影响');
+    assert.equal(normal.rightViewBg,'rgb(255, 241, 228)',
+      '右侧选中的列表视图按钮应保持原有浅橙色选中背景');
     await create.hover();
     assert.equal((await inspect()).create.background,'rgb(213, 220, 226)',
       '新建按钮悬停加深底色');
