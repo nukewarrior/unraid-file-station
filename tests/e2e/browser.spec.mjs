@@ -842,17 +842,13 @@ test('v0.2.4 源父目录与源子目录不可作为目标，多选复制入口�
   assert.equal(errors.length,0,errors.join('\n'));
 });
 
-test('v0.2.3 同名目标阻止原生写入，结果不确定时锁住提交',async t=>{
+test('v0.2.6 同名顶层文件默认忽略，无原生写入且显示已忽略',async t=>{
   const {page,errors,nativePosts}=await pageFor(t,{copyConflictDest:'/mnt/user/downloads'});
   await openCopyDialog(page,'notes.txt');
   await page.getByRole('button',{name:'选择 downloads'}).click();
   await page.locator('.ufs-copy-submit').click();
-  await page.locator('.ufs-copy-feedback',{hasText:'已有同名项目'}).waitFor();
-  const preflightNotice=page.locator('.ufs-preflight-notice');
-  await preflightNotice.getByText('复制预检未通过').waitFor();
-  assert.match(await preflightNotice.innerText(),/本次未开始复制/);
-  assert.equal(await page.locator('.ufs-copy-picker').isVisible(),true);
-  assert.equal(await page.locator('.ufs-copy-progress-panel').count(),0);
+  await page.locator('.ufs-copy-submit',{hasText:'完成'}).waitFor({timeout:30000});
+  assert.match(await page.locator('.ufs-copy-progress-state-text').innerText(),/已忽略同名文件/);
   assert.equal(nativePosts.filter(x=>x.mode==='file').length,0);
   assert.equal(errors.length,0,errors.join('\n'));
 });
@@ -2128,7 +2124,7 @@ test('v0.2.6 忽略同名文件，仅复制未冲突项目，进度与结果正�
   const posts=nativePosts.filter(p=>p.mode==='file');
   assert.deepEqual(posts.map(p=>p.action),['3']);
   assert.equal(posts[0].exist,'');
-  assert.match(await page.locator('.ufs-batch-current .ufs-batch-meta').innerText(),/忽略 1/);
+  assert.match(await page.locator('.ufs-batch-current .ufs-batch-meta').first().innerText(),/忽略 1/);
   await page.locator('.ufs-batch-open-list').last().click();
   assert.equal(await page.locator('.ufs-batch-list-row[data-status="skipped"]').count(),1);
   assert.equal(await page.locator('.ufs-batch-list-row[data-status="success"]').count(),1);

@@ -248,8 +248,7 @@
       mode:allSizedFiles && total>0?'bytes':'items'};
   }
 
-  // Collect every pre-existing target; none of these items may be silently skipped
-  // or overwritten. The caller must refuse the entire batch before any write.
+  // In strict mode, identify existing top-level destination names before writing.
   function findBatchCopyConflicts(plans, destinationItems) {
     const existing=new Set(destinationItems.flatMap(item=>[item.name,item.path]));
     return plans.filter(plan=>existing.has(plan.target) ||
@@ -2595,7 +2594,7 @@
         '正在核验源文件、目标目录及全部同名冲突，请稍候。'));
     checkingPanel.append(checkingContent);
     const feedback=element('div','ufs-create-feedback ufs-copy-feedback',
-      '不允许将文件夹复制到自身内部；文件与文件夹同名但类型不同会阻止复制。');
+      '不允许将文件夹复制到自身内部。');
     feedback.setAttribute('role','status');
     location.append(feedback);
     fields.append(summary,location);
@@ -2624,7 +2623,7 @@
     function clearPreflightError() {
       preflightNotice.hidden=true;
       noticeConflicts.replaceChildren();
-      setFeedback('不允许将文件夹复制到自身内部；文件与文件夹同名但类型不同会阻止复制。');
+      setFeedback('不允许将文件夹复制到自身内部。');
     }
     // Prepared once; shown in place of the picker only after the user submits.
     // This is an indeterminate animation, never a synthetic percentage.
@@ -2959,7 +2958,7 @@
           const entries=await listDirectory(path);
           if(closed || request!==requestVersion) return;
           nodes.set(path, sortedCopyFolders(path, entries));
-          setFeedback('不允许将文件夹复制到自身内部；文件与文件夹同名但类型不同会阻止复制。');
+          setFeedback('不允许将文件夹复制到自身内部。');
         } catch(error) {
           if(closed || request!==requestVersion) return;
           opened.delete(path);
