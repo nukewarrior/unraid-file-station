@@ -2583,3 +2583,57 @@ test('v0.2.7 恢复前原生已提交项目必须先人工核实并跳过，不�
   assert.equal(posts[0].exist,'1','恢复任务保留创建时的覆盖策略');
   assert.equal(errors.length,0,errors.join('\n'));
 });
+
+
+test('v0.2.7 关闭标签页后同源重新打开仍提示手动恢复且不自动提交',async t=>{
+  const {page,errors}=await pageFor(t,{simulateNativeMonitor:true});
+  await page.locator('.ufs-entry').first().waitFor();
+  await page.evaluate(async()=>{
+    const db=await new Promise((resolve,reject)=>{
+      const req=indexedDB.open('ufs-copy-queue-v1',1);
+      req.onsuccess=()=>resolve(req.result);
+      req.onerror=()=>reject(req.error);
+    });
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction('snapshots','readwrite');
+      tx.objectStore('snapshots').put({key:'active',snapshot:{
+        schema:1,savedAt:Date.now(),tasks:[{
+          taskId:'copy_closed_tab001',name:'backup.zip',
+          destination:'/mnt/user/downloads',conflictPolicy:'skip',
+          status:'queued',createdAt:Date.now(),updatedAt:Date.now(),
+          items:[{source:'/mnt/user/TimeMachine/backup/snapshot.zip',
+            folder:false,status:'queued',submission:'not-submitted',size:2048}]
+        }]
+      }});
+      tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);
+    });
+    db.close();
+  });
+  const context=page.context();
+  const address=page.url();
+  await page.close();
+  const reopened=await context.newPage();
+  await reopened.route('**/Shares/Browse?*',route=>route.fulfill({
+    status:200,contentType:'text/html',body:html
+  }));
+  let nativeWrites=0;
+  await reopened.route('**/webGui/include/Control.php*',async route=>{
+    const req=route.request();
+    if(req.method()==='POST'){
+      const body=req.postData()||'';
+      if(/mode=file|mode%3Dfile/.test(body))nativeWrites++;
+    }
+    await route.fulfill({status:200,body:'',contentType:'text/plain'});
+  });
+  await reopened.goto(address,{waitUntil:'domcontentloaded'});
+  const trigger=reopened.locator('.ufs-status .ufs-copy-task-trigger');
+  await trigger.getByText('有 1 项任务待恢复').waitFor({timeout:15000});
+  await trigger.click();
+  const panel=reopened.locator('.ufs-task-recovery');
+  await panel.getByRole('button',{name:'确认恢复队列'}).waitFor();
+  assert.equal(await reopened.locator('.ufs-task-center-row[data-status="queued"]').count(),1);
+  assert.equal(nativeWrites,0,'重新开标签页不得自行执行已保存的队列');
+  await reopened.waitForTimeout(1200);
+  assert.equal(nativeWrites,0,'等待一段时间后仍应保持暂停');
+  assert.equal(errors.length,0,errors.join('\n'));
+});
