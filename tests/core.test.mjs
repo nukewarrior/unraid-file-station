@@ -197,7 +197,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.3\.13\b/);
+  assert.match(script, /@version\s+0\.2\.3\.14\b/);
 });
 
 
@@ -501,7 +501,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.3\.13\b/);
+  assert.match(script, /@version\s+0\.2\.3\.14\b/);
 });
 
 
@@ -1562,4 +1562,14 @@ test('v0.2.3.13 复制弹窗焦点、Esc 分层处理和原生取消安全行为
   assert.match(script,/fields\.replaceChildren\(summary,progressPanel\);[\s\S]*?focusDialog\(\);/);
   assert.match(script,/const yes=window\.confirm\(/);
   assert.match(script,/requestCancelNativeCopy\(activeCopySession\.plan,control\)/);
+});
+
+test('v0.2.3.14 新建文件夹工具栏直接调用现有弹窗，不再通过单项下拉菜单',()=>{
+  assert.match(script, /class="ufs-ico ufs-create-trigger" title="新建文件夹" aria-label="新建文件夹">新建文件夹<\/button>/);
+  assert.doesNotMatch(script, /function showCreateMenu\(/);
+  assert.match(script, /\$\('\.ufs-create-trigger', app\)\.addEventListener\('click', \(\) => \{\s*closeMenu\(\);\s*showCreateFolderDialog\(\);\s*\}\)/);
+  assert.match(script, /function showCreateFolderDialog\(\) \{[\s\S]*?if \(!CREATE_FOLDER_ENABLED \|\| destroyed/);
+  assert.match(script, /if \(!safeWritePath\(parent, true\)\) return notify/);
+  assert.match(script, /await createNativeFolder\(plan,/);
+  assert.match(script, /for \(const selector of \['\.ufs-more', '\.ufs-operations'\]\)/);
 });

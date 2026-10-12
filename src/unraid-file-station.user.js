@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.3.13
+// @version      0.2.3.14
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -1884,7 +1884,7 @@
     if (currentMenu?._ufsTrigger) currentMenu._ufsTrigger.setAttribute('aria-expanded', 'false');
     if (currentMenu) currentMenu.remove();
     currentMenu = null;
-    for (const selector of ['.ufs-more', '.ufs-operations', '.ufs-create-trigger']) {
+    for (const selector of ['.ufs-more', '.ufs-operations']) {
       const trigger = app && $(selector, app);
       if (trigger) trigger.setAttribute('aria-expanded', 'false');
     }
@@ -1978,29 +1978,6 @@
   }
 
   let createFolderBusy = false;
-  function showCreateMenu() {
-    if (destroyed || !activeTab() || state.initializing || state.busy || createFolderBusy || nativeWriteBusy ||
-        $('.ufs-dialog-overlay', app)) return;
-    const trigger = $('.ufs-create-trigger', app);
-    if (currentMenu && trigger.getAttribute('aria-expanded') === 'true') {
-      closeMenu();
-      return;
-    }
-    closeMenu();
-    const menu = element('div', 'ufs-menu');
-    menu.setAttribute('role', 'menu');
-    const item = element('button', '', '新建文件夹');
-    item.type = 'button';
-    item.setAttribute('role', 'menuitem');
-    item.addEventListener('click', () => { closeMenu(); showCreateFolderDialog(); });
-    menu.append(item);
-    app.append(menu);
-    const rect = trigger.getBoundingClientRect();
-    menu.style.left = Math.max(8, Math.min(rect.left, innerWidth - menu.offsetWidth - 8)) + 'px';
-    menu.style.top = Math.max(8, Math.min(rect.bottom + 4, innerHeight - menu.offsetHeight - 8)) + 'px';
-    currentMenu = menu;
-    trigger.setAttribute('aria-expanded', 'true');
-  }
   function showCreateFolderDialog() {
     if (!CREATE_FOLDER_ENABLED || destroyed || !activeTab() || state.busy || createFolderBusy || nativeWriteBusy ||
         $('.ufs-dialog-overlay', app)) return;
@@ -2956,7 +2933,7 @@
     return [
       '<div class="ufs-file-actions" role="toolbar" aria-label="文件内容和视图">',
       '<span class="ufs-section-label">文件</span>',
-      '<button type="button" class="ufs-ico ufs-create-trigger" title="新建" aria-label="新建" aria-haspopup="menu" aria-expanded="false"><span data-ufs-icon="plus"></span> 新建 <span data-ufs-icon="chevron-down"></span></button>',
+      '<button type="button" class="ufs-ico ufs-create-trigger" title="新建文件夹" aria-label="新建文件夹">新建文件夹</button>',
        '<button type="button" class="ufs-ico ufs-operations" title="文件操作" aria-label="文件操作" aria-haspopup="menu" aria-expanded="false">操作 <span data-ufs-icon="chevron-down"></span></button>',
        '<button type="button" class="ufs-ico ufs-copy-task-trigger" title="查看复制任务" hidden>复制任务进行中</button>',
       '<span class="ufs-spacer"></span>',
@@ -3027,7 +3004,10 @@
       if (event.detail > 0) event.currentTarget.blur(); // pointer click only; keyboard focus stays visible
     });
     $('.ufs-operations', app).addEventListener('click', showOperationsMenu);
-    $('.ufs-create-trigger', app).addEventListener('click', showCreateMenu);
+    $('.ufs-create-trigger', app).addEventListener('click', () => {
+      closeMenu();
+      showCreateFolderDialog();
+    });
     setupSidebarResizer();
     onCleanup(setupListScrollbars($('.ufs-list', app)));
     $('.ufs-list', app).addEventListener('scroll', scheduleVirtualWindow, {passive:true});
@@ -3054,12 +3034,10 @@
       if (destroyed || !app.isConnected) return;
       const more = $('.ufs-more', app);
       const operations = $('.ufs-operations', app);
-      const create = $('.ufs-create-trigger', app);
       const currentTrigger = currentMenu && currentMenu._ufsTrigger;
       if (currentMenu && !currentMenu.contains(event.target) &&
           !(more && more.contains(event.target)) &&
           !(operations && operations.contains(event.target)) &&
-          !(create && create.contains(event.target)) &&
           !(currentTrigger && currentTrigger.contains(event.target))) closeMenu();
     }, { signal: lifecycle.signal });
     document.addEventListener('keydown', (event) => {

@@ -449,10 +449,47 @@ test('v0.1.16 网格虚拟滚动同样不放大单次 wheel 输入', async t => 
 
 async function newFolderDialog(page) {
   await page.locator('.ufs-tab.ufs-active .ufs-tab-name',{hasText:'TimeMachine'}).waitFor();
-  await page.locator('.ufs-create-trigger').click();
-  await page.getByRole('menuitem',{name:'新建文件夹'}).click();
+  await page.getByRole('button',{name:'新建文件夹',exact:true}).click();
   await page.locator('.ufs-create-dialog').waitFor();
 }
+
+test('v0.2.3.14 工具栏「新建文件夹」一次点击直接打开弹窗，不产生下拉菜单',async t=>{
+  const {page,errors,nativePosts,created}=await pageFor(t);
+  const trigger=page.locator('.ufs-create-trigger');
+  await trigger.waitFor();
+  assert.equal(await trigger.innerText(),'新建文件夹');
+  assert.equal(await trigger.getAttribute('title'),'新建文件夹');
+  assert.equal(await trigger.getAttribute('aria-label'),'新建文件夹');
+  assert.equal(await trigger.getAttribute('aria-haspopup'),null,
+    '单一动作按钮不再声明弹出菜单');
+  assert.equal(await trigger.getAttribute('aria-expanded'),null);
+  assert.equal(await trigger.locator('.ufs-svg').count(),0,
+    '直接按钮没有原来的加号或下拉箭头');
+
+  // An open action menu should be dismissed by the direct create action.
+  await page.locator('.ufs-operations').click();
+  await page.getByRole('menuitem',{name:'刷新当前目录'}).waitFor();
+  await trigger.click();
+  await page.locator('.ufs-create-dialog').waitFor();
+  assert.equal(await page.getByRole('menuitem',{name:'新建文件夹'}).count(),0);
+  assert.equal(await page.locator('.ufs-menu').count(),0);
+  assert.equal(await page.locator('.ufs-create-dialog').count(),1);
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,0,
+    '仅打开新建弹窗不能写入 NAS');
+  await page.locator('.ufs-create-cancel').click();
+
+  // The button remains keyboard accessible, also without an intermediate menu.
+  await trigger.focus();
+  await page.keyboard.press('Enter');
+  await page.locator('.ufs-create-dialog').waitFor();
+  assert.equal(await page.locator('.ufs-menu').count(),0);
+  await page.locator('.ufs-create-input').fill('直接创建测试');
+  await page.locator('.ufs-create-submit').click();
+  await page.locator('.ufs-entry').filter({hasText:'直接创建测试'}).first().waitFor();
+  assert.deepEqual(created,['直接创建测试']);
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,1);
+  assert.equal(errors.length,0,errors.join('\\n'));
+});
 
 test('v0.2.1 新建文件夹经模拟原生接口提交一次并验证出现后刷新', async t=>{
   const {page,errors,nativePosts,created}=await pageFor(t);
@@ -692,8 +729,7 @@ test('v0.2.2.1 自身重命名与新建操作的 filemonitor 通知不会整页�
   await page.evaluate(()=>window.__ufsMonitorTest.emit('1'));
   await page.locator('.ufs-entry').filter({hasText:'rename-no-reload.txt'}).first().waitFor();
   await page.evaluate(()=>window.__ufsMonitorTest.emit('0'));
-  await page.locator('.ufs-create-trigger').click();
-  await page.getByRole('menuitem',{name:'新建文件夹'}).click();
+  await page.getByRole('button',{name:'新建文件夹',exact:true}).click();
   await page.locator('.ufs-create-input').fill('create-no-reload');
   await page.locator('.ufs-create-submit').click();
   await page.evaluate(()=>window.__ufsMonitorTest.emit('1'));
