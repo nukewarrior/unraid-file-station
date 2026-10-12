@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.7.2
+// @version      0.2.7.3
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
@@ -627,29 +627,39 @@
   function stripNativeStatusHtml(status) {
     const text=String(status??'');
     // Strip markup before decoding into text nodes; never inject native output as HTML.
-    const clean=text.replace(/<[^>]*>/g,'').replace(/&nbsp;/g,' ')
+    const clean=text.replace(/<br\s*\/?>|<\/(?:div|p|li|tr)>/gi,'\n')
+      .replace(/<[^>]*>/g,'').replace(/&nbsp;/g,' ')
       .replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>');
     return decodeRsyncFilename(clean);
   }
   // The Nchan status may itself be JSON (e.g. {"action":8,"text":["Copying...","..."]}).
   // Unwrap only its text payload; JSON metadata and malformed wrappers are not filenames.
   function extractNativeProgressText(status) {
-    if(typeof status!=='string') return '';
-    const raw=status.trim();
-    if(!raw.startsWith('{') && !raw.startsWith('[')) return status;
-    let payload;
-    try { payload=JSON.parse(raw); } catch (_) { return ''; }
+    let payload=status;
+    if(typeof payload==='string') {
+      const raw=payload.trim();
+      if(!raw.startsWith('{') && !raw.startsWith('[')) return payload;
+      try { payload=JSON.parse(raw); } catch (_) { return ''; }
+    }
     if(!payload || typeof payload!=='object' || Array.isArray(payload)) return '';
     const chunks=typeof payload.text==='string'?[payload.text]:
       Array.isArray(payload.text)?payload.text:[];
     return chunks.filter(chunk=>typeof chunk==='string').join('\n');
+  }
+  // Nchan can publish {status:"..."} or {text:[...]}; both are read-only.
+  function nativeCopyProgressPayload(data) {
+    if(typeof data?.status==='string' || (data?.status && typeof data.status==='object'))
+      return data.status;
+    if(typeof data?.text==='string' || Array.isArray(data?.text)) return data;
+    return '';
   }
   function parseRsyncProgress(status) {
     const text=stripNativeStatusHtml(extractNativeProgressText(status)).replace(/\r/g,'\n');
     const lines=text.split('\n').map(line=>line.trim()).filter(Boolean);
     // In Unraid, progress2 output normally follows the current filename.
     // Accept decimal percentages, speed and ETA only from a real rsync line.
-    const matched=[...text.matchAll(/(?:^|\s)([\d,.]+[kKMGTPE]?(?:i?B)?)\s+(\d{1,3}(?:\.\d+)?)%\s+([\d,.]+\s*[kKMGTPE]?(?:i?B)?\/s)\s+(\d{1,4}:\d\d(?::\d\d)?)/g)].pop();
+    // rsync sometimes omits ETA, while still providing valid observed speed.
+    const matched=[...text.matchAll(/(?:^|\s)([\d,.]+[kKMGTPE]?(?:i?B)?)\s+(\d{1,3}(?:\.\d+)?)%\s+([\d,.]+\s*[kKMGTPE]?(?:i?B)?\/s)(?:\s+(\d{1,4}:\d\d(?::\d\d)?))?/g)].pop();
     let percent=null,bytes=null,transferred='',speed='',eta='';
     if(matched) {
       const value=Number(matched[2]);
@@ -660,7 +670,7 @@
         // Only expose exact bytes when rsync gives an unsuffixed integer.
         bytes=/^[\d,]+$/.test(transferred)?Number(transferred.replace(/,/g,'')):null;
         speed=matched[3].replace(/\s+/g,'');
-        eta=matched[4];
+        eta=matched[4]||'';
       }
     }
     let filename='';
@@ -671,6 +681,11 @@
       }
     }
     // Status-only events ("Done", errors, JSON metadata) must never replace the current filename.
+    // Never synthesize a percentage, bytes or ETA from speed-only status.
+    if(!speed && /(?:Copying\s*\.{2,3}|xfr#\d+|to-chk=)/i.test(text)) {
+      const rate=[...text.matchAll(/(?:^|\s)([\d,.]+\s*[kKMGTPE]?(?:i?B)?\/s)(?=\s|$)/g)].pop();
+      if(rate) speed=rate[1].replace(/\s+/g,'');
+    }
     return {percent,bytes,transferred,speed,eta,filename,text};
   }
   function shortenCopyName(value,max=96) {
@@ -736,8 +751,9 @@
       let eventDone = false;
       let observedOwnTask = false;
       const unwatch = observeNativeProgress(data => {
-        if (typeof data.status === 'string' && data.status) {
-          const info=parseRsyncProgress(data.status);
+        const payload=nativeCopyProgressPayload(data);
+        if(payload) {
+          const info=parseRsyncProgress(payload);
           if(info.text) progress(info.text, null, info);
         }
         if (data.error) eventError = stripNativeStatusHtml(data.error).slice(0, 200);
@@ -1001,6 +1017,13 @@
     "#ufs-app .ufs-copy-inline-error[data-error=true]{color:#c13d37}",
     "#ufs-app .ufs-copy-dialog[data-inline-mkdir=active] .ufs-copy-submit{opacity:.42;cursor:not-allowed}",
     "#ufs-app .ufs-copy-destination{margin-top:9px;color:var(--ufs-muted);font-size:12px;overflow-wrap:anywhere}",
+    "#ufs-app .ufs-copy-fixed-options{flex:0 0 auto;display:flex;flex-direction:column;gap:8px;min-width:0;padding:9px 20px 10px;border-top:1px solid var(--ufs-border);background:var(--ufs-bg)}",
+    "#ufs-app .ufs-copy-fixed-options[hidden]{display:none!important}",
+    "#ufs-app .ufs-copy-fixed-options .ufs-copy-destination{margin:0;min-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal}",
+    "#ufs-app .ufs-copy-fixed-options .ufs-copy-policy{margin:0;padding-top:7px;gap:14px}",
+    "#ufs-app .ufs-batch-speed-row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:20px;font-size:12px;font-variant-numeric:tabular-nums}",
+    "#ufs-app .ufs-batch-speed-value{font-weight:600;text-align:right;color:var(--ufs-text);overflow-wrap:anywhere}",
+    "#ufs-app .ufs-batch-speed-row[hidden]{display:none!important}",
     // v0.2.6.1: DSM-style outlined radio with a small center dot; protect it from Unraid global input focus styles.
     "#ufs-app .ufs-copy-policy{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-top:12px;padding-top:11px;border-top:1px solid var(--ufs-border);font-size:12px}",
     "#ufs-app .ufs-copy-policy-title{color:var(--ufs-muted);font-weight:500}",
@@ -1647,8 +1670,9 @@
     let stopped=false;
     const unwatch=observeNativeProgress(data=>{
       if(stopped || destroyed || !job.recoveryMonitoring)return;
-      if(typeof data.status==='string' && data.status) {
-        const info=parseRsyncProgress(data.status);
+      const payload=nativeCopyProgressPayload(data);
+      if(payload) {
+        const info=parseRsyncProgress(payload);
         copyJobSignal(job,'copying',info);
         if(!signature.folder && Number.isFinite(info?.percent))
           job.percent=Math.max(job.percent??0,Math.min(99.9,info.percent));
@@ -3496,7 +3520,7 @@
     picker.setAttribute('role','tree');
     picker.setAttribute('aria-label','选择复制目标文件夹');
     const destinationText=element('div','ufs-copy-destination','请选择目标文件夹');
-    location.append(picker,destinationText);
+    location.append(picker);
     let conflictPolicy='skip';
     const policy=element('div','ufs-copy-policy');
     policy.setAttribute('role','group');
@@ -3521,7 +3545,6 @@
       option.append(radio,element('span','ufs-copy-policy-ring'),element('span','',label));
       policy.append(option);
     }
-    location.append(policy);
     const preflightNotice=element('section','ufs-preflight-notice');
     preflightNotice.setAttribute('role','alert');
     preflightNotice.setAttribute('aria-live','assertive');
@@ -3545,6 +3568,8 @@
       '不允许将文件夹复制到自身内部。');
     feedback.setAttribute('role','status');
     location.append(feedback);
+    const fixedOptions=element('div','ufs-copy-fixed-options');
+    fixedOptions.append(destinationText,policy);
     fields.append(summary,location);
     function showPreflightError(error,conflicts=[]) {
       preflightNotice.hidden=false;
@@ -3562,7 +3587,7 @@
         noticeConflicts.append(row);
       }
       noticeAdvice.textContent='请选择其他目标文件夹，或取消后重新选择需要复制的项目。';
-      fields.replaceChildren(preflightNotice,summary,location);
+      showCopyFields(preflightNotice,summary,location);
       fields.scrollTop=0;
       // Keep the original status text for compatibility with screen readers
       // and tests, but never rely on it as the primary visible error.
@@ -3619,6 +3644,16 @@
     progressNote.setAttribute('aria-live','polite');
     progressPanel.append(progressNote);
     let visibleCopyPhase='checking';
+    let lastCopyTransferred='',lastCopyEta='';
+    function renderSingleCopyMetrics() {
+      if(visibleCopyPhase!=='copying') return;
+      const rate=currentCopySpeed(copyJob);
+      progressMetrics.textContent=[
+        lastCopyTransferred?'已传输 '+lastCopyTransferred:'',
+        '当前速度：'+(rate || (copyJob?.speedUpdatedAt?'暂无实时速度数据':'正在获取复制速度…')),
+        rate && lastCopyEta?'剩余 '+lastCopyEta:''
+      ].filter(Boolean).join(' · ');
+    }
     function renderCopyProgress(phase,message='') {
       visibleCopyPhase=phase;
       progressPanel.dataset.phase=phase;
@@ -3645,7 +3680,9 @@
         progressFile.textContent='';
         progressFile.removeAttribute('title');
         progressMetrics.textContent='';
-      }
+        lastCopyTransferred='';
+        lastCopyEta='';
+      } else renderSingleCopyMetrics();
       track.setAttribute('aria-label',phase==='success'?'复制完成':
         phase==='uncertain'?'复制结果无法确认':'复制任务进行中，进度未知');
       if(phase==='success') {fill.style.width='100%';track.setAttribute('aria-valuenow','100');}
@@ -3677,8 +3714,10 @@
           track.setAttribute('aria-valuenow',String(info.percent));
           track.setAttribute('aria-label','复制进度 '+info.percent+'%');
           progressIndicator.textContent=info.percent+'%';
-          progressMetrics.textContent=[info.transferred?'已传输 '+info.transferred:(info.bytes!=null?info.bytes.toLocaleString()+' 字节':''),info.speed,info.eta?'剩余 '+info.eta:''].filter(Boolean).join(' · ');
         }
+        if(info?.transferred) lastCopyTransferred=info.transferred;
+        if(info?.eta) lastCopyEta=info.eta;
+        renderSingleCopyMetrics();
         // Do not dump full rsync paths and octal bytes into a multi-line panel.
         progressNote.textContent='正在复制，请保持此页面打开。';
       }
@@ -3693,7 +3732,11 @@
     submit.type='submit';
     submit.disabled=true;
     footer.append(background,cancel,submit);
-    form.append(fields,footer);
+    form.append(fields,fixedOptions,footer);
+    function showCopyFields(...nodes) {
+      fields.replaceChildren(...nodes);
+      fixedOptions.hidden=!nodes.includes(location);
+    }
     dialog.append(header,form);
     overlay.append(dialog);
     app.append(overlay);
@@ -3865,6 +3908,7 @@
             if(selected!==path) clearPreflightError();
             selected=path;
             destinationText.textContent='目标：'+path;
+            destinationText.title=path;
             submit.disabled=!!inlineDraft || mkdirUncertain;
             // Choosing a destination also expands it. Clicking an already
             // expanded folder keeps it open; only the arrow can collapse it.
@@ -4032,6 +4076,7 @@
         opened.add(created.path);
         selected=created.path;
         destinationText.textContent='目标：'+created.path;
+        destinationText.title=created.path;
         inlineDraft=null;
         delete dialog.dataset.inlineMkdir;
         submit.disabled=false;
@@ -4100,8 +4145,13 @@
     const batchCurrent=element('div','ufs-batch-current');
     const batchCurrentName=element('span','ufs-batch-current-name','正在准备复制任务…');
     const batchCurrentInfo=element('span','ufs-batch-meta','等待安全预检');
-    const batchCurrentMetrics=element('span','ufs-batch-meta');
-    batchCurrent.append(batchCurrentName,batchCurrentInfo,batchCurrentMetrics);
+    const batchCurrentMetrics=element('div','ufs-batch-speed-row');
+    const batchSpeedValue=element('strong','ufs-batch-speed-value','正在获取复制速度…');
+    batchCurrentMetrics.append(element('span','ufs-batch-meta','当前速度'),batchSpeedValue);
+    const batchEtaRow=element('div','ufs-batch-speed-row');
+    const batchEtaValue=element('span','ufs-batch-speed-value','—');
+    batchEtaRow.append(element('span','ufs-batch-meta','预计剩余'),batchEtaValue);
+    batchCurrent.append(batchCurrentName,batchCurrentInfo,batchCurrentMetrics,batchEtaRow);
     const batchStats=element('div','ufs-batch-stats');
     const batchStatsDone=element('span','','成功 0');
     const batchStatsPending=element('span','','待执行 '+entries.length);
@@ -4191,7 +4241,7 @@
       cancel.textContent=batch.started?'返回复制进度':'返回目标选择';
       submit.hidden=true;
       background.hidden=true;
-      fields.replaceChildren(batchListPanel);
+      showCopyFields(batchListPanel);
       renderBatchRows();
       batchSearch.focus({preventScroll:true});
     }
@@ -4205,7 +4255,7 @@
         (batch.stopAfterCurrent?'等待当前项结束':'停止队列…'):'取消';
       submit.hidden=batch.started && !batch.finished;
       background.hidden=!batch.started || batch.finished;
-      fields.replaceChildren(...(batch.started?[batchPanel]:
+      showCopyFields(...(batch.started?[batchPanel]:
         preflightNotice.hidden?[summary,location]:[preflightNotice,summary,location]));
       if(!batch.started) renderPicker();
       focusDialog();
@@ -4215,6 +4265,15 @@
     batchListOpen.addEventListener('click',showBatchList);
     if(multi) summary.querySelector('.ufs-batch-open-list').addEventListener('click',showBatchList);
 
+    function refreshBatchCurrentMetrics() {
+      if(!multi || !batch.started || batch.finished || batch.currentIndex<0) return;
+      const rate=currentCopySpeed(copyJob),phase=copyJob?.phase;
+      batchSpeedValue.textContent=phase==='checking'?'正在检查目标…':
+        phase==='verifying'?'正在核对复制结果…':
+        rate || (copyJob?.speedUpdatedAt?'暂无实时速度数据':'正在获取复制速度…');
+      batchEtaValue.textContent=phase==='copying' && rate && copyJob?.eta?copyJob.eta:'—';
+      batchEtaRow.hidden=phase!=='copying';
+    }
     function renderBatchProgress() {
       if(!multi) return;
       const done=batch.rows.filter(row=>['success','skipped'].includes(row.status)).length;
@@ -4241,7 +4300,9 @@
           '队列已停止，后续任务未执行':
           '复制任务已暂停，需检查失败或待核实项目';
         batchCurrentInfo.textContent='成功 '+(done-skipped)+' · 忽略 '+skipped+' · 问题 '+problems+' · 未执行 '+waiting;
+        batchCurrentMetrics.hidden=batch.phase==='success'||!batch.error;
         batchCurrentMetrics.textContent=batch.error;
+        batchEtaRow.hidden=true;
         batchListOpen.textContent='查看全部 '+batch.rows.length+' 项结果 →';
         batchStopChoices.hidden=true;
         if(batch.phase==='success') {
@@ -4249,6 +4310,7 @@
           batchFill.style.background='#258755';
         }
       } else if(current) {
+        refreshBatchCurrentMetrics();
         batchCurrentName.textContent=current.entry.name;
         batchCurrentInfo.textContent='第 '+(batch.currentIndex+1)+' / '+entries.length+' 项'+
           (current.entry.folder?' · 文件夹':' · 文件')+
@@ -4311,7 +4373,7 @@
       heading.textContent='正在检查复制任务';
       checkingPanel.querySelector('.ufs-preflight-checking-detail').textContent=
         '正在核验 '+entries.length+' 项源文件、目标目录及同名冲突，请稍候。';
-      fields.replaceChildren(checkingPanel);
+      showCopyFields(checkingPanel);
       focusDialog();
       try {
         await preflightBatchCopy(plans);
@@ -4324,7 +4386,7 @@
         copyJob.recoverable=true;
         copyJob.preflightRejected=true;
         heading.textContent='复制到';
-        fields.replaceChildren(summary,location);
+        showCopyFields(summary,location);
         background.hidden=true;
         cancel.hidden=false;
         cancel.textContent='取消';
@@ -4356,8 +4418,11 @@
       cancel.disabled=false;
       background.hidden=false;
       dismiss.title='后台运行';
-      fields.replaceChildren(batchPanel);
+      showCopyFields(batchPanel);
       focusDialog();
+      const batchMetricsTimer=setInterval(()=>{
+        if(!destroyed && !closed && batch.view==='main') refreshBatchCurrentMetrics();
+      },1000);
       try {
         if(batch.stopAfterCurrent) {
           batch.phase='stopped';
@@ -4368,7 +4433,11 @@
             batch.currentPercent=null;
             copyJob.speed='';
             copyJob.speedUpdatedAt=0;
-            batchCurrentMetrics.textContent='';
+            copyJob.eta='';
+            batchSpeedValue.textContent='正在获取复制速度…';
+            batchEtaValue.textContent='—';
+            batchCurrentMetrics.hidden=false;
+            batchEtaRow.hidden=false;
             const row=batch.rows[i];
             row.status='copying';
             renderBatchRows();
@@ -4383,8 +4452,7 @@
               if(info && Number.isFinite(info.percent) && !row.entry.folder) {
                 batch.currentPercent=Math.max(batch.currentPercent??0,info.percent);
               }
-              if(info?.speed || info?.eta) batchCurrentMetrics.textContent=
-                [info.speed||'',info.eta?'剩余 '+info.eta:''].filter(Boolean).join(' · ');
+              if(info?.eta) copyJob.eta=info.eta;
               renderBatchProgress();
             },control,async()=>copyItemCheckpoint(copyJob,i,'submission-intent','intent-saved'));
             await copyItemCheckpoint(copyJob,i,
@@ -4419,6 +4487,7 @@
         // A preflight error may have started no native task; it still cannot
         // automatically retry the batch or silently skip failed entries.
       } finally {
+        clearInterval(batchMetricsTimer);
         batch.finished=true;
         busy=false;
         finalPhase=batch.phase;
@@ -4475,11 +4544,14 @@
       progressTargetPath.textContent=plan.destinationDir;
       heading.textContent='正在复制';
       lastActiveCopyStep=0;
-      fields.replaceChildren(summary,progressPanel);
+      showCopyFields(summary,progressPanel);
       // The selected folder button was removed; keep Esc available while
       // the native copy task runs and the modal switches to progress.
       focusDialog();
       renderCopyProgress('checking');
+      const singleMetricsTimer=setInterval(()=>{
+        if(!destroyed && !closed) renderSingleCopyMetrics();
+      },1000);
       try {
         await copyItemCheckpoint(copyJob,0,'checking','not-submitted');
         const outcome=await copyNativeEntry(plan,updateCopyProgress,control,
@@ -4542,11 +4614,12 @@
           updateCopyTaskButton();
           background.hidden=true;
           cancel.textContent='取消';
-          fields.replaceChildren(summary,location);
+          showCopyFields(summary,location);
           showPreflightError(error,[]);
           updateCopyTaskButton();
         }
       } finally {
+        clearInterval(singleMetricsTimer);
         busy=false;
         if(copyJob) copyJob.phase=finalPhase==='picker'?'failed':finalPhase;
         if(dialog.isConnected) {

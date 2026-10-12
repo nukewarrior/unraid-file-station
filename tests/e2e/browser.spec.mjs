@@ -1999,6 +1999,49 @@ test('v0.2.4 百项文件使用独立清单视图，搜索后返回不丢目标�
   assert.equal(errors.length,0,errors.join('\n'));
 });
 
+
+test('v0.2.7.3 小窗口固定忽略覆盖，清单和进度时隐藏策略',async t=>{
+  const {page,errors}=await pageFor(t);
+  await page.evaluate(()=>document.querySelector('#ufs-app').style.setProperty('--ufs-available-height','400px'));
+  await openBatchCopyDialog(page,['Photos','notes.txt']);
+  const fixed=page.locator('.ufs-copy-fixed-options');
+  await fixed.waitFor({state:'visible'});
+  const rect=await page.locator('.ufs-copy-dialog').evaluate(el=>{
+    const a=el.querySelector('.ufs-copy-fixed-options').getBoundingClientRect();
+    const b=el.querySelector('.ufs-create-buttons').getBoundingClientRect();
+    return {height:a.height,overlap:a.bottom>b.top};
+  });
+  assert.ok(rect.height>0 && !rect.overlap,JSON.stringify(rect));
+  await page.locator('.ufs-create-fields').evaluate(el=>el.scrollTop=el.scrollHeight);
+  assert.equal(await fixed.isVisible(),true);
+  await page.locator('.ufs-copy-policy-radio[value="overwrite"]').check();
+  await page.getByRole('button',{name:'查看全部 2 项'}).click();
+  await fixed.waitFor({state:'hidden'});
+  await page.locator('.ufs-batch-list-back').click();
+  await fixed.waitFor({state:'visible'});
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-batch-panel').waitFor();
+  await fixed.waitFor({state:'hidden'});
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.7.3 批量复制顶层 text 事件同步弹窗与状态栏速度',async t=>{
+  const {page,errors}=await pageFor(t,{simulateNativeMonitor:true,longCopy:true});
+  await openBatchCopyDialog(page,['Photos','notes.txt']);
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-batch-panel').waitFor();
+  await page.locator('.ufs-batch-speed-value',{hasText:'正在获取复制速度'}).first().waitFor();
+  await page.evaluate(()=>window.__ufsMonitorTest.emitFileManager({
+    text:['Copying... /mnt/user/TimeMachine/Photos/video.mkv','5.10M 42% 62.8MB/s 0:00:06']
+  }));
+  await page.locator('.ufs-batch-speed-value',{hasText:'62.8MB/s'}).first().waitFor();
+  await page.locator('.ufs-status .ufs-copy-task-trigger',{hasText:'62.8MB/s'}).waitFor();
+  assert.match(await page.locator('.ufs-batch-speed-row').last().innerText(),/0:00:06/);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
 test('v0.2.4 混合文件及文件夹可依次复制，显示总体进度和逐项成功结果',async t=>{
   const {page,errors,nativePosts,copied}=await pageFor(t);
   await openBatchCopyDialog(page,['Photos','notes.txt']);

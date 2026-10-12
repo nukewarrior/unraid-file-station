@@ -2037,8 +2037,37 @@ test('v0.2.7.1 刷新后仅重新观察严格匹配的原生任务，无法确�
 test('v0.2.7.2 Tampermonkey 自动更新元数据与脚本版本保持一致',()=>{
   const header=script.split('// ==/UserScript==',1)[0];
   const updateUrl='https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js';
-  assert.match(header,/^\/\/ @version\s+0\.2\.7\.2$/m);
+  assert.match(header,/^\/\/ @version\s+0\.2\.7\.3$/m);
   assert.ok(header.split('\n').includes('// @updateURL    '+updateUrl));
   assert.ok(header.split('\n').includes('// @downloadURL  '+updateUrl));
   assert.equal(header.match(/^\/\/ @version\s+/gm)?.length,1);
+});
+
+test('v0.2.7.3 无 ETA 的真实 rsync 速度和顶层原生 text 数组',()=>{
+  const {api}=createAPI();
+  const noEta=api.parseRsyncProgress('Copying... videos/a.mp4\n5,242,880 28% 45.2MB/s');
+  assert.equal(noEta.filename,'videos/a.mp4');
+  assert.equal(noEta.percent,28);
+  assert.equal(noEta.speed,'45.2MB/s');
+  assert.equal(noEta.eta,'');
+  const speedOnly=api.parseRsyncProgress('Copying... videos/b.mp4\ncurrent 31.3MB/s');
+  assert.equal(speedOnly.percent,null);
+  assert.equal(speedOnly.speed,'31.3MB/s');
+  const direct=api.parseRsyncProgress({action:8,text:['Copying... videos/c.mp4','5.10M 42% 6.4MB/s']});
+  assert.equal(direct.filename,'videos/c.mp4');
+  assert.equal(direct.speed,'6.4MB/s');
+  assert.equal(direct.percent,42);
+  assert.equal(api.parseRsyncProgress('{"action":8,"text":["Done"]}').filename,'');
+  assert.equal(api.parseRsyncProgress('{"action":8,"text":["Done"]}').speed,'');
+});
+
+test('v0.2.7.3 固定复制策略栏、实时速度状态与超时清理结构',()=>{
+  assert.match(script,/form\.append\(fields,fixedOptions,footer\)/);
+  assert.match(script,/fixedOptions\.hidden=!nodes\.includes\(location\)/);
+  assert.match(script,/ufs-copy-fixed-options\[hidden\]/);
+  assert.match(script,/正在获取复制速度/);
+  assert.match(script,/暂无实时速度数据/);
+  assert.match(script,/copyJob\.eta=''/);
+  assert.match(script,/clearInterval\(batchMetricsTimer\)/);
+  assert.match(script,/clearInterval\(singleMetricsTimer\)/);
 });
