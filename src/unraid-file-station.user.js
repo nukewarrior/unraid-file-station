@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.7.3
+// @version      0.2.7.4
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
@@ -682,8 +682,8 @@
     }
     // Status-only events ("Done", errors, JSON metadata) must never replace the current filename.
     // Never synthesize a percentage, bytes or ETA from speed-only status.
-    if(!speed && /(?:Copying\s*\.{2,3}|xfr#\d+|to-chk=)/i.test(text)) {
-      const rate=[...text.matchAll(/(?:^|\s)([\d,.]+\s*[kKMGTPE]?(?:i?B)?\/s)(?=\s|$)/g)].pop();
+    if(!speed && /(?:Copying\s*\.{2,3}|复制中|正在复制|xfr#\d+|to-chk=)/i.test(text)) {
+      const rate=[...text.matchAll(/(?:^|\s)([\d,.]+\s*[kKMGTPE]?(?:i?B)?\/s)(?=\s|$|[,;])/g)].pop();
       if(rate) speed=rate[1].replace(/\s+/g,'');
     }
     return {percent,bytes,transferred,speed,eta,filename,text};
