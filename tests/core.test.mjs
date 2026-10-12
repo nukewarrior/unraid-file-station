@@ -197,7 +197,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.7\b/);
+  assert.match(script, /@version\s+0\.2\.8\b/);
 });
 
 
@@ -501,7 +501,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.7\b/);
+  assert.match(script, /@version\s+0\.2\.8\b/);
 });
 
 
@@ -2023,7 +2023,7 @@ test('v0.2.7 持久化恢复状态不允许盲目重发失败及提交阶段项�
 
 test('v0.2.7.1 刷新后仅重新观察严格匹配的原生任务，无法确定时不宣称成功',()=>{
   assert.match(script,/async function monitorRecoveredNativeTask\(\)/);
-  assert.match(script,/if\(matches\.length!==1\)return/);
+  assert.match(script,/if\(matches\.length!==1\)\s*\{[\s\S]*?return;/);
   assert.match(script,/matchesCopyTask\(active,signature\)/);
   assert.match(script,/const unwatch=observeNativeProgress\(data=>/);
   assert.match(script,/if\(finishedEvent && sameTaskObserved\)/);
@@ -2042,7 +2042,7 @@ test('v0.2.7.1 刷新后仅重新观察严格匹配的原生任务，无法确�
 test('v0.2.7.2 Tampermonkey 自动更新元数据与脚本版本保持一致',()=>{
   const header=script.split('// ==/UserScript==',1)[0];
   const updateUrl='https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js';
-  assert.match(header,/^\/\/ @version\s+0\.2\.7\.6$/m);
+  assert.match(header,/^\/\/ @version\s+0\.2\.8\.0$/m);
   assert.ok(header.split('\n').includes('// @updateURL    '+updateUrl));
   assert.ok(header.split('\n').includes('// @downloadURL  '+updateUrl));
   assert.equal(header.match(/^\/\/ @version\s+/gm)?.length,1);
@@ -2092,4 +2092,48 @@ test('v0.2.7.5 单项与批量使用统一布局、统一阶段及真实速度�
   assert.match(script,/按项目计算 · 非字节进度/);
   assert.match(script,/currentCopySpeed\(copyJob\)/);
   assert.match(script,/ufs-unified-metrics/);
+});
+
+
+test('v0.2.8 诊断模块默认对文件名、路径和认证信息脱敏',()=>{
+  const {api}=createAPI();
+  const clean=api.diagnosticSanitize({
+    source:'/mnt/user/Photos/私密相册/旅行.jpg',
+    destination:'/mnt/user/Backup',
+    csrf_token:'very-secret-value',
+    message:'读取 /mnt/user/Photos/私密相册 失败',
+    endpoint:'https://nas.example.com/secret?token=abc'
+  });
+  assert.match(clean.source,/^\[PATH:path_[a-z0-9]+\]$/);
+  assert.match(clean.destination,/^\[PATH:path_[a-z0-9]+\]$/);
+  assert.equal(clean.csrf_token,'[REDACTED]');
+  assert.equal(JSON.stringify(clean).includes('私密相册'),false);
+  assert.equal(JSON.stringify(clean).includes('very-secret-value'),false);
+  assert.equal(JSON.stringify(clean).includes('nas.example.com'),false);
+});
+
+test('v0.2.8 默认记录警告和关键操作，但不保存增强诊断事件',async()=>{
+  const {api}=createAPI();
+  api.diagnosticLog('INFO','queue.checkpoint',{
+    taskId:'copy_test',status:'checking',source:'/mnt/user/hidden.zip'
+  });
+  api.diagnosticLog('DEBUG','native.poll',{elapsed:700});
+  api.diagnosticMarkIssue();
+  const events=await api.diagnosticReadAll();
+  assert.equal(events.some(e=>e.code==='queue.checkpoint'),true);
+  assert.equal(events.some(e=>e.code==='native.poll'),false);
+  assert.equal(events.some(e=>e.code==='user.issue_marker'),true);
+  assert.equal(JSON.stringify(events).includes('hidden.zip'),false);
+});
+
+test('v0.2.8 诊断界面、持久化与导出必须与复制队列独立',()=>{
+  assert.match(script,/const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1'/);
+  assert.match(script,/const COPY_QUEUE_DATABASE='ufs-copy-queue-v1'/);
+  assert.match(script,/function diagnosticPrune\(/);
+  assert.match(script,/function diagnosticExport\(/);
+  assert.match(script,/function diagnosticMarkIssue\(/);
+  assert.match(script,/ufs-diagnostic-button/);
+  assert.match(script,/diagnosticLog\('INFO','copy\.submission_intent'/);
+  assert.match(script,/diagnosticLog\('WARN','queue\.restore_assessed'/);
+  assert.match(script,/window\.addEventListener\('unhandledrejection',captureRejection/);
 });
