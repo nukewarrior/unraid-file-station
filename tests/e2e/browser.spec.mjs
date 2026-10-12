@@ -2157,6 +2157,42 @@ test('v0.2.6 覆盖选项仅显示 Tooltip，无常驻提醒，原生 exist=1',a
   assert.equal(errors.length,0,errors.join('\n'));
 });
 
+test('v0.2.6.1 圆点样式不填满外圈，切换选项时 Tooltip 不重叠、不留下方框',async t=>{
+  const {page,errors}=await pageFor(t);
+  await openCopyDialog(page,'notes.txt');
+  const options=page.locator('.ufs-copy-policy-choice');
+  const radios=page.locator('.ufs-copy-policy-radio');
+  assert.equal(await radios.first().isChecked(),true);
+  assert.equal(await page.locator('.ufs-copy-policy-ring').count(),2);
+  const rings=await options.evaluateAll(list=>list.map(el=>{
+    const mark=el.querySelector('.ufs-copy-policy-ring');
+    const before=getComputedStyle(mark);
+    const dot=getComputedStyle(mark,'::after');
+    return {width:Math.round(mark.getBoundingClientRect().width),
+      radius:before.borderRadius,border:before.borderTopWidth,
+      dotContent:dot.content,dotWidth:dot.width,focusOutline:getComputedStyle(el.querySelector('input')).outlineStyle};
+  }));
+  assert.equal(rings[0].width,18);
+  assert.equal(rings[0].radius,'50%');
+  assert.equal(rings[0].border,'2px');
+  assert.equal(rings[0].dotWidth,'8px','选中内点小于外圈，不能整圈填满');
+  assert.equal(rings[1].dotContent,'none','未选中为空心');
+  assert.equal(rings[0].focusOutline,'none','不能保留原生输入框方形焦点框');
+
+  await radios.last().check();
+  assert.equal(await radios.last().isChecked(),true);
+  await options.first().hover();
+  const afterSwitch=await options.evaluateAll(list=>list.map(el=>{
+    const tip=getComputedStyle(el,'::after');
+    return {visible:tip.visibility,content:tip.content};
+  }));
+  assert.equal(afterSwitch.filter(x=>x.visible==='visible').length,1,
+    JSON.stringify(afterSwitch));
+  assert.match(afterSwitch[0].content,/跳过目标/);
+  assert.equal(afterSwitch[1].visible,'hidden');
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
 test('v0.2.6 同名文件夹按忽略策略合并，不将目录本身整体跳过',async t=>{
   const {page,errors,nativePosts,copied}=await pageFor(t,{
     copyConflictDest:'/mnt/user/downloads',copyConflictNames:[['Photos',true]]

@@ -197,7 +197,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.6\b/);
+  assert.match(script, /@version\s+0\.2\.6\.1\b/);
 });
 
 
@@ -501,7 +501,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.6\b/);
+  assert.match(script, /@version\s+0\.2\.6\.1\b/);
 });
 
 
@@ -1765,4 +1765,12 @@ test('v0.2.6 批量忽略文件也应计入已处理进度，不伪造目录百�
   assert.equal(api.batchCopyOverallProgress(rows).percent,100);
   rows[1].status='pending';
   assert.equal(api.batchCopyOverallProgress(rows).percent,50);
+});
+
+test('v0.2.6.1 radio 改为外圈 + 小圆点，悬浮与焦点提示不同时展示',()=>{
+  assert.match(script,/\.ufs-copy-policy-radio:checked\+\.ufs-copy-policy-ring::after/);
+  assert.match(script,/\.ufs-copy-policy-radio:focus-visible\+\.ufs-copy-policy-ring/);
+  assert.match(script,/ufs-copy-policy:not\(:has\(\.ufs-copy-policy-choice:hover\)\)/);
+  assert.doesNotMatch(script,/ufs-copy-policy-choice:focus-within::after/);
+  assert.match(script,/option\.append\(radio,element\('span','ufs-copy-policy-ring'\)/);
 });

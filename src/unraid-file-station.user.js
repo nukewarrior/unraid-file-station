@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.6
+// @version      0.2.6.1
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -979,14 +979,20 @@
     "#ufs-app .ufs-copy-inline-error[data-error=true]{color:#c13d37}",
     "#ufs-app .ufs-copy-dialog[data-inline-mkdir=active] .ufs-copy-submit{opacity:.42;cursor:not-allowed}",
     "#ufs-app .ufs-copy-destination{margin-top:9px;color:var(--ufs-muted);font-size:12px;overflow-wrap:anywhere}",
-    // v0.2.6: insert only the confirmed compact policy controls.
+    // v0.2.6.1: DSM-style outlined radio with a small center dot; protect it from Unraid global input focus styles.
     "#ufs-app .ufs-copy-policy{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-top:12px;padding-top:11px;border-top:1px solid var(--ufs-border);font-size:12px}",
     "#ufs-app .ufs-copy-policy-title{color:var(--ufs-muted);font-weight:500}",
     "#ufs-app .ufs-copy-policy-choice{position:relative;display:inline-flex;align-items:center;gap:6px;min-height:26px;color:var(--ufs-text);cursor:pointer;white-space:nowrap}",
-    "#ufs-app .ufs-copy-policy-choice input{appearance:auto;width:15px;height:15px;min-width:15px;margin:0;accent-color:var(--ufs-accent);cursor:pointer}",
+    "#ufs-app .ufs-copy-policy-choice .ufs-copy-policy-radio{position:absolute!important;left:0;top:50%;transform:translateY(-50%);width:18px!important;height:18px!important;min-width:18px!important;margin:0!important;padding:0!important;opacity:0!important;appearance:none!important;outline:none!important;box-shadow:none!important;cursor:pointer;z-index:1}",
+    "#ufs-app .ufs-copy-policy-ring{display:inline-flex;align-items:center;justify-content:center;flex:0 0 18px;width:18px;height:18px;border:2px solid #cbd3dd;border-radius:50%;background:var(--ufs-bg);pointer-events:none}",
+    "#ufs-app .ufs-copy-policy-radio:checked+.ufs-copy-policy-ring{border-color:var(--ufs-accent)}",
+    "#ufs-app .ufs-copy-policy-radio:checked+.ufs-copy-policy-ring::after{content:'';display:block;width:8px;height:8px;border-radius:50%;background:var(--ufs-accent)}",
+    "#ufs-app .ufs-copy-policy-choice:hover .ufs-copy-policy-ring{border-color:var(--ufs-accent)}",
+    "#ufs-app .ufs-copy-policy-radio:focus-visible+.ufs-copy-policy-ring{box-shadow:0 0 0 3px rgba(235,120,37,.14)}",
     "#ufs-app .ufs-copy-policy-choice::after{content:attr(data-tooltip);position:absolute;bottom:calc(100% + 7px);left:50%;transform:translateX(-50%);width:max-content;max-width:235px;white-space:normal;background:#30363c;color:#fff;font-size:12px;line-height:1.5;font-weight:400;padding:8px 10px;border-radius:5px;box-shadow:0 5px 16px #0003;opacity:0;visibility:hidden;pointer-events:none;z-index:20}",
     "#ufs-app .ufs-copy-policy-choice::before{content:'';position:absolute;bottom:calc(100% + 1px);left:50%;transform:translateX(-50%);border:6px solid transparent;border-bottom:0;border-top-color:#30363c;opacity:0;visibility:hidden;pointer-events:none;z-index:20}",
-    "#ufs-app .ufs-copy-policy-choice:hover::after,#ufs-app .ufs-copy-policy-choice:hover::before,#ufs-app .ufs-copy-policy-choice:focus-within::after,#ufs-app .ufs-copy-policy-choice:focus-within::before{opacity:1;visibility:visible}",
+    // Do not show the focused radio's tooltip while another option is hovered.
+    "#ufs-app .ufs-copy-policy-choice:hover::after,#ufs-app .ufs-copy-policy-choice:hover::before,#ufs-app .ufs-copy-policy:not(:has(.ufs-copy-policy-choice:hover)) .ufs-copy-policy-choice:has(.ufs-copy-policy-radio:focus-visible)::after,#ufs-app .ufs-copy-policy:not(:has(.ufs-copy-policy-choice:hover)) .ufs-copy-policy-choice:has(.ufs-copy-policy-radio:focus-visible)::before{opacity:1;visibility:visible}",
     "#ufs-app .ufs-copy-dialog .ufs-create-feedback{margin-top:8px}",
     "@media(max-height:650px){#ufs-app .ufs-copy-picker{height:min(200px,30vh)}}",
     "#ufs-app .ufs-copy-progress-panel{display:flex;flex-direction:column;gap:0;min-width:0}",
@@ -2571,7 +2577,7 @@
         if(!busy && (!copyJob || copyJob.status==='failed' || copyJob.recoverable) && radio.checked)
           conflictPolicy=value;
       });
-      option.append(radio,element('span','',label));
+      option.append(radio,element('span','ufs-copy-policy-ring'),element('span','',label));
       policy.append(option);
     }
     location.append(policy);
