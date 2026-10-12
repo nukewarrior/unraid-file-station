@@ -1719,3 +1719,50 @@ test('v0.2.5.1 预检状态醒目、冲突列表在目标树上方并允许重�
   assert.match(script,/job\.preflightRejected\?'预检未通过 · 未开始':'失败'/);
   assert.match(script,/max-height:152px;overflow:auto/);
 });
+
+test('v0.2.6 同名策略只允许用于复制，文件和目录类型冲突优先拒绝',()=>{
+  const {api}=createAPI();
+  const base={type:'copy',source:'/mnt/user/a/file.bin',destinationDir:'/mnt/user/b',folder:false};
+  assert.equal(api.planFileOperation({...base,conflictPolicy:'skip'}).conflictPolicy,'skip');
+  assert.equal(api.planFileOperation({...base,conflictPolicy:'overwrite'}).conflictPolicy,'overwrite');
+  assert.throws(()=>api.planFileOperation({...base,conflictPolicy:'rename'}),/不允许/);
+  assert.throws(()=>api.planFileOperation({type:'mkdir',parent:'/mnt/user/a',name:'test',conflictPolicy:'overwrite'}),/不允许/);
+  assert.deepEqual(Array.from(api.findBatchCopyTypeConflicts([
+    {...base,target:'/mnt/user/b/file.bin'},
+    {...base,source:'/mnt/user/a/dir',target:'/mnt/user/b/dir',folder:true}
+  ],[
+    {name:'file.bin',path:'/mnt/user/b/file.bin',folder:true},
+    {name:'dir',path:'/mnt/user/b/dir',folder:true}
+  ])),['file.bin']);
+  assert.match(script,/ufs-copy-policy-choice:hover::after/);
+  assert.match(script,/radio.checked=value==='skip'/);
+  assert.match(script,/exist: plan.conflictPolicy==='overwrite'\?'1':''/);
+  assert.match(script,/destination:selected,conflictPolicy,count:entries.length/);
+});
+
+test('v0.2.6 忽略同名顶层文件直接结束，不发原生写入请求',async()=>{
+  const calls=[];
+  const {api,sandbox}=createAPI({fetch:async (_url,opts)=>{
+    calls.push(new URLSearchParams(opts.body).get('mode'));
+    return {ok:true,text:async()=>''};
+  }});
+  const demo=sandbox.window.__UFS_DEMO__;
+  demo['/mnt/user/a']=[{name:'file.bin',folder:false,size:2048}];
+  demo['/mnt/user/b']=[{name:'file.bin',folder:false,size:100}];
+  const plan=api.planFileOperation({type:'copy',source:'/mnt/user/a/file.bin',
+    destinationDir:'/mnt/user/b',folder:false,conflictPolicy:'skip'});
+  const output=await api.copyNativeEntry(plan);
+  assert.equal(output.copyOutcome,'skipped');
+  assert.deepEqual(calls,[]);
+});
+
+test('v0.2.6 批量忽略文件也应计入已处理进度，不伪造目录百分比',()=>{
+  const {api}=createAPI();
+  const rows=[
+    {entry:{folder:false,size:500},status:'skipped'},
+    {entry:{folder:false,size:500},status:'success'}
+  ];
+  assert.equal(api.batchCopyOverallProgress(rows).percent,100);
+  rows[1].status='pending';
+  assert.equal(api.batchCopyOverallProgress(rows).percent,50);
+});

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.5.1
+// @version      0.2.6
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -227,7 +227,7 @@
   // never be used as a trustworthy total-folder percentage.
   function batchCopyOverallProgress(rows,currentIndex=-1,currentPercent=null) {
     if (!Array.isArray(rows) || !rows.length) return {percent:0,mode:'items'};
-    const success=rows.filter(row=>row.status==='success').length;
+    const success=rows.filter(row=>['success','skipped'].includes(row.status)).length;
     if(success===rows.length) return {percent:100,mode:rows.every(row=>!row.entry.folder &&
       Number.isFinite(row.entry.size))?'bytes':'items'};
     const allSizedFiles=rows.every(row=>!row.entry.folder && Number.isFinite(row.entry.size) &&
@@ -239,7 +239,7 @@
       ?currentPercent/100:0;
     let value;
     if (allSizedFiles && total>0) {
-      const verified=rows.reduce((sum,row)=>sum+(row.status==='success'?row.entry.size:0),0);
+      const verified=rows.reduce((sum,row)=>sum+(['success','skipped'].includes(row.status)?row.entry.size:0),0);
       value=100*(verified+(current?current.entry.size*fraction:0))/total;
     } else {
       value=100*(success+fraction)/rows.length;
@@ -256,6 +256,14 @@
       existing.has(fileName(plan.source))).map(plan=>fileName(plan.source));
   }
 
+  // Existing files and directories cannot be interchanged by either policy.
+  function findBatchCopyTypeConflicts(plans, items) {
+    return plans.filter(plan => {
+      const old=items.find(item=>item.path===plan.target ||
+        item.name===fileName(plan.source));
+      return old && (old.folder!==plan.folder || old.copyPathVerified===false);
+    }).map(plan=>fileName(plan.source));
+  }
   function parentPath(path) { return path.slice(0, path.lastIndexOf('/')); }
   function fileName(path) { return path.slice(path.lastIndexOf('/') + 1); }
 
@@ -264,7 +272,9 @@
       throw new Error('文件操作参数无效');
     }
     const { type, source, parent, name, destinationDir, folder, conflictPolicy = 'fail' } = input;
-    if (conflictPolicy !== 'fail') throw new Error('当前不允许覆盖目标文件');
+    if (conflictPolicy !== 'fail' &&
+        !(type==='copy' && ['skip','overwrite'].includes(conflictPolicy)))
+      throw new Error('当前不允许覆盖目标文件或使用该冲突策略');
     if (!['mkdir', 'rename', 'copy', 'move', 'delete'].includes(type)) {
       throw new Error('不支持的文件操作');
     }
@@ -672,7 +682,7 @@
   async function copyNativeEntry(plan, progress = () => {}, control = {}) {
     return withNativeWriteLock(async () => {
       if (!COPY_ENABLED || !plan || plan.type !== 'copy' ||
-          plan.conflictPolicy !== 'fail' || plan.previewOnly !== true ||
+          !['fail','skip','overwrite'].includes(plan.conflictPolicy) || plan.previewOnly !== true ||
           !safeCopyPath(plan.source) || typeof plan.folder !== 'boolean' ||
           !copyDestinationAllowed(plan, plan.destinationDir) ||
           plan.target !== plan.destinationDir + '/' + fileName(plan.source)) {
@@ -693,10 +703,16 @@
         throw new Error('原生目录返回路径与文件名不一致，拒绝复制以防操作错误文件');
       }
       const destinationEntries = await listDirectory(plan.destinationDir);
-      if (destinationEntries.some(entry =>
-        entry.name === fileName(plan.source) || entry.path === plan.target)) {
+      const existing=destinationEntries.find(entry=>
+        entry.name===fileName(plan.source) || entry.path===plan.target);
+      if(existing && (existing.folder!==plan.folder || existing.copyPathVerified===false))
+        throw new Error('目标已有同名但类型不一致或路径不可信的项目，未执行复制');
+      if(existing && plan.conflictPolicy==='fail')
         throw new Error('目标文件夹中已有同名项目，未执行复制');
-      }
+      // A top-level file can be skipped without submitting a native task.
+      // A folder must still be merged by the native rsync task.
+      if(existing && !plan.folder && plan.conflictPolicy==='skip')
+        return {...existing,copyOutcome:'skipped'};
       if (await readNativeActive()) throw new Error('Unraid 正在执行其他原生文件任务，请稍后重试');
       nativeCsrfToken();
       let submitted = false;
@@ -716,7 +732,7 @@
           mode: 'file', action: plan.folder ? '3' : '8', title: encodeURIComponent('复制'),
           source: encodeURIComponent(plan.source),
           target: encodeURIComponent(nativeCopyTarget(plan)),
-          hdlink: '', sparse: '', exist: '', zfs: ''
+          hdlink: '', sparse: '', exist: plan.conflictPolicy==='overwrite'?'1':'', zfs: ''
         });
         if (reply.trim()) throw new Error('原生接口返回了非预期内容');
         progress('正在复制，完成后自动核对目标…', 'copying');
@@ -772,7 +788,8 @@
         }
         // A directory appearing proves only its top-level presence. The native
         // job's completion is required; we do not claim checksum verification.
-        return result;
+        return {...result,copyOutcome:existing && plan.folder?'merged':
+          existing && plan.conflictPolicy==='overwrite'?'overwrite-allowed':'copied'};
       } catch (error) {
         if (control.cancelRequested && submitted) {
           throw new Error('复制已请求取消；目标目录可能留有不完整文件，请手动检查。详情：'+
@@ -963,6 +980,14 @@
     "#ufs-app .ufs-copy-inline-error[data-error=true]{color:#c13d37}",
     "#ufs-app .ufs-copy-dialog[data-inline-mkdir=active] .ufs-copy-submit{opacity:.42;cursor:not-allowed}",
     "#ufs-app .ufs-copy-destination{margin-top:9px;color:var(--ufs-muted);font-size:12px;overflow-wrap:anywhere}",
+    // v0.2.6: insert only the confirmed compact policy controls.
+    "#ufs-app .ufs-copy-policy{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-top:12px;padding-top:11px;border-top:1px solid var(--ufs-border);font-size:12px}",
+    "#ufs-app .ufs-copy-policy-title{color:var(--ufs-muted);font-weight:500}",
+    "#ufs-app .ufs-copy-policy-choice{position:relative;display:inline-flex;align-items:center;gap:6px;min-height:26px;color:var(--ufs-text);cursor:pointer;white-space:nowrap}",
+    "#ufs-app .ufs-copy-policy-choice input{appearance:auto;width:15px;height:15px;min-width:15px;margin:0;accent-color:var(--ufs-accent);cursor:pointer}",
+    "#ufs-app .ufs-copy-policy-choice::after{content:attr(data-tooltip);position:absolute;bottom:calc(100% + 7px);left:50%;transform:translateX(-50%);width:max-content;max-width:235px;white-space:normal;background:#30363c;color:#fff;font-size:12px;line-height:1.5;font-weight:400;padding:8px 10px;border-radius:5px;box-shadow:0 5px 16px #0003;opacity:0;visibility:hidden;pointer-events:none;z-index:20}",
+    "#ufs-app .ufs-copy-policy-choice::before{content:'';position:absolute;bottom:calc(100% + 1px);left:50%;transform:translateX(-50%);border:6px solid transparent;border-bottom:0;border-top-color:#30363c;opacity:0;visibility:hidden;pointer-events:none;z-index:20}",
+    "#ufs-app .ufs-copy-policy-choice:hover::after,#ufs-app .ufs-copy-policy-choice:hover::before,#ufs-app .ufs-copy-policy-choice:focus-within::after,#ufs-app .ufs-copy-policy-choice:focus-within::before{opacity:1;visibility:visible}",
     "#ufs-app .ufs-copy-dialog .ufs-create-feedback{margin-top:8px}",
     "@media(max-height:650px){#ufs-app .ufs-copy-picker{height:min(200px,30vh)}}",
     "#ufs-app .ufs-copy-progress-panel{display:flex;flex-direction:column;gap:0;min-width:0}",
@@ -2526,6 +2551,30 @@
     picker.setAttribute('aria-label','选择复制目标文件夹');
     const destinationText=element('div','ufs-copy-destination','请选择目标文件夹');
     location.append(picker,destinationText);
+    let conflictPolicy='skip';
+    const policy=element('div','ufs-copy-policy');
+    policy.setAttribute('role','group');
+    policy.setAttribute('aria-label','遇到同名项目');
+    policy.append(element('span','ufs-copy-policy-title','遇到同名项目'));
+    for(const [value,label,tip] of [
+      ['skip','忽略','跳过目标中已存在的同名文件；同名文件夹会合并。'],
+      ['overwrite','覆盖','允许用源文件替换同名文件；同名文件夹会合并。']
+    ]) {
+      const option=element('label','ufs-copy-policy-choice');
+      option.dataset.tooltip=tip;
+      const radio=element('input','ufs-copy-policy-radio');
+      radio.type='radio';
+      radio.name='ufs-copy-conflict-policy';
+      radio.value=value;
+      radio.checked=value==='skip';
+      radio.setAttribute('aria-label',label);
+      radio.addEventListener('change',()=>{
+        if(!busy && !copyJob && radio.checked) conflictPolicy=value;
+      });
+      option.append(radio,element('span','',label));
+      policy.append(option);
+    }
+    location.append(policy);
     const preflightNotice=element('section','ufs-preflight-notice');
     preflightNotice.setAttribute('role','alert');
     preflightNotice.setAttribute('aria-live','assertive');
@@ -2546,7 +2595,7 @@
         '正在核验源文件、目标目录及全部同名冲突，请稍候。'));
     checkingPanel.append(checkingContent);
     const feedback=element('div','ufs-create-feedback ufs-copy-feedback',
-      '已存在同名项目时拒绝复制；不允许将文件夹复制到自身内部');
+      '不允许将文件夹复制到自身内部；文件与文件夹同名但类型不同会阻止复制。');
     feedback.setAttribute('role','status');
     location.append(feedback);
     fields.append(summary,location);
@@ -2575,7 +2624,7 @@
     function clearPreflightError() {
       preflightNotice.hidden=true;
       noticeConflicts.replaceChildren();
-      setFeedback('已存在同名项目时拒绝复制；不允许将文件夹复制到自身内部');
+      setFeedback('不允许将文件夹复制到自身内部；文件与文件夹同名但类型不同会阻止复制。');
     }
     // Prepared once; shown in place of the picker only after the user submits.
     // This is an indeterminate animation, never a synthetic percentage.
@@ -2910,7 +2959,7 @@
           const entries=await listDirectory(path);
           if(closed || request!==requestVersion) return;
           nodes.set(path, sortedCopyFolders(path, entries));
-          setFeedback('已存在同名项目时拒绝复制；不允许将文件夹复制到自身内部');
+          setFeedback('不允许将文件夹复制到自身内部；文件与文件夹同名但类型不同会阻止复制。');
         } catch(error) {
           if(closed || request!==requestVersion) return;
           opened.delete(path);
@@ -3168,7 +3217,7 @@
         const index=element('span','ufs-batch-list-index',String(i+1));
         const name=element('span','ufs-batch-list-name',row.entry.name);
         name.title=row.entry.name;
-        const labels={pending:'等待',copying:'进行中',success:'成功',
+        const labels={pending:'等待',copying:'进行中',success:'成功',skipped:'忽略',
           failed:'失败',uncertain:'待核实'};
         const status=element('span','ufs-batch-list-state',labels[row.status] || row.status);
         if(row.error) {status.title=row.error;item.title=row.error;}
@@ -3215,7 +3264,8 @@
 
     function renderBatchProgress() {
       if(!multi) return;
-      const done=batch.rows.filter(row=>row.status==='success').length;
+      const done=batch.rows.filter(row=>['success','skipped'].includes(row.status)).length;
+      const skipped=batch.rows.filter(row=>row.status==='skipped').length;
       const waiting=batch.rows.filter(row=>row.status==='pending').length;
       const current=batch.rows[batch.currentIndex];
       const result=batchCopyOverallProgress(batch.rows,batch.currentIndex,batch.currentPercent);
@@ -3226,7 +3276,7 @@
       batchTrack.setAttribute('aria-valuenow',String(batch.percent));
       batchDone.textContent='已完成 '+done+' / '+batch.rows.length+' 项';
       batchBasis.textContent=batch.mode==='bytes'?'按数据大小计算':'按项目进度计算';
-      batchStatsDone.textContent='成功 '+done;
+      batchStatsDone.textContent='成功 '+(done-skipped)+(skipped?' · 忽略 '+skipped:'');
       batchStatsPending.textContent=batch.finished
         ?'未执行 '+waiting
         :'等待 '+waiting;
@@ -3234,10 +3284,10 @@
         const problems=batch.rows.filter(row=>row.status==='failed'||row.status==='uncertain').length;
         batchCaption.textContent='总体进度';
         batchCurrentName.textContent=batch.phase==='success'?
-          '全部 '+done+' 项复制完成并核验':batch.phase==='stopped'?
+          '已处理 '+done+' 项（忽略 '+skipped+' 项）':batch.phase==='stopped'?
           '队列已停止，后续任务未执行':
           '复制任务已暂停，需检查失败或待核实项目';
-        batchCurrentInfo.textContent='成功 '+done+' · 问题 '+problems+' · 未执行 '+waiting;
+        batchCurrentInfo.textContent='成功 '+(done-skipped)+' · 忽略 '+skipped+' · 问题 '+problems+' · 未执行 '+waiting;
         batchCurrentMetrics.textContent=batch.error;
         batchListOpen.textContent='查看全部 '+batch.rows.length+' 项结果 →';
         batchStopChoices.hidden=true;
@@ -3262,9 +3312,12 @@
         throw new Error('有多个项目对应同一个目标文件名，拒绝批量复制');
       const sourceItems=await listDirectory(parentPath(plans[0].source));
       const destinationItems=await listDirectory(plans[0].destinationDir);
-      const conflicts=findBatchCopyConflicts(plans,destinationItems);
+      const typeConflicts=findBatchCopyTypeConflicts(plans,destinationItems);
+      const conflicts=typeConflicts.length?typeConflicts:
+        plans[0].conflictPolicy==='fail'?findBatchCopyConflicts(plans,destinationItems):[];
       if(conflicts.length) {
-        const error=new Error('发现 '+conflicts.length+' 项同名冲突，整批未开始复制');
+        const error=new Error('发现 '+conflicts.length+
+          (typeConflicts.length?' 项文件/文件夹类型冲突':' 项同名冲突')+'，整批未开始复制');
         error.copyConflicts=conflicts;
         throw error;
       }
@@ -3287,7 +3340,7 @@
       let plans;
       try {
         plans=entries.map(item=>planFileOperation({type:'copy',source:item.path,
-          destinationDir:selected,folder:item.folder}));
+          destinationDir:selected,folder:item.folder,conflictPolicy:copyJob.conflictPolicy}));
         if(!copyDestinationAllowedForAll(selected))
           throw new Error('目标目录与所选源文件夹冲突');
       } catch(error) {
@@ -3364,7 +3417,7 @@
             control={cancelRequested:false,observedOwnTask:false};
             activeCopySession.plan=plans[i];
             renderBatchProgress();
-            await copyNativeEntry(plans[i],(message,phase,info)=>{
+            const outcome=await copyNativeEntry(plans[i],(message,phase,info)=>{
               if(phase==='checking') batchCurrentInfo.textContent='正在检查源文件和目标目录…';
               if(phase==='verifying') batchCurrentInfo.textContent='正在核对复制结果…';
               if(info && Number.isFinite(info.percent) && !row.entry.folder) {
@@ -3374,7 +3427,7 @@
                 [info.speed||'',info.eta?'剩余 '+info.eta:''].filter(Boolean).join(' · ');
               renderBatchProgress();
             },control);
-            row.status='success';
+            row.status=outcome.copyOutcome==='skipped'?'skipped':'success';
             renderBatchRows();
             batch.currentPercent=null;
             renderBatchProgress();
@@ -3426,7 +3479,8 @@
       }
       let plan;
       try {
-        plan=planFileOperation({type:'copy',source,destinationDir:selected,folder:entry.folder});
+        plan=planFileOperation({type:'copy',source,destinationDir:selected,folder:entry.folder,
+          conflictPolicy:copyJob.conflictPolicy});
         if(!copyDestinationAllowed(plan,selected)) throw new Error('不能选择源位置或文件夹自身内部');
       } catch(error) {
         setFeedback(String(error?.message||error),true);
@@ -3454,11 +3508,17 @@
       focusDialog();
       renderCopyProgress('checking');
       try {
-        await copyNativeEntry(plan,updateCopyProgress,control);
+        const outcome=await copyNativeEntry(plan,updateCopyProgress,control);
         if(closed || destroyed) return;
         finalPhase='success';
-        heading.textContent='复制完成';
-        renderCopyProgress('success');
+        heading.textContent=outcome.copyOutcome==='skipped'?'已忽略同名文件':'复制完成';
+        renderCopyProgress('success',outcome.copyOutcome==='skipped'?
+          '目标文件已存在，按「忽略」策略保留原文件，未提交复制请求。':
+          outcome.copyOutcome==='merged'?'同名文件夹已合并；内部文件按所选策略处理。':'复制结果已核对。');
+        if(outcome.copyOutcome==='skipped') {
+          progressStateText.textContent='已忽略同名文件';
+          progressIndicator.textContent='已忽略';
+        }
         activeCopySession.phase='success';
         updateCopyTaskButton();
         submit.textContent='完成';
@@ -3469,7 +3529,7 @@
         state.tree.delete(plan.destinationDir);
         if(currentPath()===plan.destinationDir) await refreshDirectory();
         else if(state.expanded.has(plan.destinationDir)) void loadTree(plan.destinationDir,true);
-        notify('复制完成：'+fileName(plan.target)+'；点击「完成」关闭结果');
+        notify((outcome.copyOutcome==='skipped'?'已忽略：':'复制完成：')+fileName(plan.target)+'；点击「完成」关闭结果');
       } catch(error) {
         if(closed || destroyed) return;
         const message=String(error?.message||error);
@@ -3524,7 +3584,7 @@
       if(copyJob && copyJob.status==='failed') removeCopyJob(copyJob);
       try {
         const plans=entries.map(item=>planFileOperation({type:'copy',
-          source:item.path,destinationDir:selected,folder:item.folder}));
+          source:item.path,destinationDir:selected,folder:item.folder,conflictPolicy}));
         if(!copyDestinationAllowedForAll(selected) ||
           new Set(plans.map(plan=>plan.target)).size!==plans.length)
           throw new Error('目标位置无效或存在重复目标名称');
@@ -3540,7 +3600,7 @@
           copyJob=null;closed=true;++requestVersion;overlay.remove();restoreFocus();
         },
         name:multi?entries[0].name+' 等 '+entries.length+' 项':entry.name,
-        destination:selected,count:entries.length,batch,percent:null,plan:null,error:''
+        destination:selected,conflictPolicy,count:entries.length,batch,percent:null,plan:null,error:''
       };
       heading.textContent='等待复制';
       const waiting=element('div','ufs-batch-panel');
@@ -4113,7 +4173,7 @@
   }
   // Explicit opt-in hook for pure-function tests; never enabled on production WebGUI.
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
-    window.__UFS_TEST_API__ = { findBatchCopyConflicts, batchCopyOverallProgress, safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, COPY_ENABLED, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, nativeCopyTarget, matchesCopyTask, copyDestinationAllowed, copyNativeEntry, decodeRsyncFilename, parseRsyncProgress, shortenCopyName, requestCancelNativeCopy, takeOverNativeFileMonitor, availableHeight, visibleEntries, sortedCopyFolders, safeCopyName, safeCopyPath, copyBlockedReason, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
+    window.__UFS_TEST_API__ = { findBatchCopyConflicts, findBatchCopyTypeConflicts, batchCopyOverallProgress, safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, COPY_ENABLED, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, nativeCopyTarget, matchesCopyTask, copyDestinationAllowed, copyNativeEntry, decodeRsyncFilename, parseRsyncProgress, shortenCopyName, requestCancelNativeCopy, takeOverNativeFileMonitor, availableHeight, visibleEntries, sortedCopyFolders, safeCopyName, safeCopyPath, copyBlockedReason, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();

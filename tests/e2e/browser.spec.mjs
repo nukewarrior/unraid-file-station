@@ -168,7 +168,7 @@ async function pageFor(t, options = {}) {
     const copyRows=copied.filter(item=>item.destinationDir===path)
       .map(item=>[item.name,item.folder]);
     const conflictRows=options.copyConflictDest===path ?
-      (options.copyConflictNames||['notes.txt']).map(name=>[name,false]) : [];
+      (options.copyConflictNames||['notes.txt']).map(item=>Array.isArray(item)?item:[item,false]) : [];
     const createdOtherRows=createdAnywhere.filter(item=>item.parent===path).map(item=>[item.name,true]);
     const response=options.bulkCount && path==='/mnt/user/TimeMachine' ?
       bulkRows(path,options.bulkCount) : responseFor(path,
@@ -179,7 +179,7 @@ async function pageFor(t, options = {}) {
   await page.route('**/webGui/include/Control.php',async route=>{
     const body=new URLSearchParams(route.request().postData() || '');
     const mode=body.get('mode');
-    nativePosts.push({mode,action:body.get('action'),source:body.get('source'),target:body.get('target'),csrf:body.get('csrf_token')});
+    nativePosts.push({mode,action:body.get('action'),source:body.get('source'),target:body.get('target'),csrf:body.get('csrf_token'),exist:body.get('exist')});
     if (body.get('csrf_token') !== 'test-csrf') {
       await route.fulfill({status:403,body:'CSRF rejected'});
       return;
@@ -1961,7 +1961,7 @@ test('v0.2.4 混合文件及文件夹可依次复制，显示总体进度和逐�
   await page.locator('.ufs-copy-submit',{hasText:'完成'}).waitFor({timeout:30000});
   assert.equal(await page.locator('.ufs-batch-percent').innerText(),'100%');
   assert.equal(await track.getAttribute('aria-valuenow'),'100');
-  assert.match(await page.locator('.ufs-batch-current-name').innerText(),/全部 2 项复制完成/);
+  assert.match(await page.locator('.ufs-batch-current-name').innerText(),/已处理 2 项（忽略 0 项）/);
   assert.equal(copied.length,2);
   assert.deepEqual(nativePosts.filter(p=>p.mode==='file').map(p=>p.action).sort(),['3','8']);
   await page.locator('.ufs-batch-open-list').last().click();
@@ -1985,11 +1985,11 @@ test('v0.2.5.1 整批预检立即可见，多个同名一次列出、零写入�
   await page.locator('.ufs-copy-submit').click();
   await page.locator('.ufs-preflight-checking',{hasText:'正在检查复制任务'}).waitFor();
   const notice=page.locator('.ufs-preflight-notice');
-  await notice.getByText('发现 2 项同名冲突').waitFor();
+  await notice.getByText('发现 1 项同名冲突').waitFor();
   assert.equal(await notice.isVisible(),true);
-  assert.equal(await notice.locator('.ufs-preflight-conflict-row').count(),2);
+  assert.equal(await notice.locator('.ufs-preflight-conflict-row').count(),1);
   assert.match(await notice.innerText(),/Photos/);
-  assert.match(await notice.innerText(),/notes.txt/);
+  assert.doesNotMatch(await notice.innerText(),/notes.txt/);
   assert.match(await notice.innerText(),/均未开始复制/);
   assert.equal(await page.locator('.ufs-copy-picker').isVisible(),true);
   assert.equal(await page.locator('.ufs-copy-submit').isEnabled(),true);
@@ -2112,32 +2112,64 @@ test('v0.2.5 队列顺序执行两项、后台完成保留结果、均确认后�
 });
 
 
-test('v0.2.5.1 十余项同名冲突全部展示在限高可滚动列表中，零写入',async t=>{
-  const names=Array.from({length:14},(_,i)=>'clash-'+String(i).padStart(2,'0')+'.zip');
-  const {page,errors,nativePosts}=await pageFor(t,{
-    extraEntries:{'/mnt/user/TimeMachine':names.map(name=>[name,false])},
-    copyConflictDest:'/mnt/user/downloads',
-    copyConflictNames:names
+test('v0.2.6 忽略同名文件，仅复制未冲突项目，进度与结果正确',async t=>{
+  const {page,errors,nativePosts,copied}=await pageFor(t,{
+    copyConflictDest:'/mnt/user/downloads',copyConflictNames:['notes.txt']
   });
-  await page.locator('.ufs-entry').first().waitFor();
-  await page.locator('.ufs-list').focus();
-  await page.keyboard.press('ControlOrMeta+a');
-  assert.equal(await page.locator('.ufs-entry.ufs-selected').count(),17);
-  await page.locator('.ufs-operations').click();
-  await page.getByRole('menuitem',{name:'复制到…'}).click();
+  await openBatchCopyDialog(page,['Photos','notes.txt']);
+  assert.equal(await page.locator('.ufs-copy-policy-radio:checked').inputValue(),'skip');
+  assert.equal(await page.locator('.ufs-copy-policy-choice').count(),2);
+  assert.equal(await page.locator('.ufs-copy-policy .ufs-copy-policy-warning').count(),0);
   await page.getByRole('button',{name:'选择 downloads'}).click();
   await page.locator('.ufs-copy-submit').click();
-  const notice=page.locator('.ufs-preflight-notice');
-  await notice.getByText('发现 14 项同名冲突').waitFor();
-  assert.equal(await notice.locator('.ufs-preflight-conflict-row').count(),14);
-  assert.equal(await notice.locator('.ufs-preflight-conflict-row').first().innerText().then(x=>x.includes('clash-00.zip')),true);
-  assert.equal(await notice.locator('.ufs-preflight-conflict-row').last().innerText().then(x=>x.includes('clash-13.zip')),true);
-  const scroll=await notice.locator('.ufs-preflight-conflicts').evaluate(el=>({
-    scrollHeight:el.scrollHeight,clientHeight:el.clientHeight,overflow:getComputedStyle(el).overflowY
-  }));
-  assert.equal(scroll.overflow,'auto');
-  assert.ok(scroll.scrollHeight>scroll.clientHeight,JSON.stringify(scroll));
-  assert.equal(nativePosts.filter(post=>post.mode==='file').length,0);
-  await page.locator('.ufs-copy-cancel').click();
+  await page.locator('.ufs-copy-submit',{hasText:'完成'}).waitFor({timeout:30000});
+  assert.equal(await page.locator('.ufs-batch-percent').innerText(),'100%');
+  assert.equal(copied.length,1);
+  const posts=nativePosts.filter(p=>p.mode==='file');
+  assert.deepEqual(posts.map(p=>p.action),['3']);
+  assert.equal(posts[0].exist,'');
+  assert.match(await page.locator('.ufs-batch-current .ufs-batch-meta').innerText(),/忽略 1/);
+  await page.locator('.ufs-batch-open-list').last().click();
+  assert.equal(await page.locator('.ufs-batch-list-row[data-status="skipped"]').count(),1);
+  assert.equal(await page.locator('.ufs-batch-list-row[data-status="success"]').count(),1);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.6 覆盖选项仅显示 Tooltip，无常驻提醒，原生 exist=1',async t=>{
+  const {page,errors,nativePosts,copied}=await pageFor(t,{
+    copyConflictDest:'/mnt/user/downloads',copyConflictNames:['notes.txt']
+  });
+  await openCopyDialog(page,'notes.txt');
+  const options=page.locator('.ufs-copy-policy-choice');
+  await options.last().hover();
+  const tooltip=await options.last().evaluate(el=>getComputedStyle(el,'::after').content);
+  assert.match(tooltip,/源文件替换同名文件/);
+  await page.locator('.ufs-copy-policy-radio[value="overwrite"]').check();
+  assert.equal(await page.locator('.ufs-copy-policy-radio:checked').inputValue(),'overwrite');
+  assert.equal(await page.locator('.ufs-copy-policy .ufs-copy-policy-warning').count(),0);
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-submit',{hasText:'完成'}).waitFor({timeout:30000});
+  assert.equal(copied.length,1);
+  const posts=nativePosts.filter(p=>p.mode==='file');
+  assert.equal(posts.length,1);
+  assert.equal(posts[0].action,'8');
+  assert.equal(posts[0].exist,'1');
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.6 同名文件夹按忽略策略合并，不将目录本身整体跳过',async t=>{
+  const {page,errors,nativePosts,copied}=await pageFor(t,{
+    copyConflictDest:'/mnt/user/downloads',copyConflictNames:[['Photos',true]]
+  });
+  await openCopyDialog(page,'Photos');
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-submit',{hasText:'完成'}).waitFor({timeout:30000});
+  assert.equal(copied.length,1);
+  const posts=nativePosts.filter(p=>p.mode==='file');
+  assert.equal(posts.length,1);
+  assert.equal(posts[0].action,'3');
+  assert.equal(posts[0].exist,'');
   assert.equal(errors.length,0,errors.join('\n'));
 });
