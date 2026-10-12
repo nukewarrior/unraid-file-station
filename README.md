@@ -2,7 +2,7 @@
 
 在 **Unraid WebGUI** 内提供接近 Synology DSM File Station 的文件管理体验，同时保留 Unraid 的顶部导航、Shares 设置页以及原生文件管理器。
 
-> **开发状态：v0.2.7.1 原生复制任务监控恢复，针对 Unraid 7.2.2 设计。** v0.2.6.5 已通过实机验收；v0.2.7–v0.2.7.1 待实机验收。
+> **开发状态：v0.2.7.2 复制进度状态消息解析修复与自动更新元数据，针对 Unraid 7.2.2 设计。** v0.2.6.5 已通过实机验收；v0.2.7–v0.2.7.2 待实机验收。
 >
 > 项目与 Unraid、Synology 均无官方关联。设计灵感来自 Synology DSM File Station。
 
@@ -22,6 +22,13 @@
 - 使用内置 SVG 图标并隔离 Unraid 全局按钮样式，保留目录真实大小写。
 - 未接入的写入操作不出现在固定工具栏内，需要时通过「操作 → 返回原生文件管理器」完成。
 - 一键切回原生文件管理器；可随时重新启用，回退状态保存在浏览器本地。
+
+## v0.2.7.2：复制进度解析与 Tampermonkey 自动更新
+
+- 正确解包 Unraid 原生复制消息的 JSON `text` 内容，过滤 `Done`、异常状态及无效消息，不再把外围 JSON 或完成消息误显示为当前文件名。
+- 进入「完成核对」等非复制阶段时清除过期的当前文件名与传输指标；保留现有原生复制、进度核对、队列和恢复监控逻辑。
+- 增加显式 `@updateURL`、`@downloadURL` 并将 `@version` 升级到 `0.2.7.2`；自动更新地址固定指向当前开发分支的 UserScript Raw 文件。
+- 如果之前通过下载本地文件导入，或者 Tampermonkey 原脚本的更新 URL 指向其他分支，请用下面的 Raw 链接重新安装一次，以确保后续版本检查指向正确的脚本源。
 
 ## v0.2.7.1：刷新后重连仍在运行的原生复制任务
 
@@ -498,7 +505,8 @@
 ## 安装（开发预览版）
 
 1. 在浏览器中安装 Tampermonkey 或其他兼容的用户脚本管理器。
-2. 打开 `src/unraid-file-station.user.js` 的 Raw 地址，安装脚本。
+2. 打开 [Unraid File Station UserScript（开发分支 Raw）](https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js) 安装脚本。已有安装若无法自动更新，可重新打开这个链接并在 Tampermonkey 中选择更新已有脚本。
+   当前 `@version` 为 `0.2.7.2`，版本检查和下载均指向上述地址。
 3. **建议在用户脚本管理器中将匹配地址收窄为自己的 NAS 主机名或 IP。** 默认规则匹配任何主机上的 `/Shares*` 路径，仅为兼容不同 Unraid 主机名。
 4. 打开 Unraid 7.2.2 的 **SHARES** 页，点击共享名称左边的蓝色浏览图标；或者点击 Shares 下方新出现的 **FILE STATION** 按钮。
 5. File Station 右上角的 **返回原生** 可以恢复原生文件管理页面；原生页面上会有 **打开 File Station** 按钮用于切回。
