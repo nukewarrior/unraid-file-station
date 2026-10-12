@@ -1,6 +1,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
+import { runInNewContext } from 'node:vm';
 
 const base = process.env.UFS_TEST_ORIGIN || 'http://127.0.0.1:8765';
 let browser;
@@ -69,7 +70,8 @@ const html = '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'+
   '<style>body{margin:0;font-family:Arial,sans-serif}#header{height:75px;background:#1e1e1e;color:white;padding:8px}'+
   '#footer{position:fixed;bottom:0;height:24px;background:#ddd;width:100%}</style>'+
   '</head><body><div id="header">UNRAID SHARES</div><div class="autoheight">'+
-  '<table class="indexer"><tbody><tr><td>原生文件管理器</td></tr></tbody></table></div>'+
+  '<table class="indexer"><thead><tr><th>NAME</th></tr></thead>'+
+  '<tbody><tr><td>原生文件管理器</td></tr></tbody></table></div>'+
   '<div id="footer">Array Started</div>'+
   '<script src="/src/unraid-file-station.user.js"></script></body></html>';
 
@@ -2389,5 +2391,94 @@ test('v0.2.6.4 复制中切换到原生仅允许只读查看，返回后保留�
     '模式切换不能重复提交当前任务或提前启动排队任务');
   assert.equal(await page.evaluate(()=>performance.timeOrigin),origin);
   assert.equal(nav,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.6.5 未发生文件变更时反复切换原生界面，不触发额外 Browse.php 请求',async t=>{
+  const {page,errors,browseRequests}=await pageFor(t,{simulateNativeMonitor:true});
+  await page.locator('.ufs-entry').first().waitFor();
+  await page.waitForLoadState('networkidle');
+  const count=browseRequests.length;
+  const origin=await page.evaluate(()=>performance.timeOrigin);
+  for(let i=0;i<3;i++){
+    await page.locator('.ufs-more').click();
+    await page.getByRole('menuitem',{name:/返回原生文件管理器/}).click();
+    await page.locator('#ufs-native-enable').waitFor({state:'visible'});
+    assert.equal(await page.locator('#ufs-native-refresh-note').isVisible(),false);
+    await page.locator('#ufs-native-enable').click();
+    await page.locator('#ufs-app').waitFor({state:'visible'});
+  }
+  assert.equal(browseRequests.length,count,'清洁原生列表不应该重新请求');
+  assert.equal(await page.evaluate(()=>performance.timeOrigin),origin);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.6.5 脏原生列表请求失败保留旧内容并允许手动重试',async t=>{
+  const {page,errors}=await pageFor(t,{simulateNativeMonitor:true});
+  await page.locator('.ufs-entry').first().waitFor();
+  await page.evaluate(()=>{window.dir='/mnt/user/appdata';});
+  let attempts=0;
+  const failNative=async route=>{
+    const dir=decodeURIComponent(new URL(route.request().url()).searchParams.get('dir')||'');
+    if(dir==='/mnt/user/appdata') {
+      attempts++;
+      await route.fulfill({status:503,body:'temporary outage'});
+    } else await route.fallback();
+  };
+  await page.route('**/webGui/include/Browse.php?*',failNative);
+  await page.evaluate(()=>{
+    window.__ufsMonitorTest.emit('1');
+    window.__ufsMonitorTest.emit('0');
+  });
+  await page.locator('.ufs-more').click();
+  await page.getByRole('menuitem',{name:/返回原生文件管理器/}).click();
+  await page.locator('#ufs-native-refresh-note').waitFor({state:'visible'});
+  assert.match(await page.locator('#ufs-native-refresh-note').innerText(),/HTTP 503/);
+  assert.match(await page.locator('table.indexer tbody').innerText(),/原生文件管理器/,
+    '请求失败保留旧的原生目录内容');
+  assert.equal(attempts,1);
+  await page.unroute('**/webGui/include/Browse.php?*',failNative);
+  await page.locator('#ufs-native-refresh-retry').click();
+  await page.locator('#ufs-native-refresh-note').waitFor({state:'hidden'});
+  assert.match(await page.locator('table.indexer tbody').innerText(),/bitwarden/,
+    '重试成功后替换旧列表');
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.6.5 所有内建 SVG 图标的 path d 都能由 Chromium 正常解析',async t=>{
+  const {page,errors}=await pageFor(t);
+  await page.locator('.ufs-entry').first().waitFor();
+  const response=await page.request.get(
+    new URL('/src/unraid-file-station.user.js',page.url()).href);
+  assert.equal(response.status(),200);
+  const source=await response.text();
+  const begin=source.indexOf('  const ICONS = {');
+  const end=source.indexOf('  function icon(',begin);
+  assert.ok(begin>0 && end>begin);
+  const icons=runInNewContext(source.slice(begin,end)+'\nICONS');
+  const entries=Object.entries(icons).map(([name,paths])=>[name,Array.from(paths)]);
+  const svgErrors=[];
+  const watch=msg=>{
+    if(msg.type()==='error' && /(?:<path> attribute d|Expected number|SVG path)/i.test(msg.text()))
+      svgErrors.push(msg.text());
+  };
+  page.on('console',watch);
+  const lengths=await page.evaluate(entries=>{
+    return entries.flatMap(([name,paths])=>paths.map(d=>{
+      const ns='http://www.w3.org/2000/svg';
+      const svg=document.createElementNS(ns,'svg');
+      const path=document.createElementNS(ns,'path');
+      path.setAttribute('d',d);
+      svg.append(path);
+      document.body.append(svg);
+      let length=NaN;
+      try {length=path.getTotalLength();} catch (_) {}
+      svg.remove();
+      return {name,d,length};
+    }));
+  },entries);
+  page.off('console',watch);
+  assert.deepEqual(svgErrors,[],svgErrors.join('\n'));
+  assert.deepEqual(lengths.filter(x=>!Number.isFinite(x.length)),[]);
   assert.equal(errors.length,0,errors.join('\n'));
 });

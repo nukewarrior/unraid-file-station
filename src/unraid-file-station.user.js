@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.6.4
+// @version      0.2.6.5
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -436,6 +436,8 @@
       // Control.php reply. Avoid treating trailing own events as external.
       ownFileChangeQuietUntil = Date.now() + 3000;
       nativeWriteBusy = false;
+      // Writes may alter the native table while it is hidden.
+      markNativeListDirty();
     }
   }
   async function createNativeFolder(plan, progress = () => {}) {
@@ -832,7 +834,7 @@
   // Small local SVG set: no external fonts, CDNs or global icon CSS.
   const ICONS = {
     folder:['M3 7a2 2 0 0 1 2-2h4l2 2h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'],
-    'folder-open':['M3 7a2 2 0 0 1 2-2h4l2 2 2h9a2 2 0 0 1 2 2','M3 11h17a2 2 0 0 1 1.9 2.6L20 19H4a2 2 0 0 1-1.9-2.6z'],
+    'folder-open':['M3 7a2 2 0 0 1 2-2h4l2 2h9a2 2 0 0 1 2 2','M3 11h17a2 2 0 0 1 1.9 2.6L20 19H4a2 2 0 0 1-1.9-2.6z'],
     'folder-plus':['M12 10v6','M9 13h6','M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z'],
     check:['m5 12 4 4 10-10'],
     'check-circle':['M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z','m8 12 3 3 5-6'],
@@ -1078,7 +1080,7 @@
     '#ufs-app .ufs-copy-dialog .ufs-create-fields:has(.ufs-copy-picker:hover)::-webkit-scrollbar-thumb{background:transparent}',
 
     '#ufs-app .ufs-menu .ufs-location-copy{width:auto;flex:0 0 auto;white-space:nowrap;padding:4px 9px;font-size:12px;color:var(--ufs-accent);border:1px solid var(--ufs-border)}',
-    '.ufs-hide-native{display:none!important}#ufs-app[hidden],#ufs-native-controls[hidden]{display:none!important}#ufs-native-controls{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:8px}#ufs-native-enable{margin:0;padding:7px 12px;background:#e87526;color:#fff;border:0;border-radius:5px;cursor:pointer}#ufs-native-readonly-note{font-size:12px;line-height:1.5;color:#a74c13}#ufs-native-readonly-note[hidden]{display:none!important}',
+    '.ufs-hide-native{display:none!important}#ufs-app[hidden],#ufs-native-controls[hidden]{display:none!important}#ufs-native-controls{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:8px}#ufs-native-enable{margin:0;padding:7px 12px;background:#e87526;color:#fff;border:0;border-radius:5px;cursor:pointer}#ufs-native-readonly-note,#ufs-native-refresh-note{font-size:12px;line-height:1.5;color:#a74c13}#ufs-native-readonly-note[hidden],#ufs-native-refresh-note[hidden],#ufs-native-refresh-retry[hidden]{display:none!important}#ufs-native-refresh-retry{padding:4px 9px;border:1px solid #dfbb9f;border-radius:4px;background:#fff7f0;color:#a74c13;cursor:pointer}',
     // Pointer focus should not leave a colored ring after details is closed.
     // Preserve the visible outline for keyboard navigation using :focus-visible.
     '#ufs-app button:focus:not(:focus-visible){outline:none!important;box-shadow:none!important}#ufs-app .ufs-details-button:focus:not(:focus-visible){outline:none!important;box-shadow:none!important}',
@@ -1596,6 +1598,84 @@
   let fileManagerMode = 'file-station';
   let nativeControls = null;
   let nativeReadonlyNote = null;
+  let nativeRefreshNote = null;
+  let nativeRefreshRetry = null;
+  let nativeListRevision = 0;
+  let nativeListRefreshed = 0;
+  let nativeRefreshInFlight = null;
+  let nativeRefreshController = null;
+  function markNativeListDirty() {
+    nativeListRevision++;
+    if(fileManagerMode==='native') void refreshNativeListIfNeeded();
+  }
+  // Unraid's loadList() leaves its orange spinner visible on failed AJAX.
+  // Reuse the existing table without requesting it on every mode switch.
+  async function refreshNativeListIfNeeded() {
+    if(fileManagerMode!=='native' || destroyed ||
+        nativeListRevision===nativeListRefreshed) return;
+    if(nativeRefreshInFlight) return nativeRefreshInFlight;
+    const revision=nativeListRevision;
+    const work=(async()=>{
+      const table=document.querySelector('table.indexer');
+      const nativeDir=window.dir;
+      if(!table || !table.querySelector('thead') ||
+          typeof nativeDir!=='string' ||
+          !/^\/(?:mnt|boot)(?:\/|$)/.test(nativeDir)) {
+        if(nativeRefreshNote) {
+          nativeRefreshNote.textContent='原生列表尚未就绪，请稍后重试';
+          nativeRefreshNote.hidden=false;
+        }
+        if(nativeRefreshRetry) nativeRefreshRetry.hidden=false;
+        return;
+      }
+      const controller=new AbortController();
+      nativeRefreshController=controller;
+      const timeout=setTimeout(()=>controller.abort(),10000);
+      try {
+        const url=new URL('/webGui/include/Browse.php',location.origin);
+        url.searchParams.set('dir',encodeURIComponent(nativeDir));
+        url.searchParams.set('path',location.pathname.replace(/^\/+/, ''));
+        const response=await fetch(url,{credentials:'same-origin',
+          cache:'no-store',signal:controller.signal});
+        if(!response.ok) throw new Error('HTTP '+response.status);
+        const html=await response.text();
+        const fragment=new DOMParser().parseFromString(
+          '<table>'+html+'</table>','text/html');
+        const rows=Array.from(fragment.querySelectorAll('tbody,tfoot'));
+        if(!rows.some(node=>node.tagName==='TBODY'))
+          throw new Error('目录返回格式异常');
+        // Update the native tbody/tfoot without running its fragile loadList().
+        table.querySelectorAll('tbody,tfoot').forEach(node=>node.remove());
+        rows.forEach(node=>table.append(document.importNode(node,true)));
+        if(typeof window.jQuery==='function') {
+          try {window.jQuery(table).trigger('update',[true]);}
+          catch (_) { /* Native sort plugin may be unavailable. */ }
+        }
+        nativeListRefreshed=revision;
+        if(nativeRefreshNote) nativeRefreshNote.hidden=true;
+        if(nativeRefreshRetry) nativeRefreshRetry.hidden=true;
+      } catch(error) {
+        if(nativeRefreshNote) {
+          nativeRefreshNote.textContent='原生目录更新失败（'+
+            (error?.name==='AbortError'?'请求超时':String(error?.message||error))+
+            '），原列表已保留';
+          nativeRefreshNote.hidden=false;
+        }
+        if(nativeRefreshRetry) nativeRefreshRetry.hidden=false;
+      } finally {
+        clearTimeout(timeout);
+        if(nativeRefreshController===controller) nativeRefreshController=null;
+      }
+    })();
+    nativeRefreshInFlight=work;
+    try {await work;}
+    finally {
+      nativeRefreshInFlight=null;
+      if(fileManagerMode==='native' && !destroyed &&
+          nativeListRevision!==revision && nativeListRefreshed===revision)
+        void refreshNativeListIfNeeded();
+    }
+  }
   function nativeQueueIsProtected() {
     // Do not expose Unraid's shared write slot to another UI while pending jobs
     // exist or an earlier native write still requires verification.
@@ -1643,11 +1723,8 @@
     document.documentElement.classList.toggle('ufs-active-page',!native && !isDemo);
     updateNativeModeProtection();
     if(native) {
-      // Browse.page's native subscriber stays paused across both modes.
-      try {
-        if(typeof window.loadList==='function' && window.table?.length)
-          window.loadList();
-      } catch (_) { /* Never trigger an unsafe full refresh. */ }
+      // The preserved table is already rendered. Request only if stale.
+      void refreshNativeListIfNeeded();
     } else {
       requestAnimationFrame(()=>{
         if(destroyed || fileManagerMode!=='file-station') return;
@@ -4216,8 +4293,17 @@
       button.addEventListener('click',()=>switchFileManager('file-station'));
       nativeReadonlyNote=element('span','','复制队列未结束：原生文件操作暂为只读。');
       nativeReadonlyNote.id='ufs-native-readonly-note';
-      nativeControls.append(button,nativeReadonlyNote);
+      nativeRefreshNote=element('span','','');
+      nativeRefreshNote.id='ufs-native-refresh-note';
+      nativeRefreshNote.hidden=true;
+      nativeRefreshRetry=element('button','','重试目录更新');
+      nativeRefreshRetry.id='ufs-native-refresh-retry';
+      nativeRefreshRetry.type='button';
+      nativeRefreshRetry.hidden=true;
+      nativeRefreshRetry.addEventListener('click',()=>void refreshNativeListIfNeeded());
+      nativeControls.append(button,nativeReadonlyNote,nativeRefreshNote,nativeRefreshRetry);
       native.parentNode.insertBefore(nativeControls,native);
+      onCleanup(()=>nativeRefreshController?.abort());
       // Capturing on window precedes native document/body event listeners.
       for(const type of ['click','pointerdown','contextmenu','dblclick','keydown']) {
         window.addEventListener(type,guardNativeInteraction,
@@ -4346,12 +4432,7 @@
         } else if (value === '0' && sawExternalTask) {
           sawExternalTask = false;
           if (!localWriteInProgress()) {
-            if (fileManagerMode==='native') {
-              try {
-                if(typeof window.loadList==='function' && window.table?.length)
-                  window.loadList();
-              } catch (_) { /* Native list can refresh when next opened. */ }
-            }
+            markNativeListDirty();
             scheduleLocalRefresh();
           }
         }

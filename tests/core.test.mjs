@@ -197,7 +197,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.6\.4\b/);
+  assert.match(script, /@version\s+0\.2\.6\.5\b/);
 });
 
 
@@ -501,7 +501,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.6\.4\b/);
+  assert.match(script, /@version\s+0\.2\.6\.5\b/);
 });
 
 
@@ -1838,4 +1838,26 @@ test('v0.2.6.4 同页切换不刷新且保留队列，原生界面有待处理�
   assert.match(script,/beforeunload/);
   assert.doesNotMatch(script,/location\.reload\(\)/);
   assert.doesNotMatch(script,/if \(disabled\) \{\s*if \(\$\('#ufs-native-enable'\)\)/);
+});
+
+test('v0.2.6.5 原生界面切换不无条件刷新，失败不会锁住目录加载',()=>{
+  assert.match(script,/function refreshNativeListIfNeeded\(\)/);
+  assert.match(script,/nativeListRevision===nativeListRefreshed/);
+  assert.match(script,/const timeout=setTimeout\(\(\)=>controller\.abort\(\),10000\)/);
+  assert.match(script,/if\(!response\.ok\) throw new Error\('HTTP '/);
+  assert.match(script,/原生目录更新失败/);
+  assert.match(script,/nativeRefreshRetry\.addEventListener\('click'/);
+  assert.match(script,/markNativeListDirty\(\)/);
+  assert.match(script,/原列表已保留/);
+  assert.doesNotMatch(script,/\bwindow\.loadList\(\)/);
+  assert.match(script,/The preserved table is already rendered/);
+});
+
+test('v0.2.6.5 folder-open SVG 不包含错误的额外线段参数',()=>{
+  const begin=script.indexOf('  const ICONS = {');
+  const end=script.indexOf('  function icon(',begin);
+  const icons=vm.runInNewContext(script.slice(begin,end)+'\nICONS');
+  assert.equal(icons['folder-open'][0],
+    'M3 7a2 2 0 0 1 2-2h4l2 2h9a2 2 0 0 1 2 2');
+  assert.doesNotMatch(icons['folder-open'][0],/l2 2 2h9/);
 });
