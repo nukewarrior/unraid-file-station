@@ -1998,12 +1998,15 @@ test('v0.2.5.1 整批预检立即可见，多个同名一次列出、零写入�
   assert.equal(nativePosts.filter(p=>p.mode==='file').length,0,
     '整批预检失败，任何原生写入都不能发生');
   assert.match(await page.locator('.ufs-status .ufs-copy-task-trigger').innerText(),/预检未通过/);
+  await page.locator('.ufs-copy-policy-radio[value="overwrite"]').check();
   await page.getByRole('button',{name:'选择 appdata'}).click();
   assert.equal(await notice.isVisible(),false,'更换目标位置后清除旧冲突提示');
   await page.locator('.ufs-copy-submit').click();
   await page.locator('.ufs-copy-submit',{hasText:'完成'}).waitFor({timeout:30000});
   assert.equal(copied.length,2);
   assert.equal(nativePosts.filter(p=>p.mode==='file').length,2);
+  assert.equal(nativePosts.filter(p=>p.mode==='file').every(p=>p.exist==='1'),true,
+    '纠正预检错误后切换到覆盖，后续写入必须沿用新策略');
   await page.locator('.ufs-copy-submit',{hasText:'完成'}).click();
   assert.equal(errors.length,0,errors.join('\n'));
 });

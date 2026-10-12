@@ -2568,7 +2568,8 @@
       radio.checked=value==='skip';
       radio.setAttribute('aria-label',label);
       radio.addEventListener('change',()=>{
-        if(!busy && !copyJob && radio.checked) conflictPolicy=value;
+        if(!busy && (!copyJob || copyJob.status==='failed' || copyJob.recoverable) && radio.checked)
+          conflictPolicy=value;
       });
       option.append(radio,element('span','',label));
       policy.append(option);
