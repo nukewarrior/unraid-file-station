@@ -941,6 +941,9 @@ test('v0.2.3.2 复制时从目录选择器切到流动进度与真实任务阶�
   await page.locator('.ufs-copy-submit').click();
   const panel=page.locator('.ufs-copy-progress-panel');
   await panel.waitFor();
+  assert.equal(await panel.locator('.ufs-unified-current-name').innerText(),'notes.txt');
+  assert.match(await panel.locator('.ufs-unified-current-top').innerText(),/第 1 \/ 1 项/);
+  assert.equal(await panel.locator('.ufs-unified-metrics .ufs-unified-metric').count(),2);
   assert.equal(await page.locator('.ufs-copy-picker').count(),0);
   assert.equal(await page.locator('.ufs-copy-progress-target-text').innerText(),'/mnt/user/downloads');
   assert.equal(await page.locator('.ufs-copy-cancel').isEnabled(),true);
@@ -2048,6 +2051,10 @@ test('v0.2.4 混合文件及文件夹可依次复制，显示总体进度和逐�
   await page.getByRole('button',{name:'选择 downloads'}).click();
   await page.locator('.ufs-copy-submit').click();
   await page.locator('.ufs-batch-panel').waitFor();
+  const unified=page.locator('.ufs-batch-panel.ufs-unified-progress');
+  assert.equal(await unified.locator('.ufs-copy-progress-stages .ufs-copy-progress-stage').count(),3);
+  assert.equal(await unified.locator('.ufs-unified-metrics .ufs-batch-speed-row').count(),2);
+  assert.equal(await unified.locator('.ufs-copy-progress-target-text').innerText(),'/mnt/user/downloads');
   const track=page.locator('.ufs-batch-track');
   assert.equal(await track.getAttribute('aria-label'),'批量复制总体进度');
   await page.locator('.ufs-copy-submit',{hasText:'完成'}).waitFor({timeout:30000});
