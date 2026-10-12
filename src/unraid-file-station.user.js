@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.6.2
+// @version      0.2.6.3
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -835,6 +835,9 @@
     'folder-open':['M3 7a2 2 0 0 1 2-2h4l2 2 2h9a2 2 0 0 1 2 2','M3 11h17a2 2 0 0 1 1.9 2.6L20 19H4a2 2 0 0 1-1.9-2.6z'],
     'folder-plus':['M12 10v6','M9 13h6','M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z'],
     check:['m5 12 4 4 10-10'],
+    'check-circle':['M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z','m8 12 3 3 5-6'],
+    'alert-circle':['M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z','M12 8v4','M12 16h.01'],
+    'clock-3':['M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z','M12 6v6h4'],
     file:['M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z','M14 2v6h6'],
     more:['M5 12h.01','M12 12h.01','M19 12h.01'],
     archive:['M4 4h16v16H4z','M4 9h16','M12 9v8','M10 13h4'],
@@ -845,6 +848,7 @@
     'chevron-right':['m9 18 6-6-6-6'],
     'chevron-down':['m6 9 6 6 6-6'],
     'chevron-left':['m15 18-6-6 6-6'],
+    'chevron-up':['m18 15-6-6-6 6'],
     'arrow-left':['M19 12H5','m12 19-7-7 7-7'],
     'arrow-right':['M5 12h14','m12 5 7 7-7 7'],
     'arrow-up':['M12 19V5','m5 12 7-7 7 7'],

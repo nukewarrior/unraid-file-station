@@ -197,7 +197,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.6\.2\b/);
+  assert.match(script, /@version\s+0\.2\.6\.3\b/);
 });
 
 
@@ -501,7 +501,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.6\.2\b/);
+  assert.match(script, /@version\s+0\.2\.6\.3\b/);
 });
 
 
@@ -1805,4 +1805,21 @@ test('v0.2.6.2 任务中心、底部胶囊同时显示速度并沿用同一旋�
   assert.match(script,/button\.dataset\.renderKey!==signature/);
   assert.match(script,/@media\(prefers-reduced-motion:reduce\).*ufs-task-live-spinner/);
   assert.match(script,/\.ufs-task-live-spinner\{.*animation:ufs-copy-spin/);
+});
+
+test('v0.2.6.3 任务中心图标均已注册真实 SVG 路径，不再回退为文件图标',()=>{
+  const start=script.indexOf('  const ICONS = {');
+  const end=script.indexOf('  function icon(',start);
+  assert.ok(start>=0 && end>start,'缺少本地图标定义');
+  const inventory=vm.runInNewContext(script.slice(start,end)+'\nICONS');
+  for(const name of ['clock-3','chevron-up','check-circle','alert-circle']) {
+    assert.ok(Array.isArray(inventory[name]) && inventory[name].length>0,
+      name+' 必须存在 SVG 路径定义');
+    assert.notDeepEqual(Array.from(inventory[name]),Array.from(inventory.file),
+      name+' 不得回退为文件图标');
+  }
+  assert.equal(inventory['clock-3'][1],'M12 6v6h4','时钟必须有三点方向的指针');
+  assert.equal(inventory['chevron-up'][0],'m18 15-6-6-6 6','展开箭头必须指向上方');
+  assert.equal(inventory['check-circle'][1],'m8 12 3 3 5-6','完成状态需要圆圈内对勾');
+  assert.equal(inventory['alert-circle'][1],'M12 8v4','异常状态需要圆圈内感叹号');
 });

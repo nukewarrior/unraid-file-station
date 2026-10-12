@@ -2063,6 +2063,11 @@ test('v0.2.5 方案 A：第一项执行时第二项排队，右下角显示等�
   await footer.getByText('1',{exact:true}).waitFor();
   assert.match(await footer.innerText(),/复制中/);
   assert.equal(await footer.locator('.ufs-task-badge-wait').innerText(),'1');
+  // Assert SVG path content instead of trusting icon names: unknown icons fall back to a file.
+  assert.equal(await footer.locator('.ufs-task-badge-wait svg path').nth(1).getAttribute('d'),
+    'M12 6v6h4','等待数量左侧应为时钟');
+  assert.equal(await footer.locator('.ufs-task-badge-chevron path').first().getAttribute('d'),
+    'm18 15-6-6-6 6','胶囊右侧应为向上箭头');
   assert.equal(nativePosts.filter(p=>p.mode==='file').length,1,
     '第二项排队期间原生接口只能提交第一项');
   await page.locator('.ufs-copy-background').click();
@@ -2070,6 +2075,8 @@ test('v0.2.5 方案 A：第一项执行时第二项排队，右下角显示等�
   await page.locator('.ufs-copy-task-center').waitFor();
   assert.equal(await page.locator('.ufs-task-center-row').count(),2);
   assert.equal(await page.locator('.ufs-task-center-row[data-status="queued"]').count(),1);
+  assert.equal(await page.locator('.ufs-task-center-row[data-status="queued"] .ufs-task-center-state svg path')
+    .nth(1).getAttribute('d'),'M12 6v6h4','任务中心等待状态也必须显示时钟');
   await page.locator('.ufs-task-center-row[data-status="queued"] .ufs-task-center-remove').click();
   assert.equal(await footer.locator('.ufs-task-badge-wait').count(),0);
   assert.equal(nativePosts.filter(p=>p.action==='99').length,0);
@@ -2100,6 +2107,8 @@ test('v0.2.5 队列顺序执行两项、后台完成保留结果、均确认后�
   assert.deepEqual(nativePosts.filter(p=>p.mode==='file').map(p=>p.action),['8','3']);
   assert.equal(copied.length,2);
   assert.equal(await page.locator('.ufs-task-center-row[data-status="success"]').count(),2);
+  assert.equal(await page.locator('.ufs-task-center-row[data-status="success"] .ufs-task-center-state svg path')
+    .nth(1).getAttribute('d'),'m8 12 3 3 5-6','任务完成时应为圆圈对勾');
   await page.locator('.ufs-task-center-open').first().click();
   await page.locator('.ufs-copy-dialog').waitFor();
   await page.locator('.ufs-copy-submit',{hasText:'完成'}).click();
