@@ -1027,6 +1027,42 @@ test('v0.2.3.3 真实进度显示 UTF-8 文件名、传输百分比、速度和 
   assert.equal(errors.length,0,errors.join('\n'));
 });
 
+
+test('嵌套 JSON 进度只显示实际文件名，Done 和异常消息不覆盖当前文件',async t=>{
+  const {page,errors}=await pageFor(t,{simulateNativeMonitor:true,longCopy:true});
+  await openCopyDialog(page,'Photos');
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  const panel=page.locator('.ufs-copy-progress-panel[data-phase="copying"]');
+  await panel.waitFor();
+  await page.evaluate(()=>{
+    window.__ufsMonitorTest.emitFileManager({status:JSON.stringify({
+      action:8,text:[
+        '<i class="fa fa-spin"></i>Copying... /mnt/user/downloads/\\#344\\#270\\#255\\#346\\#226\\#207.jpg',
+        '10,485,760  42%  5.10MB/s  0:00:06 (xfr#1, to-chk=3/5)'
+      ]
+    })});
+  });
+  await panel.locator('.ufs-copy-progress-indicator',{hasText:'42%'}).waitFor();
+  const file=panel.locator('.ufs-copy-current-file');
+  assert.equal(await file.innerText(),'当前文件：中文.jpg');
+  assert.equal(await file.getAttribute('title'),'/mnt/user/downloads/中文.jpg');
+  assert.match(await panel.locator('.ufs-copy-progress-metrics').innerText(),/5\.10MB\/s/);
+  for(const status of [
+    JSON.stringify({action:8,text:['Done']}),
+    'Done',
+    JSON.stringify({action:8,text:['Starting...']}),
+    '{"invalid":',
+    JSON.stringify({action:8,source:'/mnt/user/downloads'})
+  ]) {
+    await page.evaluate(s=>window.__ufsMonitorTest.emitFileManager({status:s}),status);
+    assert.equal(await file.innerText(),'当前文件：中文.jpg');
+  }
+  assert.equal(await panel.locator('.ufs-copy-progress-indicator').innerText(),'42%');
+  assert.equal(await panel.count(),1);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
 test('v0.2.3.3 完成后保留窗口，用户自行关闭且后台任务入口可重新打开',async t=>{
   const {page,errors,nativePosts}=await pageFor(t);
   await openCopyDialog(page,'notes.txt');

@@ -1329,6 +1329,40 @@ test('v0.2.3.3 解析 rsync progress2 原始行的真实百分比速度 ETA 和�
   assert.equal(api.parseRsyncProgress('Done').percent,null);
 });
 
+
+test('复制状态 JSON 的 text 解包、中文文件名与状态消息隔离',()=>{
+  const {api}=createAPI();
+  const wrapped=api.parseRsyncProgress(JSON.stringify({
+    action:8,text:[
+      '<i class="fa fa-spin"></i>Copying... /mnt/user/downloads/\\#344\\#270\\#255\\#346\\#226\\#207.jpg',
+      '10,485,760  42%  5.10MB/s  0:00:06 (xfr#1, to-chk=3/5)'
+    ]
+  }));
+  assert.equal(wrapped.filename,'/mnt/user/downloads/中文.jpg');
+  assert.equal(wrapped.percent,42);
+  assert.equal(wrapped.speed,'5.10MB/s');
+  assert.equal(wrapped.eta,'0:00:06');
+  assert.doesNotMatch(wrapped.filename,/["}\]]/);
+  assert.equal(api.parseRsyncProgress('Copying... file.txt').filename,'file.txt');
+  for(const raw of [
+    'Done',
+    JSON.stringify({action:8,text:['Done']}),
+    JSON.stringify({action:8,text:'Done'}),
+    JSON.stringify({action:8,text:['Starting...']}),
+    JSON.stringify({action:8,source:'/mnt/user/data'}),
+    '{invalid-json',
+    'Task completed successfully'
+  ]) {
+    const info=api.parseRsyncProgress(raw);
+    assert.equal(info.filename,'','不应把状态消息识别为文件名：'+raw);
+    assert.equal(info.percent,null,'没有真实 rsync 进度时不应制造百分比：'+raw);
+  }
+});
+
+test('切换到完成核对等非复制阶段时清除过期文件名和传输指标',()=>{
+  assert.match(script,/if\(phase!=='copying'\)\s*\{\s*progressFile\.textContent='';\s*progressFile\.removeAttribute\('title'\);\s*progressMetrics\.textContent='';/);
+});
+
 test('v0.2.3.3 取消任务需持有当前写入锁，拒绝未归属的全局停止',async()=>{
   let reads=0;
   const actions=[];

@@ -629,8 +629,21 @@
       .replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>');
     return decodeRsyncFilename(clean);
   }
+  // The Nchan status may itself be JSON (e.g. {"action":8,"text":["Copying...","..."]}).
+  // Unwrap only its text payload; JSON metadata and malformed wrappers are not filenames.
+  function extractNativeProgressText(status) {
+    if(typeof status!=='string') return '';
+    const raw=status.trim();
+    if(!raw.startsWith('{') && !raw.startsWith('[')) return status;
+    let payload;
+    try { payload=JSON.parse(raw); } catch (_) { return ''; }
+    if(!payload || typeof payload!=='object' || Array.isArray(payload)) return '';
+    const chunks=typeof payload.text==='string'?[payload.text]:
+      Array.isArray(payload.text)?payload.text:[];
+    return chunks.filter(chunk=>typeof chunk==='string').join('\n');
+  }
   function parseRsyncProgress(status) {
-    const text=stripNativeStatusHtml(status).replace(/\r/g,'\n');
+    const text=stripNativeStatusHtml(extractNativeProgressText(status)).replace(/\r/g,'\n');
     const lines=text.split('\n').map(line=>line.trim()).filter(Boolean);
     // In Unraid, progress2 output normally follows the current filename.
     // Accept decimal percentages, speed and ETA only from a real rsync line.
@@ -655,9 +668,7 @@
         break;
       }
     }
-    if(!filename && lines.length && !/\d{1,3}(?:\.\d+)?%/.test(lines[0])) {
-      filename=lines[0];
-    }
+    // Status-only events ("Done", errors, JSON metadata) must never replace the current filename.
     return {percent,bytes,transferred,speed,eta,filename,text};
   }
   function shortenCopyName(value,max=96) {
@@ -724,7 +735,8 @@
       let observedOwnTask = false;
       const unwatch = observeNativeProgress(data => {
         if (typeof data.status === 'string' && data.status) {
-          progress(stripNativeStatusHtml(data.status), null, parseRsyncProgress(data.status));
+          const info=parseRsyncProgress(data.status);
+          if(info.text) progress(info.text, null, info);
         }
         if (data.error) eventError = stripNativeStatusHtml(data.error).slice(0, 200);
         if (data.done === 1) eventDone = true;
@@ -3627,6 +3639,11 @@
       progressStateText.textContent=info[0];
       progressIndicator.textContent=info[1];
       progressNote.textContent=message || info[2];
+      if(phase!=='copying') {
+        progressFile.textContent='';
+        progressFile.removeAttribute('title');
+        progressMetrics.textContent='';
+      }
       track.setAttribute('aria-label',phase==='success'?'复制完成':
         phase==='uncertain'?'复制结果无法确认':'复制任务进行中，进度未知');
       if(phase==='success') {fill.style.width='100%';track.setAttribute('aria-valuenow','100');}
