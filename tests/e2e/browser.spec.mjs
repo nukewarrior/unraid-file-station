@@ -2519,8 +2519,9 @@ test('v0.2.7 F5 后只恢复保存的任务，用户手动确认前不发送原�
   await center.getByRole('button',{name:'确认恢复队列'}).click();
   await page.waitForFunction(()=>!document.querySelector('.ufs-task-recovery'),null,
     {timeout:10000});
-  await page.waitForFunction(()=>document.querySelector('.ufs-task-center-row[data-status="success"]'),
-    null,{timeout:25000});
+  await trigger.getByText('复制完成 1 项').waitFor({timeout:25000});
+  await trigger.click();
+  await page.locator('.ufs-task-center-row[data-status="success"]').waitFor({timeout:5000});
   assert.equal(nativePosts.filter(x=>x.mode==='file').length,1);
   const posts=nativePosts.filter(x=>x.mode==='file');
   assert.equal(posts[0].exist,'');
@@ -2573,8 +2574,9 @@ test('v0.2.7 恢复前原生已提交项目必须先人工核实并跳过，不�
   assert.equal(nativePosts.filter(x=>x.mode==='file').length,0);
   page.once('dialog',dialog=>dialog.accept());
   await refreshed.getByRole('button',{name:'确认恢复队列'}).click();
-  await page.waitForFunction(()=>document.querySelector('.ufs-task-center-row[data-status="success"]'),
-    null,{timeout:25000});
+  await badge.getByText('复制完成 1 项').waitFor({timeout:25000});
+  await badge.click();
+  await page.locator('.ufs-task-center-row[data-status="success"]').waitFor({timeout:5000});
   const posts=nativePosts.filter(x=>x.mode==='file');
   assert.equal(posts.length,1,'核实并跳过的第一项不得重复提交');
   assert.match(decodeURIComponent(posts[0].source),/Photos/);

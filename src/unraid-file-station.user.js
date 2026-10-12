@@ -1464,6 +1464,7 @@
   let persistenceError='';
   let copyRecoveryLocked=false;
   let copyPersistTail=Promise.resolve();
+  let lastPersistedTasks=null;
   let copyOwnerHeld=false;
   let copyLeaseTimer=null;
   const copyOwnerId='ufs_'+Date.now().toString(36)+'_'+
@@ -1511,6 +1512,7 @@
       if(!copyOwnerHeld || !persistentCopyStore)
         throw new Error('当前标签页没有安全的队列写入权限');
       await persistentCopyStore.writeOwned(snap,copyOwnerId);
+      lastPersistedTasks=JSON.stringify(snap.tasks);
     });
     copyPersistTail=pending.catch(error=>{copyPersistenceFailure(error);throw error;});
     // Give callers the original error without creating a dangling rejection.
@@ -1547,6 +1549,7 @@
         persistentCopyStore=createCopyQueueStore(window.indexedDB);
         const saved=await persistentCopyStore.read();
         if(destroyed) return;
+        lastPersistedTasks=JSON.stringify(saved?.tasks||[]);
         if(saved?.tasks.length) {
           const assessed=copyRecoveryAssessment(saved);
           // Records recovered from a page reload have no old JavaScript
@@ -1638,10 +1641,10 @@
       await ensureCopyOwnership();
       if(await readNativeActive())
         throw new Error('Unraid 正在执行原生任务，请等待其完成后再恢复');
+      await copyPersistTail;
       const fresh=await persistentCopyStore.read();
-      if(!fresh || JSON.stringify(fresh.tasks.map(j=>j.taskId))!==
-          JSON.stringify(copyJobs.filter(j=>j.record).map(j=>j.record.taskId)))
-        throw new Error('队列已在其他标签页发生变化，需重新加载后核实');
+      if(!fresh || JSON.stringify(fresh.tasks)!==lastPersistedTasks)
+        throw new Error('队列内容已在其他标签页发生变化，需重新加载后核实');
       copyQueuePaused=false;
       copyRecoveryLocked=false;
       await persistCopyQueue();
@@ -4412,6 +4415,11 @@
       background.hidden=false;
       dismiss.title='后台运行';
       enqueuePending=true;
+      // Nothing can be minimized/cancelled until the IndexedDB transaction
+      // commits, otherwise the UI could disappear before the task exists.
+      cancel.disabled=true;
+      dismiss.disabled=true;
+      background.disabled=true;
       try {
         await registerCopyJob(copyJob);
       } catch(error) {
@@ -4422,9 +4430,15 @@
         submit.hidden=false;
         submit.disabled=false;
         background.hidden=true;
+        if(!closed && !dialog.isConnected) app.append(overlay);
         setFeedback('未加入队列：'+String(error?.message||error),true);
         updateCopyTaskButton();
-      } finally {enqueuePending=false;}
+      } finally {
+        enqueuePending=false;
+        cancel.disabled=false;
+        dismiss.disabled=false;
+        background.disabled=false;
+      }
     }
     form.addEventListener('submit',event=>{
       event.preventDefault();

@@ -1348,7 +1348,7 @@ test('v0.2.3.3 取消任务需持有当前写入锁，拒绝未归属的全局�
 test('v0.2.3.3 后台任务、手动完成与取消确认的保护逻辑存在',()=>{
   assert.match(script,/ufs-copy-task-trigger/);
   assert.match(script,/activeCopySession=copyJob/);
-  assert.match(script,/await copyNativeEntry\(plan,updateCopyProgress,control\)/);
+  assert.match(script,/await copyNativeEntry\(plan,updateCopyProgress,control,/);
   assert.match(script,/button\.hidden=copyJobs\.length===0/);
   assert.match(script,/background\.addEventListener\('click',minimize\)/);
   assert.match(script,/Unraid 使用全局停止接口/);
@@ -1663,7 +1663,7 @@ test('v0.2.5 队列使用单一执行器、逐项启动并只在执行时检查�
   assert.match(script,/const copyJobs=\[\]/);
   assert.match(script,/function registerCopyJob\(job\)/);
   assert.match(script,/async function runCopyQueue\(\)/);
-  assert.match(script,/if\(copyQueueRunning \|\| copyQueuePaused \|\| destroyed\) return/);
+  assert.match(script,/if\(copyQueueRunning \|\| copyQueuePaused \|\| copyRecoveryLocked/);
   assert.match(script,/const job=copyJobs\.find\(item=>item\.status==='queued'\)/);
   assert.match(script,/while\(nativeWriteBusy && !destroyed\) await waitNative\(150\)/);
   assert.match(script,/await job\.execute\(\)/);
@@ -1938,7 +1938,7 @@ test('v0.2.7 阶段一：坏快照、目录自复制及重复 ID 全部拒绝恢
 
 test('v0.2.7 执行前必须先保存原生提交意图，失去持久化所有权拒绝复制',()=>{
   assert.match(script,/if\(beforeSubmit\) await beforeSubmit\(\);/);
-  assert.match(script,/await copyItemCheckpoint\(copyJob,0,'submission-intent','intent-saved'\)/);
+  assert.match(script,/copyItemCheckpoint\(copyJob,0,'submission-intent','intent-saved'\)/);
   assert.match(script,/outcome\.copyOutcome==='skipped'\?'not-submitted':'confirmed'/);
   assert.match(script,/function persistCopyQueue\(\)/);
   assert.match(script,/persistentCopyStore\.writeOwned\(snap,copyOwnerId\)/);
@@ -1955,7 +1955,7 @@ test('v0.2.7 恢复任务仅展示记录，自动暂停，必须手动确认',()
   assert.match(script,/稍后处理/);
   assert.match(script,/if\(copyQueueRunning \|\| copyQueuePaused \|\| copyRecoveryLocked/);
   assert.match(script,/if\(copyRecoveryLocked \|\| !copyQueuePaused/);
-  assert.match(script,/需要人工核实的任务/);
+  assert.match(script,/请先逐项核实并排除/);
   assert.match(script,/function executeRecoveredCopyJob\(job\)/);
 });
 
