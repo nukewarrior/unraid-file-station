@@ -2637,3 +2637,170 @@ test('v0.2.7 关闭标签页后同源重新打开仍提示手动恢复且不自�
   assert.equal(nativeWrites,0,'等待一段时间后仍应保持暂停');
   assert.equal(errors.length,0,errors.join('\n'));
 });
+
+
+// v0.2.7.1: a recovered task belongs to an old JS lifetime. Its native
+// process is simulated independently of File Station's new page.
+async function seedInterruptedNativeCopy(page, includeWaiting=true) {
+  await page.evaluate(async includeWaiting=>{
+    const now=Date.now();
+    const tasks=[{
+      taskId:'copy_native_resume01',name:'notes.txt',destination:'/mnt/user/downloads',
+      conflictPolicy:'skip',status:'running',createdAt:now,updatedAt:now,
+      items:[{source:'/mnt/user/TimeMachine/notes.txt',folder:false,size:2048,
+        status:'submission-intent',submission:'intent-saved',updatedAt:now}]
+    }];
+    if(includeWaiting)tasks.push({
+      taskId:'copy_native_wait002',name:'Photos',destination:'/mnt/user/downloads',
+      conflictPolicy:'overwrite',status:'queued',createdAt:now,updatedAt:now,
+      items:[{source:'/mnt/user/TimeMachine/Photos',folder:true,size:null,
+        status:'queued',submission:'not-submitted',updatedAt:now}]
+    });
+    const db=await new Promise((resolve,reject)=>{
+      const r=indexedDB.open('ufs-copy-queue-v1',1);
+      r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);
+    });
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction('snapshots','readwrite');
+      tx.objectStore('snapshots').put({key:'active',snapshot:{
+        schema:1,savedAt:now,tasks
+      }});
+      tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);
+    });
+    db.close();
+  },includeWaiting);
+}
+
+async function mockRecoveredNativeRead(page, options={}) {
+  let active=true;
+  let wrong=Boolean(options.wrong);
+  let releaseToNormal=false;
+  const read=async route=>{
+    const body=new URLSearchParams(route.request().postData()||'');
+    if(body.get('mode')!=='read'||releaseToNormal) {
+      await route.fallback();return;
+    }
+    const current=active?{
+      action:wrong?'6':'8',
+      source:wrong?'/mnt/user/TimeMachine/backup':'/mnt/user/TimeMachine/notes.txt',
+      target:wrong?'':'/mnt/user/downloads/'
+    }:null;
+    await route.fulfill({status:200,
+      contentType:'application/json',body:current?JSON.stringify(current):''});
+  };
+  await page.route('**/webGui/include/Control.php',read);
+  return {
+    setActive:next=>{active=next;},
+    release:()=>{releaseToNormal=true;},
+    dispose:()=>page.unroute('**/webGui/include/Control.php',read)
+  };
+}
+
+test('v0.2.7.1 F5 重连已提交的原生复制，显示实时进度且后续排队不执行',async t=>{
+  const {page,nativePosts,errors}=await pageFor(t,{simulateNativeMonitor:true});
+  await page.locator('.ufs-entry').first().waitFor();
+  await seedInterruptedNativeCopy(page);
+  const native=await mockRecoveredNativeRead(page);
+  await page.reload({waitUntil:'domcontentloaded'});
+  const badge=page.locator('.ufs-status .ufs-copy-task-trigger');
+  await badge.getByText('原生复制中 · 队列暂停').waitFor({timeout:15000});
+  await page.evaluate(()=>window.__ufsMonitorTest.emitFileManager({
+    status:'Copying ... notes.txt\n  4,194,304  29%  91.24MB/s  0:01:38'
+  }));
+  await badge.getByText('91.24MB/s').waitFor({timeout:8000});
+  assert.match(await badge.innerText(),/29%/);
+  await badge.click();
+  const center=page.locator('.ufs-copy-task-center');
+  const running=center.locator('.ufs-task-center-row[data-status="running"]');
+  await running.waitFor();
+  assert.match(await running.innerText(),/原生复制中|复制中/);
+  assert.match(await running.locator('.ufs-task-center-meta').innerText(),/91.24MB\/s/);
+  assert.equal(await center.getByRole('button',{name:'等待当前复制完成'}).isDisabled(),true);
+  assert.equal(await center.locator('.ufs-task-center-row[data-status="queued"]').count(),1);
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,0,
+    'reconnect must never resend the native copy or start the waiting job');
+  await running.locator('.ufs-task-center-open').click();
+  const details=page.getByRole('dialog',{name:'恢复复制任务详情'});
+  await details.waitFor();
+  assert.match(await details.innerText(),/notes.txt · 原生复制中/);
+  assert.equal(await details.getByRole('button',{name:'已人工核实，跳过此项'}).count(),0);
+  assert.equal(errors.length,0,errors.join('\n'));
+  await native.dispose();
+});
+
+test('v0.2.7.1 不匹配的 Unraid 原生任务绝不能冒充旧复制任务',async t=>{
+  const {page,nativePosts,errors}=await pageFor(t,{simulateNativeMonitor:true});
+  await page.locator('.ufs-entry').first().waitFor();
+  await seedInterruptedNativeCopy(page);
+  const native=await mockRecoveredNativeRead(page,{wrong:true});
+  await page.reload({waitUntil:'domcontentloaded'});
+  const badge=page.locator('.ufs-status .ufs-copy-task-trigger');
+  await badge.getByText('有 1 项任务待核实').waitFor();
+  await page.evaluate(()=>window.__ufsMonitorTest.emitFileManager({
+    status:'Copying unrelated\n  4,194,304  29%  91.24MB/s  0:01:38',done:1
+  }));
+  await page.waitForTimeout(400);
+  assert.doesNotMatch(await badge.innerText(),/91.24MB\/s|原生复制中/);
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+  await native.dispose();
+});
+
+test('v0.2.7.1 原生完成事件且路径大小核验成功，仅结束该项，等待人工恢复后续队列',async t=>{
+  const {page,nativePosts,errors}=await pageFor(t,{
+    simulateNativeMonitor:true,extraEntries:{'/mnt/user/downloads':[['notes.txt',false]]}
+  });
+  await page.locator('.ufs-entry').first().waitFor();
+  await seedInterruptedNativeCopy(page);
+  const native=await mockRecoveredNativeRead(page);
+  await page.reload({waitUntil:'domcontentloaded'});
+  const badge=page.locator('.ufs-status .ufs-copy-task-trigger');
+  await badge.getByText('原生复制中 · 队列暂停').waitFor({timeout:15000});
+  await page.evaluate(()=>window.__ufsMonitorTest.emitFileManager({
+    status:'Copying ... notes.txt\n  4,194,304 100%  91.24MB/s  0:00:00',done:1
+  }));
+  native.setActive(false);
+  await badge.getByText('有 1 项任务待恢复').waitFor({timeout:15000});
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,0,
+    'even a verified native completion must not resume the remaining queue');
+  await badge.click();
+  const center=page.locator('.ufs-copy-task-center');
+  assert.equal(await center.locator('.ufs-task-center-row[data-status="success"]').count(),1);
+  assert.equal(await center.locator('.ufs-task-center-row[data-status="queued"]').count(),1);
+  assert.equal(await center.getByRole('button',{name:'确认恢复队列'}).isDisabled(),false);
+  const snapshot=await page.evaluate(async()=>{
+    const db=await new Promise((resolve,reject)=>{
+      const r=indexedDB.open('ufs-copy-queue-v1',1);
+      r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);
+    });
+    const result=await new Promise((resolve,reject)=>{
+      const tx=db.transaction('snapshots','readonly');
+      const req=tx.objectStore('snapshots').get('active');
+      req.onsuccess=()=>resolve(req.result?.snapshot);req.onerror=()=>reject(req.error);
+    });
+    db.close();return result;
+  });
+  assert.equal(snapshot.tasks[0].items[0].status,'success');
+  assert.equal(snapshot.tasks[0].items[0].submission,'confirmed');
+  assert.equal(snapshot.tasks[1].items[0].status,'queued');
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+  await native.dispose();
+});
+
+test('v0.2.7.1 原生任务消失但未收到 done 完成事件，必须恢复待核实',async t=>{
+  const {page,nativePosts,errors}=await pageFor(t,{simulateNativeMonitor:true});
+  await page.locator('.ufs-entry').first().waitFor();
+  await seedInterruptedNativeCopy(page,false);
+  const native=await mockRecoveredNativeRead(page);
+  await page.reload({waitUntil:'domcontentloaded'});
+  const badge=page.locator('.ufs-status .ufs-copy-task-trigger');
+  await badge.getByText('原生复制中 · 队列暂停').waitFor({timeout:15000});
+  native.setActive(false);
+  await badge.getByText('有 1 项任务待核实').waitFor({timeout:15000});
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,0);
+  await badge.click();
+  assert.equal(await page.locator('.ufs-task-center-row[data-status="uncertain"]').count(),1);
+  assert.equal(errors.length,0,errors.join('\n'));
+  await native.dispose();
+});

@@ -1981,3 +1981,21 @@ test('v0.2.7 持久化恢复状态不允许盲目重发失败及提交阶段项�
   ]);
   assert.equal(r.requiresConfirmation,true);
 });
+
+test('v0.2.7.1 刷新后仅重新观察严格匹配的原生任务，无法确定时不宣称成功',()=>{
+  assert.match(script,/async function monitorRecoveredNativeTask\(\)/);
+  assert.match(script,/if\(matches\.length!==1\)return/);
+  assert.match(script,/matchesCopyTask\(active,signature\)/);
+  assert.match(script,/const unwatch=observeNativeProgress\(data=>/);
+  assert.match(script,/if\(finishedEvent && sameTaskObserved\)/);
+  assert.match(script,/await verifyRecoveredNativeCopy\(job,index\)/);
+  assert.match(script,/if\(!origin \|\| !dest \|\| origin\.folder!==item\.folder/);
+  assert.match(script,/await persistentCopyStore\.read\(\)/);
+  assert.match(script,/job\.recoveryMonitoring=false/);
+  assert.match(script,/copyQueuePaused=true; \/\/ NEVER resume waiting jobs/);
+  assert.match(script,/const previous=\{status:item\.status,submission:item\.submission/);
+  const reconnect=script.slice(script.indexOf('async function monitorRecoveredNativeTask()'),
+    script.indexOf('async function discardRecoveredCopyJob('));
+  assert.doesNotMatch(reconnect,/postNativeControl\(\{\s*mode:\s*'file'/);
+  assert.doesNotMatch(reconnect,/copyNativeEntry\(/);
+});

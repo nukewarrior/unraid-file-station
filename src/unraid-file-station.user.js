@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.7
+// @version      0.2.7.1
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -1579,6 +1579,10 @@
             copyJobs.push(job);
           }
           updateCopyTaskButton();
+          // Reconnect only the already-running native rsync. No file writes,
+          // queue resumption, or progress claims happen during this lookup.
+          if(assessed.requiresConfirmation)
+            void monitorRecoveredNativeTask();
         }
       } catch(error) {
         persistenceError='无法读取复制任务数据库：'+String(error?.message||error);
@@ -1588,6 +1592,161 @@
     })();
     return persistenceStartup;
   }
+
+  // A browser refresh destroys the original job's polling/websocket listeners,
+  // but not Unraid's rsync process. Re-attach observability only when one and
+  // only one saved submitted item matches Control.php mode=read exactly.
+  async function monitorRecoveredNativeTask() {
+    if(destroyed || !copyRecoveryLocked || !copyJobs.some(job=>job.recovered))return;
+    let active;
+    try {active=await readNativeActive();}
+    catch(_) {return;} // Network errors preserve the existing "待核实" state.
+    if(destroyed || !active) return;
+    const matches=[];
+    for(const job of copyJobs) {
+      if(!job.recovered)continue;
+      for(let i=0;i<job.record.items.length;i++){
+        const item=job.record.items[i];
+        if(!['intent-saved','unknown'].includes(item.submission) ||
+            !['submission-intent','copying','verifying','uncertain'].includes(item.status))continue;
+        const signature={
+          folder:item.folder,source:item.source,destinationDir:job.destination
+        };
+        if(matchesCopyTask(active,signature))matches.push({job,index:i,signature});
+      }
+    }
+    if(matches.length!==1)return;
+    const {job,index,signature}=matches[0];
+    job.recoveryMonitoring=true;
+    job.recoveryMonitorIndex=index;
+    job.status='running';
+    job.phase='copying';
+    job.percent=null;
+    job.speed='';
+    job.speedUpdatedAt=0;
+    // Keep the scheduler paused regardless of the native process state.
+    copyQueuePaused=true;
+    copyRecoveryLocked=true;
+    updateCopyTaskButton();
+    let finishedEvent=false;
+    let errorEvent='';
+    let stopped=false;
+    const unwatch=observeNativeProgress(data=>{
+      if(stopped || destroyed || !job.recoveryMonitoring)return;
+      if(typeof data.status==='string' && data.status) {
+        const info=parseRsyncProgress(data.status);
+        copyJobSignal(job,'copying',info);
+        if(!signature.folder && Number.isFinite(info?.percent))
+          job.percent=Math.max(job.percent??0,Math.min(99.9,info.percent));
+        if(typeof info?.eta==='string')job.eta=info.eta;
+        updateCopyTaskButton();
+      }
+      if(data.error)errorEvent=stripNativeStatusHtml(data.error).slice(0,200);
+      if(data.done===1)finishedEvent=true;
+    });
+    onCleanup(unwatch);
+    let idle=0;
+    let sameTaskObserved=true; // Matched against the first active read.
+    try {
+      while(!destroyed && !stopped) {
+        await waitNative(950);
+        if(destroyed) return;
+        if(errorEvent)break;
+        let current;
+        try {current=await readNativeActive();}
+        catch(_) {break;}
+        if(destroyed)return;
+        if(current) {
+          if(!matchesCopyTask(current,signature))break;
+          sameTaskObserved=true;
+          idle=0;
+        } else if(++idle>=2) {
+          // A disappearing task is NOT itself proof of success. The shared
+          // native progress channel must also have reported completion.
+          if(finishedEvent && sameTaskObserved) {
+            try {
+              await verifyRecoveredNativeCopy(job,index);
+              return;
+            } catch(_) { /* Inconclusive or concurrent writes: mark uncertain. */ }
+          }
+          break;
+        }
+      }
+    } finally {
+      stopped=true;
+      unwatch();
+      if(!destroyed && job.recoveryMonitoring) {
+        job.recoveryMonitoring=false;
+        job.recoveryMonitorIndex=-1;
+        job.status='uncertain';
+        job.phase='uncertain';
+        job.speed='';
+        job.speedUpdatedAt=0;
+        copyQueuePaused=true;
+        copyRecoveryLocked=true;
+        updateCopyTaskButton();
+      }
+    }
+  }
+  async function verifyRecoveredNativeCopy(job,index) {
+    const item=job.record.items[index];
+    if(!item || destroyed)throw new Error('原生监控结果已失效');
+    const target=job.destination+'/'+fileName(item.source);
+    // As in the ordinary copy flow, verify the original and destination.
+    // Existence/size alone are insufficient; we require matching native
+    // activity AND the native done event before reaching this function.
+    const [origins,destinations]=await Promise.all([
+      listDirectory(parentPath(item.source)),listDirectory(job.destination)
+    ]);
+    const origin=origins.find(entry=>entry.path===item.source);
+    const dest=destinations.find(entry=>entry.path===target);
+    if(!origin || !dest || origin.folder!==item.folder ||
+        dest.folder!==item.folder || origin.copyPathVerified===false ||
+        dest.copyPathVerified===false)
+      throw new Error('原生任务结束后源或目标无法核实');
+    if(!item.folder && Number.isFinite(origin.size) &&
+        Number.isFinite(dest.size) && origin.size!==dest.size)
+      throw new Error('原生任务结束后文件大小不一致');
+    // Release of the old browser tab's lease may lag behind reload. If the
+    // snapshot is no longer ours to update, keep it unverified instead.
+    await ensureCopyOwnership();
+    await copyPersistTail;
+    const saved=await persistentCopyStore.read();
+    if(!saved || JSON.stringify(saved.tasks)!==lastPersistedTasks)
+      throw new Error('队列快照已被其他页面修改');
+    const previous={status:item.status,submission:item.submission,
+      updatedAt:item.updatedAt,jobStatus:job.record.status,jobUpdatedAt:job.record.updatedAt};
+    item.status='success';
+    item.submission='confirmed';
+    item.updatedAt=Date.now();
+    job.record.updatedAt=item.updatedAt;
+    const waiting=job.record.items.some(x=>
+      x.status==='queued' || (x.status==='checking' && x.submission==='not-submitted'));
+    job.record.status=waiting?'queued':'success';
+    try {
+      await persistCopyQueue();
+    } catch(error) {
+      // Failed commit is not evidence of a persisted success.
+      item.status=previous.status;
+      item.submission=previous.submission;
+      item.updatedAt=previous.updatedAt;
+      job.record.status=previous.jobStatus;
+      job.record.updatedAt=previous.jobUpdatedAt;
+      throw error;
+    }
+    job.recoveryMonitoring=false;
+    job.recoveryMonitorIndex=-1;
+    job.status=waiting?'queued':'success';
+    job.phase=waiting?'queued':'success';
+    job.speed='';
+    job.speedUpdatedAt=0;
+    copyQueuePaused=true; // NEVER resume waiting jobs on native completion.
+    copyRecoveryLocked=copyJobs.some(j=>j.recovered&&
+      (j.status==='queued'||j.status==='uncertain'||j.status==='running'));
+    if(!copyRecoveryLocked)copyQueuePaused=false;
+    updateCopyTaskButton();
+  }
+
   async function discardRecoveredCopyJob(job) {
     if(!job?.recovered || job.status==='running') return;
     try {
@@ -1632,6 +1791,10 @@
   }
   async function confirmRecoveredCopyQueue() {
     if(!copyRecoveryLocked || destroyed || !copyJobs.some(j=>j.recovered&&j.status==='queued'))return;
+    if(copyJobs.some(j=>j.recovered&&j.recoveryMonitoring)) {
+      notify('当前原生复制仍在运行；等待其结束并核实后才能恢复队列');
+      return;
+    }
     if(copyJobs.some(j=>j.recovered&&j.status==='uncertain')) {
       notify('存在原生结果待核实的任务，请先逐项核实并排除，不能直接恢复队列');
       return;
@@ -1676,13 +1839,16 @@
     for(let i=0;i<job.record.items.length;i++){
       const item=job.record.items[i];
       const row=element('div','ufs-batch-preview-row');
-      const label=item.status==='success'?'已完成':
+      const label=job.recoveryMonitoring && job.recoveryMonitorIndex===i?'原生复制中':
+        item.status==='success'?'已完成':
         item.status==='skipped'?'已忽略':
         item.status==='excluded'?'已核实并跳过':
         ['submission-intent','copying','verifying','uncertain'].includes(item.status) ||
         ['intent-saved','unknown'].includes(item.submission)?'待核实':
         item.status==='queued'?'等待恢复':'需要检查';
       row.append(element('span','',item.name+' · '+label));
+      if(label==='原生复制中') row.append(element('span','ufs-batch-meta',
+        copyJobMeta(job)+(Number.isFinite(job.percent)?' · '+Math.floor(job.percent)+'%':'')));
       if((label==='待核实'||label==='需要检查') && job.status!=='running') {
         const skip=element('button','ufs-task-center-remove','已人工核实，跳过此项');
         skip.type='button';
@@ -1743,7 +1909,8 @@
     if(job.phase==='checking') return '正在验证源文件和目标目录';
     if(job.phase==='verifying') return '正在核对复制结果';
     const speed=currentCopySpeed(job);
-    return speed?'速度 '+speed:(job.speedUpdatedAt?'速度暂无数据':'速度获取中…');
+    return speed?'速度 '+speed+(job.recoveryMonitoring && job.eta?' · 剩余 '+job.eta:''):
+      (job.speedUpdatedAt?'速度暂无数据':'速度获取中…');
   }
   function copySpinner(className='') {
     const spinner=element('span','ufs-task-live-spinner'+(className?' '+className:''));
@@ -1932,14 +2099,17 @@
       const panel=element('div','ufs-task-center-paused ufs-task-recovery');
       const uncertain=copyJobs.filter(job=>job.recovered&&job.status==='uncertain').length;
       const waiting=copyJobs.filter(job=>job.recovered&&job.status==='queued').length;
-      panel.append(element('div','',uncertain?
-        '上次复制有 '+uncertain+' 项待核实。请打开任务详情，核实后选择跳过；不能自动重试。':
+      const monitoring=copyJobs.some(job=>job.recovered&&job.recoveryMonitoring);
+      panel.append(element('div','',monitoring?
+        '已重新连接 Unraid 正在复制的原生任务；后续队列仍暂停，原生任务结束并核实后才能手动恢复。':
+        uncertain?'上次复制有 '+uncertain+' 项待核实。请打开任务详情，核实后选择跳过；不能自动重试。':
         '检测到上次保存的 '+waiting+' 项待恢复任务，当前队列已暂停。'));
       const later=element('button','','稍后处理');
       later.type='button';later.addEventListener('click',closeCopyTaskCenter);
       panel.append(later);
-      const confirm=element('button','',uncertain?'请先核实任务':'确认恢复队列');
-      confirm.type='button';confirm.disabled=uncertain>0 || waiting===0;
+      const confirm=element('button','',monitoring?'等待当前复制完成':
+        uncertain?'请先核实任务':'确认恢复队列');
+      confirm.type='button';confirm.disabled=monitoring || uncertain>0 || waiting===0;
       confirm.addEventListener('click',()=>void confirmRecoveredCopyQueue());
       panel.append(confirm);
       panel.setAttribute('role','group');
@@ -1987,14 +2157,15 @@
     const waitingRestore=copyJobs.filter(job=>job.recovered&&job.status==='queued').length;
     const needsCheck=copyJobs.filter(job=>job.recovered&&job.status==='uncertain').length;
     const text=copyRecoveryLocked?
-      (needsCheck?'有 '+needsCheck+' 项任务待核实':'有 '+waitingRestore+' 项任务待恢复'):
+      (active?.recoveryMonitoring?'原生复制中 · 队列暂停':
+        needsCheck?'有 '+needsCheck+' 项任务待核实':'有 '+waitingRestore+' 项任务待恢复'):
       copyQueuePaused&&queued?'复制已暂停':
       active?copyJobPhaseLabel(active):
       queued?'等待中':complete?'复制完成 '+copyJobs.length+' 项':
       problems?(copyJobs.some(job=>job.status==='uncertain'||job.status==='stopped'||
         (job.status==='failed'&&!job.preflightRejected))?'复制待核实':
         '预检未通过'):'复制任务 '+copyJobs.length+' 项';
-    const signature=phase+'|'+Boolean(queued);
+    const signature=phase+'|'+Boolean(queued)+'|'+Boolean(active)+'|'+Boolean(needsCheck);
     // Keep the spinner node alive between rsync events and one-second TTL checks.
     if(button.dataset.renderKey!==signature) {
       button.replaceChildren();
