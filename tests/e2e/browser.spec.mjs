@@ -36,7 +36,7 @@ function bulkRows(path,count) {
     const full=path+'/'+name;
     html+='<tr>'+
       '<td><i type="f" id="row_'+i+'" data="'+full+'"></i></td>'+
-      '<td>'+name+'</td><td></td><td>nobody</td><td>-rw-rw-rw-</td>'+
+      '<td>'+name+'</td><td>'+name+'</td><td>nobody</td><td>-rw-rw-rw-</td>'+
       '<td data="2048">2048</td><td data="1791435600">date</td>'+
       '<td><span id="device_'+i+'">disk2</span></td></tr>';
   }
@@ -814,7 +814,7 @@ test('v0.2.3 复制文件夹到子目录，保留文件夹名和源文件',async
   assert.equal(errors.length,0,errors.join('\n'));
 });
 
-test('v0.2.3 源父目录与源子目录不可作为目标，多选不出现复制入口',async t=>{
+test('v0.2.4 源父目录与源子目录不可作为目标，多选复制入口已开放',async t=>{
   const {page,errors,nativePosts}=await pageFor(t);
   await openCopyDialog(page,'Photos');
   await page.getByRole('button',{name:'展开 TimeMachine'}).click();
@@ -829,7 +829,14 @@ test('v0.2.3 源父目录与源子目录不可作为目标，多选不出现复�
   await page.locator('.ufs-entry').filter({hasText:'backup'}).first().click();
   await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).first().click({modifiers:['Control']});
   await page.locator('.ufs-operations').click();
-  assert.equal(await page.getByRole('menuitem',{name:'复制到…'}).count(),0);
+  const multiCopy=page.getByRole('menuitem',{name:'复制到…'});
+  assert.equal(await multiCopy.count(),1);
+  assert.equal(await multiCopy.isEnabled(),true);
+  await multiCopy.click();
+  await page.locator('.ufs-copy-dialog').waitFor();
+  assert.match(await page.locator('.ufs-batch-summary-heading').innerText(),/已选择 2 项/);
+  await page.locator('.ufs-copy-cancel').click();
+  assert.equal(nativePosts.filter(p=>p.mode==='file').length,0);
   assert.equal(errors.length,0,errors.join('\n'));
 });
 

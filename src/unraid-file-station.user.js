@@ -3027,7 +3027,7 @@
       nativeCsrfToken();
     }
     async function startBatchCopy() {
-      if(!multi || batch.started || batch.preflighting || batch.finished || busy || inlineDraft ||
+      if(!multi || batch.view!=='main' || batch.started || batch.preflighting || batch.finished || busy || inlineDraft ||
           mkdirUncertain || submit.disabled || !selected || nativeWriteBusy) return;
       let plans;
       try {

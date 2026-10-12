@@ -1516,9 +1516,9 @@ test('v0.2.3.10 HTML 实体及高风险名称仍禁止复制', () => {
 
 test('v0.2.3.10 复制菜单及提交前必须验证原生 Browse 文件名一致性',()=>{
   assert.match(script,/copyPathVerified: cells\[2\]\?\.textContent === path\.substring/);
-  assert.match(script,/copyBlockedReason\(chosen\[0\]\)/);
+  assert.match(script,/chosen\.map\(copyBlockedReason\)\.find\(Boolean\)/);
   assert.match(script,/button\.disabled = true;[\s\S]*?button\.title = disabledReason/);
-  assert.match(script,/copyBlockedReason\(entry\) \|\| currentPath\(\)/);
+  assert.match(script,/entries\.some\(item => !item \|\| copyBlockedReason\(item\)/);
   assert.match(script,/if \(sourceEntry\.copyPathVerified === false\)/);
   assert.match(script,/safeCopyPath\(item\.path, true\) && item\.copyPathVerified !== false/);
   assert.match(script,/!safeCopyPath\(plan\.source\)/);
