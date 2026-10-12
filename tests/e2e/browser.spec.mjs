@@ -2,6 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { runInNewContext } from 'node:vm';
+import { readFileSync } from 'node:fs';
 
 const base = process.env.UFS_TEST_ORIGIN || 'http://127.0.0.1:8765';
 let browser;
@@ -2892,4 +2893,34 @@ test('v0.2.7.1 原生任务消失但未收到 done 完成事件，必须恢复�
   assert.equal(await page.locator('.ufs-task-center-row[data-status="uncertain"]').count(),1);
   assert.equal(errors.length,0,errors.join('\n'));
   await native.dispose();
+});
+
+
+test('v0.2.8 诊断日志支持标记问题、脱敏导出和跨页面刷新',async t=>{
+  const {page,errors}=await pageFor(t);
+  await page.locator('.ufs-entry').first().waitFor();
+  await page.locator('.ufs-diagnostic-button').click();
+  const panel=page.getByRole('dialog',{name:'File Station 诊断中心'});
+  await panel.getByRole('button',{name:'开启增强诊断（15分钟）'}).click();
+  await panel.getByRole('button',{name:'标记问题'}).click();
+  await panel.getByRole('button',{name:'刷新日志'}).click();
+  await panel.locator('.ufs-diagnostic-events').getByText(/user\.issue_marker/).waitFor();
+  const pending=page.waitForEvent('download');
+  await panel.getByRole('button',{name:'导出 JSON'}).click();
+  const download=await pending;
+  assert.match(download.suggestedFilename(),/^unraid-file-station-diagnostic-/);
+  const report=JSON.parse(readFileSync(await download.path(),'utf8'));
+  assert.equal(report.version,'0.2.8.0');
+  assert.equal(report.schemaVersion,1);
+  assert.equal(report.events.some(event=>event.code==='user.issue_marker'),true);
+  assert.equal(report.events.some(event=>event.code==='diagnostic.mode'),true);
+  assert.equal(JSON.stringify(report).includes('test-csrf'),false);
+  assert.equal(JSON.stringify(report).includes('/mnt/user/TimeMachine'),false);
+  await page.reload({waitUntil:'domcontentloaded'});
+  await page.locator('.ufs-diagnostic-button').waitFor();
+  await page.locator('.ufs-diagnostic-button').click();
+  const restored=page.getByRole('dialog',{name:'File Station 诊断中心'});
+  await restored.getByRole('button',{name:'刷新日志'}).click();
+  assert.match(await restored.locator('.ufs-diagnostic-events').innerText(),/user\.issue_marker/);
+  assert.equal(errors.length,0,errors.join('\n'));
 });
