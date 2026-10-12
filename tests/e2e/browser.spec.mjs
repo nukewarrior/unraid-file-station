@@ -1496,7 +1496,9 @@ test('v0.2.3.10 HTML 实体歧义及原有特殊字符显示禁用复制与原�
     assert.equal(await page.getByRole('menuitem',{name:'重命名'}).count(),0,
       '路径失真的项目不能允许重命名');
     // Dismiss the menu before the next right-click; it otherwise overlays rows.
-    await page.locator('.ufs-section-label').click();
+    await page.locator('.ufs-file-actions').click({position:{x:4,y:16}});
+    assert.equal(await page.locator('.ufs-menu').count(),0,
+      '点击工具栏留白应该关闭右键菜单');
   }
   assert.equal(nativePosts.filter(p=>p.mode==='file').length,0);
   assert.equal(errors.length,0,errors.join('\n'));
@@ -1850,4 +1852,45 @@ test('v0.2.3.15 浅灰实体操作按钮的高度、边界、文字和箭头对�
   assert.equal(nativePosts.filter(p=>p.mode==='file').length,0);
   await page.locator('.ufs-create-cancel').click();
   assert.equal(errors.length,0,errors.join('\\n'));
+});
+
+test('v0.2.3.16 文件操作栏不显示冗余「文件」标签，两个按钮保持左侧对齐和原有功能',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t);
+  const toolbar=page.locator('.ufs-file-actions');
+  await toolbar.waitFor();
+  for(const width of [1440,720]){
+    await page.setViewportSize({width,height:900});
+    const info=await toolbar.evaluate(el=>{
+      const create=el.querySelector('.ufs-create-trigger');
+      const operations=el.querySelector('.ufs-operations');
+      const toolbarBox=el.getBoundingClientRect();
+      const a=create.getBoundingClientRect();
+      const b=operations.getBoundingClientRect();
+      return {labelCount:el.querySelectorAll('.ufs-section-label').length,
+        firstChild:el.firstElementChild?.className,
+        leftInset:a.left-toolbarBox.left,toolbarHeight:toolbarBox.height,
+        heightA:a.height,heightB:b.height,gap:b.left-a.right};
+    });
+    assert.equal(info.labelCount,0,'不保留「文件」标签 DOM');
+    assert.match(info.firstChild,/ufs-create-trigger/,
+      '左侧第一个元素应直接为新建文件夹按钮');
+    assert.ok(Math.abs(info.leftInset-10)<0.6,
+      '新建按钮应贴近工具栏左侧内边距：'+JSON.stringify(info));
+    assert.equal(info.toolbarHeight,34);
+    assert.equal(info.heightA,28);
+    assert.equal(info.heightB,28);
+    assert.ok(Math.abs(info.gap-6)<0.6,
+      '按钮间距依旧为 6px：'+JSON.stringify(info));
+  }
+  await page.locator('.ufs-operations').click();
+  await page.getByRole('menuitem',{name:'刷新当前目录'}).waitFor();
+  await toolbar.click({position:{x:4,y:16}});
+  assert.equal(await page.locator('.ufs-menu').count(),0,
+    '点击左侧空白区域能正常关闭菜单');
+  await page.locator('.ufs-create-trigger').click();
+  await page.locator('.ufs-create-dialog').waitFor();
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,0,
+    '打开新建文件夹弹窗不应执行写入');
+  await page.locator('.ufs-create-cancel').click();
+  assert.equal(errors.length,0,errors.join('\n'));
 });

@@ -197,7 +197,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.3\.15\b/);
+  assert.match(script, /@version\s+0\.2\.3\.16\b/);
 });
 
 
@@ -501,7 +501,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.3\.15\b/);
+  assert.match(script, /@version\s+0\.2\.3\.16\b/);
 });
 
 
@@ -1582,4 +1582,12 @@ test('v0.2.3.15 文件工具栏两按钮统一 28px 实体外观且不影响其�
   assert.match(script,/#ufs-app \.ufs-file-actions\{[^}]*gap:5px;height:34px;min-height:34px;max-height:34px/);
   assert.match(script,/class="ufs-ico ufs-create-trigger" title="新建文件夹" aria-label="新建文件夹">新建文件夹<\/button>/);
   assert.match(script,/class="ufs-ico ufs-operations" title="文件操作" aria-label="文件操作" aria-haspopup="menu" aria-expanded="false">操作/);
+});
+
+test('v0.2.3.16 移除文件操作栏的冗余「文件」标签，保留工具栏与两按钮',()=>{
+  assert.doesNotMatch(script, /ufs-section-label/);
+  assert.match(script, /'<div class="ufs-file-actions" role="toolbar" aria-label="文件内容和视图">',\s*'<button type="button" class="ufs-ico ufs-create-trigger"/);
+  assert.match(script, /'<button type="button" class="ufs-ico ufs-operations"/);
+  assert.match(script, /#ufs-app \.ufs-file-actions\{display:flex;align-items:center;gap:5px;height:34px/);
+  assert.match(script, /#ufs-app \.ufs-file-actions \.ufs-create-trigger,#ufs-app \.ufs-file-actions \.ufs-operations\{[^}]*height:28px;min-height:28px;max-height:28px/);
 });
