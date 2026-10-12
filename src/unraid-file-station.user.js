@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.7.5
+// @version      0.2.7.6
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
@@ -1099,6 +1099,8 @@
     "#ufs-app .ufs-unified-metric,#ufs-app .ufs-unified-progress .ufs-batch-speed-row{display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-start;gap:4px;min-width:0;color:var(--ufs-muted);font-size:11px}",
     "#ufs-app .ufs-unified-metric strong,#ufs-app .ufs-unified-progress .ufs-batch-speed-value{font-size:16px;font-weight:650;line-height:1.35;color:var(--ufs-text);text-align:left;word-break:break-word;overflow-wrap:anywhere}",
     "#ufs-app .ufs-unified-transfer{grid-column:1/-1;color:var(--ufs-muted);font-size:11px}",
+    "#ufs-app .ufs-unified-file-percent{margin-top:4px;color:var(--ufs-accent);font-size:11px;font-variant-numeric:tabular-nums}",
+    "#ufs-app .ufs-unified-file-percent[hidden]{display:none!important}",
     "#ufs-app .ufs-unified-progress .ufs-batch-current{gap:0;overflow:visible}",
     "#ufs-app .ufs-unified-progress .ufs-batch-current-name{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
     "#ufs-app .ufs-unified-progress .ufs-batch-current-info{margin-top:4px}",
@@ -3673,6 +3675,8 @@
     const singleCurrentName=element('div','ufs-unified-current-name',entry.name);
     singleCurrentName.title=entry.name;
     const progressFile=element('div','ufs-copy-current-file');
+    const progressFilePercent=element('div','ufs-unified-file-percent');
+    progressFilePercent.hidden=true;
     const progressMetrics=element('div','ufs-copy-progress-metrics ufs-unified-metrics');
     const speedMetric=element('div','ufs-unified-metric');
     const speedLabel=element('span','','当前速度');
@@ -3684,7 +3688,7 @@
     etaMetric.append(etaLabel,etaValue);
     const transferValue=element('div','ufs-unified-transfer');
     progressMetrics.append(speedMetric,etaMetric,transferValue);
-    singleCurrent.append(singleCurrentTop,singleCurrentName,progressFile,progressMetrics);
+    singleCurrent.append(singleCurrentTop,singleCurrentName,progressFile,progressFilePercent,progressMetrics);
     progressPanel.append(singleCurrent);
     const progressNote=element('div','ufs-copy-progress-note');
     progressNote.setAttribute('role','status');
@@ -3729,6 +3733,8 @@
       if(phase!=='copying') {
         progressFile.textContent='';
         progressFile.removeAttribute('title');
+        progressFilePercent.textContent='';
+        progressFilePercent.hidden=true;
         speedValue.textContent=phase==='success'?'已完成':'—';
         etaValue.textContent='—';
         transferValue.textContent='';
@@ -3752,8 +3758,17 @@
       } else if(visibleCopyPhase==='copying' && message) {
         if(info?.filename) {
           const current=info.filename.trim().replace(/\/$/,'');
+          if(progressFile.title!==current) {
+            progressFilePercent.textContent='';
+            progressFilePercent.hidden=true;
+          }
           progressFile.textContent='当前文件：'+shortenCopyName(current.split('/').pop()||current,90);
           progressFile.title=current;
+        }
+        if(info?.percent!=null && entry.folder) {
+          // rsync reports the nested current file, not the entire folder.
+          progressFilePercent.textContent='当前文件进度 '+info.percent+'%';
+          progressFilePercent.hidden=false;
         }
         if(info?.percent!=null && !entry.folder) {
           if(copyJob) {

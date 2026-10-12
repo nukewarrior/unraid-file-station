@@ -1015,8 +1015,9 @@ test('v0.2.3.3 真实进度显示 UTF-8 文件名、传输百分比、速度和 
       status:'<i class="fa fa-spin"></i>Copying... mnt/user/downloads/\\#344\\#270\\#255\\#346\\#226\\#207.jpg\n  10,485,760  42%   5.10MB/s   0:00:06 (xfr#1, to-chk=3/5)'
     });
   });
-  await page.locator('.ufs-copy-progress-indicator',{hasText:'42%'}).waitFor();
-  assert.equal(await page.locator('.ufs-copy-progress-panel [role="progressbar"]').getAttribute('aria-valuenow'),'42');
+  await page.locator('.ufs-unified-file-percent',{hasText:'当前文件进度 42%'}).waitFor();
+  assert.equal(await page.locator('.ufs-copy-progress-panel [role="progressbar"]').getAttribute('aria-valuenow'),null,
+    '文件夹内部单文件百分比不能冒充文件夹总体进度');
   assert.match(await page.locator('.ufs-copy-current-file').innerText(),/中文\.jpg/);
   assert.match(await page.locator('.ufs-copy-progress-metrics').innerText(),/5\.10MB\/s/);
   assert.match(await page.locator('.ufs-copy-progress-metrics').innerText(),/0:00:06/);
@@ -1026,7 +1027,8 @@ test('v0.2.3.3 真实进度显示 UTF-8 文件名、传输百分比、速度和 
   assert.equal(await page.locator('.ufs-copy-task-trigger').isVisible(),true);
   await page.locator('.ufs-copy-task-trigger').click();
   await page.locator('.ufs-task-center-open').first().click();
-  assert.equal(await page.locator('.ufs-copy-progress-indicator').innerText(),'42%');
+  assert.equal(await page.locator('.ufs-copy-progress-indicator').innerText(),'进行中');
+  assert.equal(await page.locator('.ufs-unified-file-percent').innerText(),'当前文件进度 42%');
   assert.equal(errors.length,0,errors.join('\n'));
 });
 
@@ -1046,7 +1048,7 @@ test('嵌套 JSON 进度只显示实际文件名，Done 和异常消息不覆盖
       ]
     })});
   });
-  await panel.locator('.ufs-copy-progress-indicator',{hasText:'42%'}).waitFor();
+  await panel.locator('.ufs-unified-file-percent',{hasText:'当前文件进度 42%'}).waitFor();
   const file=panel.locator('.ufs-copy-current-file');
   assert.equal(await file.innerText(),'当前文件：中文.jpg');
   assert.equal(await file.getAttribute('title'),'/mnt/user/downloads/中文.jpg');
@@ -1061,7 +1063,8 @@ test('嵌套 JSON 进度只显示实际文件名，Done 和异常消息不覆盖
     await page.evaluate(s=>window.__ufsMonitorTest.emitFileManager({status:s}),status);
     assert.equal(await file.innerText(),'当前文件：中文.jpg');
   }
-  assert.equal(await panel.locator('.ufs-copy-progress-indicator').innerText(),'42%');
+  assert.equal(await panel.locator('.ufs-copy-progress-indicator').innerText(),'进行中');
+  assert.equal(await panel.locator('.ufs-unified-file-percent').innerText(),'当前文件进度 42%');
   assert.equal(await panel.count(),1);
   assert.equal(errors.length,0,errors.join('\n'));
 });
@@ -1126,7 +1129,7 @@ test('v0.2.3.4 rsync -h 单文件复制时真实百分比从 17% 更新到 34%',
   assert.equal(await page.getByRole('progressbar').getAttribute('aria-valuenow'),'34');
   assert.match(await page.locator('.ufs-copy-progress-metrics').innerText(),/已传输 1\.08M/);
   assert.match(await page.locator('.ufs-copy-progress-metrics').innerText(),/500\.24kB\/s/);
-  assert.match(await page.locator('.ufs-copy-progress-metrics').innerText(),/剩余 0:00:04/);
+  assert.match(await page.locator('.ufs-copy-progress-metrics').innerText(),/当前文件预计剩余\s*0:00:04/);
   const width=await page.locator('.ufs-copy-progress-fill').evaluate(el=>parseFloat(el.style.width));
   assert.equal(width,34);
   assert.equal(nativePosts.filter(x=>x.mode==='file').length,1);
@@ -2050,8 +2053,8 @@ test('v0.2.4 混合文件及文件夹可依次复制，显示总体进度和逐�
   await openBatchCopyDialog(page,['Photos','notes.txt']);
   await page.getByRole('button',{name:'选择 downloads'}).click();
   await page.locator('.ufs-copy-submit').click();
-  await page.locator('.ufs-batch-panel').waitFor();
   const unified=page.locator('.ufs-batch-panel.ufs-unified-progress');
+  await unified.waitFor();
   assert.equal(await unified.locator('.ufs-copy-progress-stages .ufs-copy-progress-stage').count(),3);
   assert.equal(await unified.locator('.ufs-unified-metrics .ufs-batch-speed-row').count(),2);
   assert.equal(await unified.locator('.ufs-copy-progress-target-text').innerText(),'/mnt/user/downloads');

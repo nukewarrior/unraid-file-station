@@ -2042,7 +2042,7 @@ test('v0.2.7.1 刷新后仅重新观察严格匹配的原生任务，无法确�
 test('v0.2.7.2 Tampermonkey 自动更新元数据与脚本版本保持一致',()=>{
   const header=script.split('// ==/UserScript==',1)[0];
   const updateUrl='https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js';
-  assert.match(header,/^\/\/ @version\s+0\.2\.7\.5$/m);
+  assert.match(header,/^\/\/ @version\s+0\.2\.7\.6$/m);
   assert.ok(header.split('\n').includes('// @updateURL    '+updateUrl));
   assert.ok(header.split('\n').includes('// @downloadURL  '+updateUrl));
   assert.equal(header.match(/^\/\/ @version\s+/gm)?.length,1);
@@ -2087,6 +2087,8 @@ test('v0.2.7.5 单项与批量使用统一布局、统一阶段及真实速度�
   assert.match(script,/batchCurrentFile\.textContent='当前文件：'/);
   assert.match(script,/if\(info\?\.percent!=null && !entry\.folder\)/,
     '目录不能将内部当前文件的进度冒充为整个目录的进度');
+  assert.match(script,/progressFilePercent\.textContent='当前文件进度 '/);
+  assert.match(script,/progressFilePercent\.hidden=true/);
   assert.match(script,/按项目计算 · 非字节进度/);
   assert.match(script,/currentCopySpeed\(copyJob\)/);
   assert.match(script,/ufs-unified-metrics/);
