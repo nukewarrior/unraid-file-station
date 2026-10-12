@@ -1773,3 +1773,81 @@ test('v0.2.3.13 结果不确定时 Esc 关闭但不重试也不发送取消指�
   assert.equal(nativePosts.filter(post=>post.action==='99').length,0);
   assert.equal(errors.length,0,errors.join('\n'));
 });
+
+test('v0.2.3.15 浅灰实体操作按钮的高度、边界、文字和箭头对齐，悬停风格一致',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t);
+  const create=page.locator('.ufs-create-trigger');
+  const ops=page.locator('.ufs-operations');
+  const inspect=()=>page.locator('.ufs-file-actions').evaluate(toolbar=>{
+    const newBtn=toolbar.querySelector('.ufs-create-trigger');
+    const opsBtn=toolbar.querySelector('.ufs-operations');
+    const box=el=>{const r=el.getBoundingClientRect();return {
+      left:r.left,right:r.right,top:r.top,bottom:r.bottom,height:r.height,width:r.width,
+      centerY:(r.top+r.bottom)/2};};
+    const details=el=>{
+      const css=getComputedStyle(el);
+      const textNode=Array.from(el.childNodes).find(n=>n.nodeType===Node.TEXT_NODE && n.textContent.trim());
+      const range=document.createRange();
+      range.selectNodeContents(textNode);
+      return {rect:box(el),background:css.backgroundColor,color:css.color,
+        fontSize:css.fontSize,fontWeight:css.fontWeight,
+        boxSizing:css.boxSizing,radius:css.borderRadius,
+        paddingLeft:css.paddingLeft,paddingRight:css.paddingRight,
+        minHeight:css.minHeight,maxHeight:css.maxHeight,
+        textCenterY:(range.getBoundingClientRect().top+range.getBoundingClientRect().bottom)/2};
+    };
+    return {toolbar:box(toolbar),gap:getComputedStyle(toolbar).gap,
+      create:details(newBtn),ops:details(opsBtn),
+      arrow:box(opsBtn.querySelector('.ufs-svg')),
+      rightViewBg:getComputedStyle(toolbar.querySelector('.ufs-list-button')).backgroundColor};
+  });
+  const run=async(width)=>{
+    await page.setViewportSize({width,height:900});
+    await page.mouse.move(1,1);
+    const normal=await inspect();
+    assert.equal(normal.toolbar.height,34,'工具栏整体高度不变');
+    assert.equal(normal.gap,'5px','不更改整个工具栏的通用间距');
+    for(const [name,button] of [['新建',normal.create],['操作',normal.ops]]){
+      assert.equal(button.rect.height,28,name+' 按钮高度');
+      assert.equal(button.background,'rgb(232, 237, 241)',name+' 默认浅灰实体背景');
+      assert.equal(button.fontSize,'13px');
+      assert.equal(button.fontWeight,'500');
+      assert.equal(button.boxSizing,'border-box');
+      assert.equal(button.radius,'5px');
+      assert.equal(button.paddingLeft,'10px');
+      assert.equal(button.paddingRight,'10px');
+      assert.equal(button.minHeight,'28px');
+      assert.equal(button.maxHeight,'28px');
+      assert.ok(Math.abs(button.rect.centerY-button.textCenterY)<1.1,name+' 文本居中');
+    }
+    assert.ok(Math.abs(normal.create.rect.top-normal.ops.rect.top)<0.5,
+      '顶部边界必须完全对齐：'+JSON.stringify(normal));
+    assert.ok(Math.abs(normal.create.rect.bottom-normal.ops.rect.bottom)<0.5,
+      '底部边界必须完全对齐：'+JSON.stringify(normal));
+    assert.ok(Math.abs(normal.ops.rect.left-normal.create.rect.right-6)<0.5,
+      '按钮视觉间距精确为 6px：'+JSON.stringify(normal));
+    assert.ok(Math.abs(normal.arrow.centerY-normal.ops.rect.centerY)<0.5,
+      '下拉箭头与文字按钮垂直居中：'+JSON.stringify(normal));
+    assert.equal(normal.rightViewBg,'rgba(0, 0, 0, 0)',
+      '右侧视图切换按钮默认背景不应受到本次改动影响');
+    await create.hover();
+    assert.equal((await inspect()).create.background,'rgb(213, 220, 226)',
+      '新建按钮悬停加深底色');
+    assert.equal((await inspect()).ops.background,'rgb(232, 237, 241)',
+      '另一个按钮不跟随高亮');
+    await ops.hover();
+    assert.equal((await inspect()).ops.background,'rgb(213, 220, 226)',
+      '操作按钮悬停和新建按钮一致');
+    assert.equal((await inspect()).create.background,'rgb(232, 237, 241)');
+  };
+  await run(1440);
+  await run(720);
+  await ops.click();
+  await page.getByRole('menuitem',{name:'刷新当前目录'}).waitFor();
+  await create.click();
+  await page.locator('.ufs-create-dialog').waitFor();
+  assert.equal(await page.locator('.ufs-menu').count(),0);
+  assert.equal(nativePosts.filter(p=>p.mode==='file').length,0);
+  await page.locator('.ufs-create-cancel').click();
+  assert.equal(errors.length,0,errors.join('\\n'));
+});

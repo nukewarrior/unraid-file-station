@@ -197,7 +197,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.3\.14\b/);
+  assert.match(script, /@version\s+0\.2\.3\.15\b/);
 });
 
 
@@ -501,7 +501,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.3\.14\b/);
+  assert.match(script, /@version\s+0\.2\.3\.15\b/);
 });
 
 
@@ -1572,4 +1572,14 @@ test('v0.2.3.14 新建文件夹工具栏直接调用现有弹窗，不再通过�
   assert.match(script, /if \(!safeWritePath\(parent, true\)\) return notify/);
   assert.match(script, /await createNativeFolder\(plan,/);
   assert.match(script, /for \(const selector of \['\.ufs-more', '\.ufs-operations'\]\)/);
+});
+
+test('v0.2.3.15 文件工具栏两按钮统一 28px 实体外观且不影响其他控件',()=>{
+  assert.match(script,/#ufs-app \.ufs-file-actions \.ufs-create-trigger,#ufs-app \.ufs-file-actions \.ufs-operations\{[^}]*height:28px;min-height:28px;max-height:28px;[^}]*padding:0 10px;[^}]*border-radius:5px;background:#e8edf1;[^}]*font-size:13px;font-weight:500/);
+  assert.match(script,/#ufs-app \.ufs-file-actions \.ufs-create-trigger\{margin-right:1px\}/);
+  assert.match(script,/#ufs-app \.ufs-file-actions \.ufs-create-trigger:hover:not\(:disabled\),#ufs-app \.ufs-file-actions \.ufs-operations:hover:not\(:disabled\)\{background:#d5dce2\}/);
+  assert.match(script,/#ufs-app \.ufs-file-actions \.ufs-operations>\.ufs-svg\{[^}]*height:16px/);
+  assert.match(script,/#ufs-app \.ufs-file-actions\{[^}]*gap:5px;height:34px;min-height:34px;max-height:34px/);
+  assert.match(script,/class="ufs-ico ufs-create-trigger" title="新建文件夹" aria-label="新建文件夹">新建文件夹<\/button>/);
+  assert.match(script,/class="ufs-ico ufs-operations" title="文件操作" aria-label="文件操作" aria-haspopup="menu" aria-expanded="false">操作/);
 });

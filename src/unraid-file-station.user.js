@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.3.14
+// @version      0.2.3.15
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -1002,6 +1002,13 @@
     '#ufs-app .ufs-top{height:46px;gap:9px;padding:0 12px}#ufs-app .ufs-brand{display:flex;align-items:center;gap:7px;flex-shrink:0;white-space:nowrap}#ufs-app .ufs-heading{font-size:15px}#ufs-app .ufs-brand-divider{height:19px;width:1px;background:var(--ufs-border);flex-shrink:0}#ufs-app .ufs-preview-chip{font-size:11px;color:var(--ufs-muted);white-space:nowrap}#ufs-app .ufs-app-actions{display:flex;align-items:center;gap:3px;flex-shrink:0}',
     '#ufs-app .ufs-top .ufs-tabs{display:flex;align-items:center;flex:1;min-width:0;height:100%;gap:4px;padding:0;background:transparent;border:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}#ufs-app .ufs-top .ufs-tabs::-webkit-scrollbar{display:none}#ufs-app .ufs-top .ufs-tab{flex-shrink:0;height:31px;min-width:85px;max-width:195px;padding:4px 8px}#ufs-app .ufs-top .ufs-tabs>.ufs-ico{flex:0 0 auto}',
     '#ufs-app .ufs-file-actions{display:flex;align-items:center;gap:5px;height:34px;min-height:34px;max-height:34px;flex-shrink:0;padding:0 10px;border-bottom:1px solid var(--ufs-border);background:var(--ufs-bg);overflow:hidden}#ufs-app .ufs-file-actions .ufs-section-label{font-size:12px;color:var(--ufs-muted);font-weight:500}#ufs-app .ufs-file-actions .ufs-view-controls{display:flex;align-items:center;gap:3px;margin-left:auto;flex-shrink:0}#ufs-app .ufs-file-actions .ufs-ico{height:28px;min-height:0;padding:3px 8px}',
+    // v0.2.3.15: Treat only the two file-action buttons as one compact pair.
+    // Explicit dimensions and margins isolate them from Unraid's global button styles.
+    '#ufs-app .ufs-file-actions .ufs-create-trigger,#ufs-app .ufs-file-actions .ufs-operations{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;gap:5px;box-sizing:border-box;width:auto;min-width:0;height:28px;min-height:28px;max-height:28px;margin:0;padding:0 10px;border:1px solid transparent;border-radius:5px;background:#e8edf1;color:var(--ufs-text);font-size:13px;font-weight:500;line-height:1.4;white-space:nowrap}',
+    // The toolbar has a 5px general gap: add 1px to this pair only.
+    '#ufs-app .ufs-file-actions .ufs-create-trigger{margin-right:1px}',
+    '#ufs-app .ufs-file-actions .ufs-create-trigger:hover:not(:disabled),#ufs-app .ufs-file-actions .ufs-operations:hover:not(:disabled){background:#d5dce2}',
+    '#ufs-app .ufs-file-actions .ufs-operations>.ufs-svg{flex:0 0 16px;width:16px;height:16px;min-width:16px;vertical-align:middle}',
     '#ufs-app .ufs-search-wrap{display:flex;align-items:center;gap:3px;min-width:0;flex-shrink:0;margin-left:auto}#ufs-app .ufs-search{width:150px;min-width:0;max-width:none}#ufs-app [hidden]{display:none!important}',
     '@media(max-width:850px){#ufs-app .ufs-preview-chip{display:none}#ufs-app .ufs-search{width:115px}}',
     '@media(max-width:720px){#ufs-app .ufs-brand-divider{display:none}#ufs-app .ufs-top{padding:0 7px;gap:6px}#ufs-app .ufs-navigation{padding:0 6px;gap:3px}#ufs-app .ufs-search{width:90px}#ufs-app .ufs-view-controls .ufs-details-button{display:none}}',
