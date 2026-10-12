@@ -2067,11 +2067,16 @@ test('v0.2.5 队列顺序执行两项、后台完成保留结果、均确认后�
   await page.locator('.ufs-copy-background').click();
   await page.waitForFunction(()=>
     document.querySelector('.ufs-status .ufs-task-badge-wait')?.textContent.trim()==='1');
+  await page.locator('.ufs-copy-task-trigger').click();
+  await page.locator('.ufs-task-center-row[data-status="queued"]').waitFor();
+  // Keep the task center open while waiting -> copying -> success changes.
   await page.waitForFunction(()=>document.querySelector('.ufs-copy-task-trigger')?.textContent.includes('复制完成 2 项'),
-    {timeout:30000});
+    null,{timeout:30000});
+  await page.waitForFunction(()=>
+    document.querySelectorAll('.ufs-task-center-row[data-status="success"]').length===2,
+    null,{timeout:5000});
   assert.deepEqual(nativePosts.filter(p=>p.mode==='file').map(p=>p.action),['8','3']);
   assert.equal(copied.length,2);
-  await page.locator('.ufs-copy-task-trigger').click();
   assert.equal(await page.locator('.ufs-task-center-row[data-status="success"]').count(),2);
   await page.locator('.ufs-task-center-open').first().click();
   await page.locator('.ufs-copy-dialog').waitFor();

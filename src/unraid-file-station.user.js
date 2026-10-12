@@ -1401,9 +1401,21 @@
     button.title='复制任务：'+(active?'1 项运行中，':'')+
       queued+' 项等待，'+copyJobs.length+' 项总计；点击查看';
     button.setAttribute('aria-label',button.title);
-    // Do not tear down the panel on progress updates; preserve scroll/focus.
+    // Keep the task center live when a job changes phase. Progress-only
+    // updates touch existing nodes without rebuilding the panel.
     const open=$('.ufs-copy-task-center',app);
     if(open) {
+      const nodes=Array.from(open.querySelectorAll('.ufs-task-center-row'));
+      const changed=nodes.length!==copyJobs.length || nodes.some((node,index)=>
+        node.dataset.status!==copyJobs[index].status);
+      if(changed) {
+        const scroll=open.querySelector('.ufs-task-center-body')?.scrollTop||0;
+        closeCopyTaskCenter();
+        showCopyTaskCenter();
+        const body=$('.ufs-task-center-body',app);
+        if(body) body.scrollTop=scroll;
+        return;
+      }
       const row=open.querySelector('.ufs-task-center-row[data-status=running]');
       if(row && active) {
         const label=row.querySelector('.ufs-task-center-status');
