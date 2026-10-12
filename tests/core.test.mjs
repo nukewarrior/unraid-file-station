@@ -197,7 +197,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.6\.3\b/);
+  assert.match(script, /@version\s+0\.2\.6\.4\b/);
 });
 
 
@@ -501,7 +501,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.6\.3\b/);
+  assert.match(script, /@version\s+0\.2\.6\.4\b/);
 });
 
 
@@ -1822,4 +1822,20 @@ test('v0.2.6.3 任务中心图标均已注册真实 SVG 路径，不再回退为
   assert.equal(inventory['chevron-up'][0],'m18 15-6-6-6 6','展开箭头必须指向上方');
   assert.equal(inventory['check-circle'][1],'m8 12 3 3 5-6','完成状态需要圆圈内对勾');
   assert.equal(inventory['alert-circle'][1],'M12 8v4','异常状态需要圆圈内感叹号');
+});
+
+test('v0.2.6.4 同页切换不刷新且保留队列，原生界面有待处理队列时只读',()=>{
+  assert.match(script,/function switchFileManager\(mode\)/);
+  assert.match(script,/fileManagerMode=mode/);
+  assert.match(script,/app\.hidden=native/);
+  assert.match(script,/nativeElements\.forEach\(node=>node\.classList\.toggle\('ufs-hide-native',!native\)\)/);
+  assert.match(script,/switchFileManager\(initialNative\?'native':'file-station'\)/);
+  assert.match(script,/function guardNativeInteraction\(event\)/);
+  assert.match(script,/function nativeQueueIsProtected\(\)/);
+  assert.match(script,/\['queued','running','uncertain','stopped'\]/);
+  assert.match(script,/window\.addEventListener\(type,guardNativeInteraction/);
+  assert.match(script,/function takeOverNativeFileMonitor\(\)/);
+  assert.match(script,/beforeunload/);
+  assert.doesNotMatch(script,/location\.reload\(\)/);
+  assert.doesNotMatch(script,/if \(disabled\) \{\s*if \(\$\('#ufs-native-enable'\)\)/);
 });

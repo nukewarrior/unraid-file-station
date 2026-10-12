@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.6.3
+// @version      0.2.6.4
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -1078,7 +1078,7 @@
     '#ufs-app .ufs-copy-dialog .ufs-create-fields:has(.ufs-copy-picker:hover)::-webkit-scrollbar-thumb{background:transparent}',
 
     '#ufs-app .ufs-menu .ufs-location-copy{width:auto;flex:0 0 auto;white-space:nowrap;padding:4px 9px;font-size:12px;color:var(--ufs-accent);border:1px solid var(--ufs-border)}',
-    '.ufs-hide-native{display:none!important}#ufs-native-enable{margin:8px;padding:7px 12px;background:#e87526;color:#fff;border:0;border-radius:5px;cursor:pointer}',
+    '.ufs-hide-native{display:none!important}#ufs-app[hidden],#ufs-native-controls[hidden]{display:none!important}#ufs-native-controls{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:8px}#ufs-native-enable{margin:0;padding:7px 12px;background:#e87526;color:#fff;border:0;border-radius:5px;cursor:pointer}#ufs-native-readonly-note{font-size:12px;line-height:1.5;color:#a74c13}#ufs-native-readonly-note[hidden]{display:none!important}',
     // Pointer focus should not leave a colored ring after details is closed.
     // Preserve the visible outline for keyboard navigation using :focus-visible.
     '#ufs-app button:focus:not(:focus-visible){outline:none!important;box-shadow:none!important}#ufs-app .ufs-details-button:focus:not(:focus-visible){outline:none!important;box-shadow:none!important}',
@@ -1487,6 +1487,7 @@
     $('.ufs-copy-task-trigger',app)?.setAttribute('aria-expanded','true');
   }
   function updateCopyTaskButton() {
+    updateNativeModeProtection();
     const button=app && $('.ufs-copy-task-trigger',app);
     if(!button) return;
     button.hidden=copyJobs.length===0;
@@ -1592,6 +1593,69 @@
     }
   }
   let nativeElements = [];
+  let fileManagerMode = 'file-station';
+  let nativeControls = null;
+  let nativeReadonlyNote = null;
+  function nativeQueueIsProtected() {
+    // Do not expose Unraid's shared write slot to another UI while pending jobs
+    // exist or an earlier native write still requires verification.
+    return nativeWriteBusy || copyJobs.some(job=>
+      ['queued','running','uncertain','stopped'].includes(job.status));
+  }
+  function updateNativeModeProtection() {
+    const protectedQueue=nativeQueueIsProtected();
+    if (nativeReadonlyNote) nativeReadonlyNote.hidden=!protectedQueue;
+    if (nativeControls) nativeControls.dataset.readonly=protectedQueue?'true':'false';
+  }
+  function guardNativeInteraction(event) {
+    if (fileManagerMode!=='native' || !nativeQueueIsProtected()) return;
+    if (event.type==='keydown' &&
+        !['Enter',' ','Spacebar'].includes(event.key)) return;
+    const target=event.target;
+    if (!(target instanceof Element)) return;
+    const inNative=nativeElements.some(node=>node===target || node.contains(target));
+    // Browse.page may append operation dialogs/menus outside the native table.
+    const inNativePopup=Boolean(target.closest(
+      '.ui-dfm,#dfm_dialogWindow,.context-menu-list,.context-menu,.dfm_control'));
+    if (!inNative && !inNativePopup) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (event.type==='click' || event.type==='contextmenu') {
+      if (nativeReadonlyNote) nativeReadonlyNote.textContent=
+        '复制队列未结束：原生文件操作暂为只读，请先返回 File Station 处理任务。';
+    }
+  }
+  function switchFileManager(mode) {
+    if (!app || destroyed || (mode!=='native' && mode!=='file-station')) return;
+    if (isDemo && mode==='native') {
+      notify('演示模式没有原生文件管理器');return;
+    }
+    fileManagerMode=mode;
+    const native=mode==='native';
+    if (!isDemo) {
+      if(native) localStorage.setItem(STORE+'native','1');
+      else localStorage.removeItem(STORE+'native');
+    }
+    closeMenu();
+    app.hidden=native;
+    nativeElements.forEach(node=>node.classList.toggle('ufs-hide-native',!native));
+    if(nativeControls) nativeControls.hidden=!native;
+    document.documentElement.classList.toggle('ufs-active-page',!native && !isDemo);
+    updateNativeModeProtection();
+    if(native) {
+      // Browse.page's native subscriber stays paused across both modes.
+      try {
+        if(typeof window.loadList==='function' && window.table?.length)
+          window.loadList();
+      } catch (_) { /* Never trigger an unsafe full refresh. */ }
+    } else {
+      requestAnimationFrame(()=>{
+        if(destroyed || fileManagerMode!=='file-station') return;
+        window.dispatchEvent(new Event('resize'));
+        scheduleLocationDisplay();
+      });
+    }
+  }
   let currentMenu = null;
   const treeLoads = new Map();
   let renameGeneration = 0;
@@ -1613,6 +1677,12 @@
     document.documentElement.classList.remove('ufs-active-page');
   }
   window.addEventListener('pagehide', (event) => { if (!event.persisted) cleanupApp(); });
+  // Until v0.2.7 persists the queue, a true reload may discard browser jobs.
+  window.addEventListener('beforeunload', event=>{
+    if(!copyJobs.some(job=>['running','queued','uncertain'].includes(job.status))) return;
+    event.preventDefault();
+    event.returnValue='';
+  }, {signal:lifecycle.signal});
   function activeTab() { return state.tabs.find((tab) => tab.id === state.activeId); }
   function currentPath() { return activeTab() ? activeTab().path : PREFIX; }
   // A share group is not a browsable file location. Preserve the server's order:
@@ -1650,10 +1720,7 @@
     onCleanup(() => clearTimeout(timer));
   }
   function nativeMode() {
-    if (isDemo) { notify('演示模式没有原生文件管理器'); return; }
-    localStorage.setItem(STORE + 'native', '1');
-    document.documentElement.classList.remove('ufs-active-page');
-    location.reload();
+    switchFileManager('native');
   }
   function toggleTheme() {
     state.theme = state.theme === 'unraid' ? 'dsm' : 'unraid';
@@ -4123,18 +4190,7 @@
     if ($('#ufs-app')) return true;
     const mount = isDemo ? $('#ufs-demo-mount') : native.parentNode;
     if (!mount) return false;
-    const disabled = !isDemo && localStorage.getItem(STORE + 'native') === '1';
-    if (disabled) {
-      if ($('#ufs-native-enable')) return true;
-      const button = element('button', '', '打开 File Station');
-      button.id = 'ufs-native-enable';
-      button.addEventListener('click', () => {
-        localStorage.removeItem(STORE + 'native');
-        location.reload();
-      });
-      native.parentNode.insertBefore(button, native);
-      return true;
-    }
+    const initialNative = !isDemo && localStorage.getItem(STORE+'native')==='1';
     const start = isDemo ? '/mnt/user/downloads' : new URLSearchParams(location.search).get('dir') || PREFIX;
     if (!safePath(start)) return false;
     const style = element('style');
@@ -4151,6 +4207,24 @@
       native.parentNode.insertBefore(root, native);
     }
     startLayoutSync();
+    if (!isDemo) {
+      nativeControls=element('div','');
+      nativeControls.id='ufs-native-controls';
+      const button=element('button','','打开 File Station');
+      button.id='ufs-native-enable';
+      button.type='button';
+      button.addEventListener('click',()=>switchFileManager('file-station'));
+      nativeReadonlyNote=element('span','','复制队列未结束：原生文件操作暂为只读。');
+      nativeReadonlyNote.id='ufs-native-readonly-note';
+      nativeControls.append(button,nativeReadonlyNote);
+      native.parentNode.insertBefore(nativeControls,native);
+      // Capturing on window precedes native document/body event listeners.
+      for(const type of ['click','pointerdown','contextmenu','dblclick','keydown']) {
+        window.addEventListener(type,guardNativeInteraction,
+          {capture:true,signal:lifecycle.signal});
+      }
+    }
+    switchFileManager(initialNative?'native':'file-station');
     // Native filemonitor.start() is delayed; take ownership before it fires.
     if (!isDemo) {
       if (!takeOverNativeFileMonitor()) {
@@ -4271,7 +4345,15 @@
           }
         } else if (value === '0' && sawExternalTask) {
           sawExternalTask = false;
-          if (!localWriteInProgress()) scheduleLocalRefresh();
+          if (!localWriteInProgress()) {
+            if (fileManagerMode==='native') {
+              try {
+                if(typeof window.loadList==='function' && window.table?.length)
+                  window.loadList();
+              } catch (_) { /* Native list can refresh when next opened. */ }
+            }
+            scheduleLocalRefresh();
+          }
         }
       });
       ownMonitor.start();

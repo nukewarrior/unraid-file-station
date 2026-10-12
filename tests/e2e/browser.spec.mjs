@@ -746,20 +746,35 @@ test('v0.2.2.1 自身重命名与新建操作的 filemonitor 通知不会整页�
 });
 
 
-test('v0.2.2.1 返回原生模式后不接管 filemonitor，原生延迟监听正常启动',async t=>{
+test('v0.2.6.4 初始原生模式保持增强实例并接管自动刷新，点击返回无需重新加载',async t=>{
   const {page,errors}=await pageFor(t,{simulateNativeMonitor:true,nativeMode:true});
-  await page.locator('#ufs-native-enable').waitFor();
-  assert.equal(await page.locator('#ufs-app').count(),0);
-  await page.waitForTimeout(3250);
-  const native=await page.evaluate(()=>{
-    const obj=window.filemonitor;
-    return {startCalls:obj.startCalls,stopCalls:obj.stopCalls,active:obj.active,
-      extra:window.__ufsMonitorTest.subscribers.length};
+  const initialOrigin=await page.evaluate(()=>performance.timeOrigin);
+  let navigations=0;
+  page.on('request',req=>{
+    if(req.isNavigationRequest() && req.frame()===page.mainFrame()) navigations++;
   });
-  assert.ok(native.startCalls>=1,JSON.stringify(native));
-  assert.equal(native.stopCalls,0);
-  assert.equal(native.active,true);
-  assert.equal(native.extra,1);
+  await page.locator('#ufs-native-enable').waitFor();
+  assert.equal(await page.locator('#ufs-app').count(),1);
+  assert.equal(await page.locator('#ufs-app').isVisible(),false);
+  assert.equal(await page.locator('table.indexer').isVisible(),true);
+  await page.waitForTimeout(3250);
+  const status=await page.evaluate(()=>{
+    const {filemonitor,__ufsMonitorTest}=window;
+    return {startCalls:filemonitor.startCalls,stopCalls:filemonitor.stopCalls,
+      nativeActive:filemonitor.active,
+      ownActive:__ufsMonitorTest.subscribers.filter(s=>s!==filemonitor &&
+        s.url==='/sub/filemonitor' && s.active).length};
+  });
+  assert.equal(status.startCalls,0,JSON.stringify(status));
+  assert.ok(status.stopCalls>=1,JSON.stringify(status));
+  assert.equal(status.nativeActive,false);
+  assert.equal(status.ownActive,1);
+  await page.evaluate(()=>window.__ufsMonitorTest.emit('1'));
+  await page.locator('#ufs-native-enable').click();
+  await page.locator('#ufs-app').waitFor({state:'visible'});
+  assert.equal(await page.locator('table.indexer').isVisible(),false);
+  assert.equal(await page.evaluate(()=>performance.timeOrigin),initialOrigin);
+  assert.equal(navigations,0);
   assert.equal(errors.length,0,errors.join('\n'));
 });
 
@@ -2300,5 +2315,79 @@ test('v0.2.6.2 多任务排队保留等待数量，仅活动任务展示速度�
   await badge.getByText('42.3MB/s').waitFor();
   assert.equal(await badge.locator('.ufs-task-badge-percent').innerText(),'',
     '文件夹不得使用单个内部文件的百分比冒充整体进度');
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.6.4 无任务时两种模式来回切换，保留目录标签和当前选择',async t=>{
+  const {page,errors}=await pageFor(t,{simulateNativeMonitor:true});
+  await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).first().click();
+  const origin=await page.evaluate(()=>performance.timeOrigin);
+  let nav=0;
+  page.on('request',req=>{
+    if(req.isNavigationRequest() && req.frame()===page.mainFrame()) nav++;
+  });
+  await page.locator('.ufs-more').click();
+  await page.getByRole('menuitem',{name:/返回原生文件管理器/}).click();
+  await page.locator('#ufs-native-enable').waitFor({state:'visible'});
+  assert.equal(await page.locator('#ufs-app').isVisible(),false);
+  assert.equal(await page.locator('table.indexer').isVisible(),true);
+  assert.equal(await page.locator('#ufs-native-readonly-note').isVisible(),false);
+  await page.locator('#ufs-native-enable').click();
+  await page.locator('#ufs-app').waitFor({state:'visible'});
+  assert.equal(await page.locator('.ufs-entry.ufs-selected').count(),1);
+  assert.equal(await page.locator('table.indexer').isVisible(),false);
+  assert.equal(await page.evaluate(()=>performance.timeOrigin),origin);
+  assert.equal(nav,0,'模式切换不能发起页面导航');
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.6.4 复制中切换到原生仅允许只读查看，返回后保留运行和排队任务',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t,{
+    firstCopyHoldReads:28,simulateNativeMonitor:true
+  });
+  const origin=await page.evaluate(()=>performance.timeOrigin);
+  let nav=0;
+  page.on('request',req=>{
+    if(req.isNavigationRequest() && req.frame()===page.mainFrame()) nav++;
+  });
+  await openCopyDialog(page,'notes.txt');
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-progress-panel[data-phase="copying"]').waitFor();
+  await page.locator('.ufs-copy-background').click();
+  await openCopyDialog(page,'Photos');
+  await page.getByRole('button',{name:'选择 appdata'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-background').click();
+  const badge=page.locator('.ufs-status .ufs-copy-task-trigger');
+  await badge.locator('.ufs-task-badge-wait').getByText('1',{exact:true}).waitFor();
+  await page.locator('.ufs-more').click();
+  await page.getByRole('menuitem',{name:/返回原生文件管理器/}).click();
+  await page.locator('#ufs-native-enable').waitFor({state:'visible'});
+  await page.locator('#ufs-native-readonly-note').waitFor({state:'visible'});
+  assert.equal(await page.locator('table.indexer').isVisible(),true);
+  await page.evaluate(()=>{
+    window.__ufsNativeClicks=0;
+    document.querySelector('table.indexer').addEventListener('click',()=>
+      window.__ufsNativeClicks++);
+    window.__ufsMonitorTest.emit('1');
+    window.__ufsMonitorTest.emit('0');
+  });
+  await page.locator('table.indexer').click({force:true});
+  assert.equal(await page.evaluate(()=>window.__ufsNativeClicks),0,
+    '排队期间原生表格必须由捕获阶段屏蔽点击');
+  await page.waitForTimeout(1750);
+  assert.equal(nav,0,'文件监控不得触发原生整页刷新');
+  await page.locator('#ufs-native-enable').click();
+  await page.locator('#ufs-app').waitFor({state:'visible'});
+  assert.equal(await badge.isVisible(),true);
+  await badge.click();
+  await page.locator('.ufs-task-center-row[data-status="running"]').waitFor();
+  await page.locator('.ufs-task-center-row[data-status="queued"]').waitFor();
+  assert.equal(await page.locator('.ufs-task-center-row').count(),2);
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,1,
+    '模式切换不能重复提交当前任务或提前启动排队任务');
+  assert.equal(await page.evaluate(()=>performance.timeOrigin),origin);
+  assert.equal(nav,0);
   assert.equal(errors.length,0,errors.join('\n'));
 });
