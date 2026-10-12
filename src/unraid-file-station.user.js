@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.5
+// @version      0.2.5.1
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -246,6 +246,14 @@
     }
     return {percent:Math.min(99.9,Math.max(0,Math.round(value*100)/100)),
       mode:allSizedFiles && total>0?'bytes':'items'};
+  }
+
+  // Collect every pre-existing target; none of these items may be silently skipped
+  // or overwritten. The caller must refuse the entire batch before any write.
+  function findBatchCopyConflicts(plans, destinationItems) {
+    const existing=new Set(destinationItems.flatMap(item=>[item.name,item.path]));
+    return plans.filter(plan=>existing.has(plan.target) ||
+      existing.has(fileName(plan.source))).map(plan=>fileName(plan.source));
   }
 
   function parentPath(path) { return path.slice(0, path.lastIndexOf('/')); }
@@ -999,6 +1007,8 @@
     "#ufs-app .ufs-batch-panel{display:flex;flex-direction:column;gap:12px;min-width:0}#ufs-app .ufs-batch-line{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13px}#ufs-app .ufs-batch-percent{font-weight:650;font-size:19px;color:var(--ufs-accent);font-variant-numeric:tabular-nums}#ufs-app .ufs-batch-track{height:10px;border-radius:10px;background:var(--ufs-border);overflow:hidden}#ufs-app .ufs-batch-fill{height:100%;width:0;border-radius:10px;background:var(--ufs-accent);transition:width .2s ease-out}#ufs-app .ufs-batch-meta{font-size:12px;color:var(--ufs-muted)}#ufs-app .ufs-batch-current{background:var(--ufs-panel);border-radius:5px;padding:12px;overflow-wrap:anywhere;font-size:12px;display:flex;flex-direction:column;gap:6px}#ufs-app .ufs-batch-current-name{font-size:13px;font-weight:600;color:var(--ufs-text)}#ufs-app .ufs-batch-stats{display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--ufs-muted)}",
     "#ufs-app .ufs-batch-list-back{align-self:flex-start;display:flex;align-items:center;gap:5px;border:0;background:transparent;color:var(--ufs-accent);padding:3px 0;font-size:12px}#ufs-app .ufs-batch-list-search{height:33px;flex:0 0 33px;width:100%;min-width:0;border:1px solid var(--ufs-border);border-radius:4px;padding:6px 9px;background:var(--ufs-bg);color:var(--ufs-text)}#ufs-app .ufs-batch-list-scroll{height:min(320px,40vh);min-height:120px;max-height:40vh;overflow-y:auto;overscroll-behavior:contain;border:1px solid var(--ufs-border);border-radius:5px}#ufs-app .ufs-batch-list-row{display:flex;align-items:center;gap:7px;min-width:0;min-height:36px;padding:6px 8px;border-bottom:1px solid var(--ufs-border)}#ufs-app .ufs-batch-list-row[data-status=copying]{background:var(--ufs-accent-soft)}#ufs-app .ufs-batch-list-index{flex:0 0 26px;color:var(--ufs-muted);font-size:11px}#ufs-app .ufs-batch-list-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}#ufs-app .ufs-batch-list-state{flex:0 0 auto;font-size:11px;color:var(--ufs-muted)}#ufs-app .ufs-batch-list-row[data-status=success] .ufs-batch-list-state{color:#258755}#ufs-app .ufs-batch-list-row[data-status=failed] .ufs-batch-list-state,#ufs-app .ufs-batch-list-row[data-status=uncertain] .ufs-batch-list-state{color:#c13d37}",
     "#ufs-app .ufs-batch-stop-choices{border:1px solid var(--ufs-border);border-radius:5px;padding:10px;display:flex;flex-direction:column;gap:8px}#ufs-app .ufs-batch-stop-choices button{padding:7px 9px;border:1px solid var(--ufs-border);border-radius:5px;background:var(--ufs-bg);color:var(--ufs-text);text-align:left}#ufs-app .ufs-batch-stop-choices button:hover{background:var(--ufs-hover)}#ufs-app .ufs-batch-warning{color:#a74c13;font-size:12px;overflow-wrap:anywhere}#ufs-app .ufs-batch-result-title{font-weight:600;font-size:14px}#ufs-app .ufs-batch-result-title[data-phase=success]{color:#258755}#ufs-app .ufs-batch-result-title[data-phase=uncertain]{color:#c13d37}",
+    // v0.2.5.1: show every preflight conflict above the destination picker.
+    "#ufs-app .ufs-preflight-notice{display:flex;flex-direction:column;gap:8px;border:1px solid #eac7c1;border-radius:6px;padding:12px;background:var(--ufs-bg);min-width:0}#ufs-app .ufs-preflight-notice[hidden]{display:none!important}#ufs-app .ufs-preflight-head{display:flex;align-items:center;gap:8px;color:#b34231;font-size:14px}#ufs-app .ufs-preflight-head .ufs-svg{flex:0 0 18px;width:18px;height:18px}#ufs-app .ufs-preflight-detail,#ufs-app .ufs-preflight-advice{font-size:12px;line-height:1.55;color:var(--ufs-text);overflow-wrap:anywhere}#ufs-app .ufs-preflight-conflicts{max-height:152px;overflow:auto;overscroll-behavior:contain;border:1px solid var(--ufs-border);border-radius:5px;padding:3px 8px}#ufs-app .ufs-preflight-conflicts[hidden]{display:none!important}#ufs-app .ufs-preflight-conflict-row{display:flex;align-items:flex-start;gap:7px;min-width:0;padding:6px 2px;border-bottom:1px solid var(--ufs-border);font-size:12px;color:var(--ufs-text)}#ufs-app .ufs-preflight-conflict-row:last-child{border-bottom:0}#ufs-app .ufs-preflight-conflict-row>span{min-width:0;overflow-wrap:anywhere}#ufs-app .ufs-preflight-conflict-row .ufs-svg{flex:0 0 15px;width:15px;height:15px}#ufs-app .ufs-preflight-checking{display:flex;align-items:center;gap:12px;padding:16px 4px;min-height:110px}#ufs-app .ufs-preflight-checking-icon{width:21px;height:21px;color:var(--ufs-accent);flex:0 0 21px;animation:ufs-copy-spin 1.4s linear infinite}#ufs-app .ufs-preflight-checking-body{display:flex;flex-direction:column;gap:8px;color:var(--ufs-text);font-size:13px}#ufs-app .ufs-preflight-checking-detail{font-size:12px;color:var(--ufs-muted);line-height:1.5}@media(prefers-reduced-motion:reduce){#ufs-app .ufs-preflight-checking-icon{animation:none}}",
     // v0.2.5: scheme-A task badge and bottom-right multi-task center.
     "#ufs-app .ufs-status .ufs-copy-task-trigger{display:inline-flex;align-items:center;justify-content:center;gap:5px;max-width:56%;flex:0 0 auto;padding:1px 8px;font-size:11px}#ufs-app .ufs-status .ufs-copy-task-trigger[hidden]{display:none!important}#ufs-app .ufs-copy-task-trigger>.ufs-svg{height:13px;width:13px;flex:0 0 13px}#ufs-app .ufs-task-badge-main{color:inherit;white-space:nowrap}#ufs-app .ufs-task-badge-divider{width:1px;height:13px;background:#e8c6aa;flex:0 0 1px;margin:0 1px}#ufs-app .ufs-task-badge-wait{display:inline-flex;align-items:center;gap:3px;color:inherit}#ufs-app .ufs-task-badge-wait>.ufs-svg{height:12px;width:12px}#ufs-app .ufs-task-badge-chevron{margin-left:1px}#ufs-app .ufs-status .ufs-copy-task-trigger[data-phase=paused]{background:#fff1e4;color:#a74c13}#ufs-app .ufs-status .ufs-copy-task-trigger[data-phase=queued]{background:#f0f2f5;color:#4f5b6a;border-color:#d9dfe6}",
     "#ufs-app .ufs-copy-task-center{position:absolute;right:10px;bottom:37px;z-index:2147483635;width:min(355px,calc(100% - 20px));max-height:min(405px,65vh);display:flex;flex-direction:column;background:var(--ufs-bg);border:1px solid var(--ufs-border);border-radius:9px;box-shadow:0 12px 30px #0003;overflow:hidden}#ufs-app .ufs-task-center-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex:0 0 43px;padding:0 12px;border-bottom:1px solid var(--ufs-border);font-size:13px;color:var(--ufs-text)}#ufs-app .ufs-task-center-close{border:0;background:transparent;font-size:20px;color:var(--ufs-muted);padding:3px 6px}#ufs-app .ufs-task-center-body{overflow-y:auto;min-height:0;padding:5px 9px}#ufs-app .ufs-task-center-row{display:flex;flex-direction:column;gap:4px;padding:9px 5px;border-bottom:1px solid var(--ufs-border)}#ufs-app .ufs-task-center-open{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;border:0;background:transparent;color:var(--ufs-text);padding:2px;min-width:0;text-align:left}#ufs-app .ufs-task-center-open:hover{color:var(--ufs-accent)}#ufs-app .ufs-task-center-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}#ufs-app .ufs-task-center-status{flex:0 0 auto;font-size:11px;color:var(--ufs-muted)}#ufs-app .ufs-task-center-row[data-status=running] .ufs-task-center-status{color:var(--ufs-accent)}#ufs-app .ufs-task-center-row[data-status=success] .ufs-task-center-status{color:#258755}#ufs-app .ufs-task-center-row[data-status=failed] .ufs-task-center-status,#ufs-app .ufs-task-center-row[data-status=uncertain] .ufs-task-center-status{color:#c13d37}#ufs-app .ufs-task-center-progress{height:5px;background:var(--ufs-border);border-radius:9px;overflow:hidden}#ufs-app .ufs-task-center-progress-fill{height:100%;background:var(--ufs-accent)}#ufs-app .ufs-task-center-remove{align-self:flex-end;padding:3px 7px;background:var(--ufs-bg);border:1px solid var(--ufs-border);border-radius:4px;color:var(--ufs-muted);font-size:11px}#ufs-app .ufs-task-center-paused{padding:11px 12px;border-top:1px solid var(--ufs-border);font-size:12px;color:var(--ufs-muted);display:flex;flex-direction:column;gap:8px}#ufs-app .ufs-task-center-paused button{border:1px solid var(--ufs-border);background:var(--ufs-panel);border-radius:5px;padding:7px;color:var(--ufs-text)}",
@@ -1322,7 +1332,8 @@
       const status=element('span','ufs-task-center-status',
         job.status==='running'?'复制中'+(Number.isFinite(job.percent)?' '+Math.floor(job.percent)+'%':''):
         job.status==='queued'?'等待中':job.status==='success'?'已完成':
-        job.status==='failed'?'失败':job.status==='uncertain'?'待核实':'已停止');
+        job.status==='failed'?(job.preflightRejected?'预检未通过 · 未开始':'失败'):
+        job.status==='uncertain'?'待核实':'已停止');
       main.append(info,status);
       main.addEventListener('click',()=>{
         closeCopyTaskCenter();
@@ -1383,7 +1394,9 @@
       copyQueuePaused&&queued?'复制已暂停':
       active?'复制中'+(Number.isFinite(active.percent)?' '+Math.floor(active.percent)+'%':''):
       queued?'等待中':complete?'复制完成 '+copyJobs.length+' 项':
-      problems?'复制待核实':'复制任务 '+copyJobs.length+' 项');
+      problems?(copyJobs.some(job=>job.status==='uncertain'||job.status==='stopped'||
+        (job.status==='failed'&&!job.preflightRejected))?'复制待核实':
+        '预检未通过'):'复制任务 '+copyJobs.length+' 项');
     button.replaceChildren();
     button.append(icon(copyQueuePaused&&queued?'alert-circle':active?'loader-circle':
       queued?'clock-3':complete?'check-circle':problems?'alert-circle':'copy'));
@@ -2513,11 +2526,57 @@
     picker.setAttribute('aria-label','选择复制目标文件夹');
     const destinationText=element('div','ufs-copy-destination','请选择目标文件夹');
     location.append(picker,destinationText);
+    const preflightNotice=element('section','ufs-preflight-notice');
+    preflightNotice.setAttribute('role','alert');
+    preflightNotice.setAttribute('aria-live','assertive');
+    preflightNotice.hidden=true;
+    const noticeHead=element('div','ufs-preflight-head');
+    noticeHead.append(icon('alert-triangle'),element('strong','ufs-preflight-title'));
+    const noticeDetail=element('div','ufs-preflight-detail');
+    const noticeConflicts=element('div','ufs-preflight-conflicts');
+    const noticeAdvice=element('div','ufs-preflight-advice');
+    preflightNotice.append(noticeHead,noticeDetail,noticeConflicts,noticeAdvice);
+    const checkingPanel=element('div','ufs-preflight-checking');
+    checkingPanel.setAttribute('role','status');
+    checkingPanel.setAttribute('aria-live','polite');
+    checkingPanel.append(icon('folder-search','ufs-preflight-checking-icon'));
+    const checkingContent=element('div','ufs-preflight-checking-body');
+    checkingContent.append(element('strong','','正在检查复制任务…'),
+      element('div','ufs-preflight-checking-detail',
+        '正在核验源文件、目标目录及全部同名冲突，请稍候。'));
+    checkingPanel.append(checkingContent);
     const feedback=element('div','ufs-create-feedback ufs-copy-feedback',
       '已存在同名项目时拒绝复制；不允许将文件夹复制到自身内部');
     feedback.setAttribute('role','status');
     location.append(feedback);
     fields.append(summary,location);
+    function showPreflightError(error,conflicts=[]) {
+      preflightNotice.hidden=false;
+      const heading=preflightNotice.querySelector('.ufs-preflight-title');
+      heading.textContent=conflicts.length?'发现 '+conflicts.length+' 项同名冲突':'复制预检未通过';
+      noticeDetail.textContent=conflicts.length?
+        '所选 '+entries.length+' 项均未开始复制，目标目录的已有文件不会被覆盖。':
+        '本次未开始复制：'+String(error?.message||error);
+      noticeConflicts.replaceChildren();
+      noticeConflicts.hidden=!conflicts.length;
+      for(const name of conflicts) {
+        const row=element('div','ufs-preflight-conflict-row');
+        row.append(icon('file','ufs-folder-icon'),element('span','',name));
+        row.title=name;
+        noticeConflicts.append(row);
+      }
+      noticeAdvice.textContent='请选择其他目标文件夹，或取消后重新选择需要复制的项目。';
+      fields.replaceChildren(preflightNotice,summary,location);
+      fields.scrollTop=0;
+      // Keep the original status text for compatibility with screen readers
+      // and tests, but never rely on it as the primary visible error.
+      setFeedback(String(error?.message||error),true);
+    }
+    function clearPreflightError() {
+      preflightNotice.hidden=true;
+      noticeConflicts.replaceChildren();
+      setFeedback('已存在同名项目时拒绝复制；不允许将文件夹复制到自身内部');
+    }
     // Prepared once; shown in place of the picker only after the user submits.
     // This is an indeterminate animation, never a synthetic percentage.
     const progressPanel=element('div','ufs-copy-progress-panel');
@@ -2801,6 +2860,7 @@
             element('span','',item.name));
           choose.addEventListener('click',()=>{
             if(busy || inlineDraft || mkdirUncertain || !permitted) return;
+            if(selected!==path) clearPreflightError();
             selected=path;
             destinationText.textContent='目标：'+path;
             submit.disabled=!!inlineDraft || mkdirUncertain;
@@ -3143,7 +3203,8 @@
         (batch.stopAfterCurrent?'等待当前项结束':'停止队列…'):'取消';
       submit.hidden=batch.started && !batch.finished;
       background.hidden=!batch.started || batch.finished;
-      fields.replaceChildren(...(batch.started?[batchPanel]:[summary,location]));
+      fields.replaceChildren(...(batch.started?[batchPanel]:
+        preflightNotice.hidden?[summary,location]:[preflightNotice,summary,location]));
       if(!batch.started) renderPicker();
       focusDialog();
     }
@@ -3201,14 +3262,17 @@
         throw new Error('有多个项目对应同一个目标文件名，拒绝批量复制');
       const sourceItems=await listDirectory(parentPath(plans[0].source));
       const destinationItems=await listDirectory(plans[0].destinationDir);
+      const conflicts=findBatchCopyConflicts(plans,destinationItems);
+      if(conflicts.length) {
+        const error=new Error('发现 '+conflicts.length+' 项同名冲突，整批未开始复制');
+        error.copyConflicts=conflicts;
+        throw error;
+      }
       for(const [i,plan] of plans.entries()) {
         const fresh=sourceItems.find(item=>item.path===plan.source);
         if(!fresh || fresh.folder!==plan.folder || fresh.copyPathVerified===false)
           throw new Error('源项目已更改或路径不安全：'+fileName(plan.source));
         if(copyBlockedReason(fresh)) throw new Error(copyBlockedReason(fresh));
-        if(destinationItems.some(item=>item.path===plan.target ||
-            item.name===fileName(plan.source)))
-          throw new Error('目标存在同名项目，未开始复制：'+fileName(plan.source));
         batch.rows[i].entry={...fresh};
       }
       if(await readNativeActive()) throw new Error('Unraid 正在执行其他原生文件任务，请稍后重试');
@@ -3236,7 +3300,12 @@
       submit.disabled=true;
       cancel.disabled=true;
       dismiss.disabled=true;
-      setFeedback('正在检查全部 '+entries.length+' 项源文件及目标目录…');
+      clearPreflightError();
+      heading.textContent='正在检查复制任务';
+      checkingPanel.querySelector('.ufs-preflight-checking-detail').textContent=
+        '正在核验 '+entries.length+' 项源文件、目标目录及同名冲突，请稍候。';
+      fields.replaceChildren(checkingPanel);
+      focusDialog();
       try {
         await preflightBatchCopy(plans);
         if(destroyed || closed) return;
@@ -3246,6 +3315,7 @@
         copyJob.phase='failed';
         copyJob.error=batch.error;
         copyJob.recoverable=true;
+        copyJob.preflightRejected=true;
         heading.textContent='复制到';
         fields.replaceChildren(summary,location);
         background.hidden=true;
@@ -3254,7 +3324,7 @@
         submit.textContent='开始复制';
         submit.hidden=false;
         submit.disabled=false;
-        setFeedback(batch.error,true);
+        showPreflightError(error,error.copyConflicts||[]);
         return;
       } finally {
         batch.preflighting=false;
@@ -3422,11 +3492,13 @@
           copyJob.phase='failed';
           copyJob.error=message;
           copyJob.recoverable=true;
+          copyJob.preflightRejected=true;
           updateCopyTaskButton();
           background.hidden=true;
           cancel.textContent='取消';
           fields.replaceChildren(summary,location);
-          setFeedback(message,true);
+          showPreflightError(error,[]);
+          updateCopyTaskButton();
         }
       } finally {
         busy=false;
@@ -4041,7 +4113,7 @@
   }
   // Explicit opt-in hook for pure-function tests; never enabled on production WebGUI.
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
-    window.__UFS_TEST_API__ = { batchCopyOverallProgress, safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, COPY_ENABLED, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, nativeCopyTarget, matchesCopyTask, copyDestinationAllowed, copyNativeEntry, decodeRsyncFilename, parseRsyncProgress, shortenCopyName, requestCancelNativeCopy, takeOverNativeFileMonitor, availableHeight, visibleEntries, sortedCopyFolders, safeCopyName, safeCopyPath, copyBlockedReason, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
+    window.__UFS_TEST_API__ = { findBatchCopyConflicts, batchCopyOverallProgress, safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, COPY_ENABLED, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, nativeCopyTarget, matchesCopyTask, copyDestinationAllowed, copyNativeEntry, decodeRsyncFilename, parseRsyncProgress, shortenCopyName, requestCancelNativeCopy, takeOverNativeFileMonitor, availableHeight, visibleEntries, sortedCopyFolders, safeCopyName, safeCopyPath, copyBlockedReason, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();

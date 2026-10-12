@@ -197,7 +197,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.5\b/);
+  assert.match(script, /@version\s+0\.2\.5\.1\b/);
 });
 
 
@@ -501,7 +501,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.5\b/);
+  assert.match(script, /@version\s+0\.2\.5\.1\b/);
 });
 
 
@@ -1684,4 +1684,38 @@ test('v0.2.5 方案 A 底部胶囊显示运行中总进度与独立排队数量'
   assert.match(script,/function resumeCopyQueue\(\)/);
   assert.match(script,/#ufs-app \.ufs-status \.ufs-copy-task-trigger\[hidden\]\{display:none!important\}/);
   assert.match(script,/\.addEventListener\('click',showCopyTaskCenter\)/);
+});
+
+
+test('v0.2.5.1 预检收集全部同名冲突，不跳过、不覆盖、不改变待处理队列',()=>{
+  const {api}=createAPI();
+  const plans=[
+    {source:'/mnt/user/TimeMachine/Photos',target:'/mnt/user/downloads/Photos'},
+    {source:'/mnt/user/TimeMachine/notes.txt',target:'/mnt/user/downloads/notes.txt'},
+    {source:'/mnt/user/TimeMachine/another.zip',target:'/mnt/user/downloads/another.zip'}
+  ];
+  const existing=[
+    {name:'Photos',path:'/mnt/user/downloads/Photos'},
+    {name:'notes.txt',path:'/mnt/user/downloads/notes.txt'},
+    {name:'unrelated.txt',path:'/mnt/user/downloads/unrelated.txt'}
+  ];
+  assert.deepEqual(Array.from(api.findBatchCopyConflicts(plans,existing)),['Photos','notes.txt']);
+  assert.deepEqual(Array.from(api.findBatchCopyConflicts(plans,[])),[]);
+  assert.equal(plans.length,3);
+  assert.match(script,/error\.copyConflicts=conflicts/);
+  assert.match(script,/if\(conflicts\.length\)\s*\{/);
+  assert.match(script,/throw error/);
+});
+
+test('v0.2.5.1 预检状态醒目、冲突列表在目标树上方并允许重新选择目标',()=>{
+  assert.match(script,/正在检查复制任务…/);
+  assert.match(script,/fields\.replaceChildren\(checkingPanel\)/);
+  assert.match(script,/fields\.replaceChildren\(preflightNotice,summary,location\)/);
+  assert.match(script,/fields\.scrollTop=0/);
+  assert.match(script,/noticeDetail\.textContent=conflicts\.length/);
+  assert.match(script,/showPreflightError\(error,error\.copyConflicts\|\|\[\]\)/);
+  assert.match(script,/if\(selected!==path\) clearPreflightError\(\)/);
+  assert.match(script,/copyJob\.preflightRejected=true/);
+  assert.match(script,/job\.preflightRejected\?'预检未通过 · 未开始':'失败'/);
+  assert.match(script,/max-height:152px;overflow:auto/);
 });
