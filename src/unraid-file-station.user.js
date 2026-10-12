@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.7.4
+// @version      0.2.7.5
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
@@ -1082,6 +1082,31 @@
     "#ufs-app .ufs-batch-panel{display:flex;flex-direction:column;gap:12px;min-width:0}#ufs-app .ufs-batch-line{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13px}#ufs-app .ufs-batch-percent{font-weight:650;font-size:19px;color:var(--ufs-accent);font-variant-numeric:tabular-nums}#ufs-app .ufs-batch-track{height:10px;border-radius:10px;background:var(--ufs-border);overflow:hidden}#ufs-app .ufs-batch-fill{height:100%;width:0;border-radius:10px;background:var(--ufs-accent);transition:width .2s ease-out}#ufs-app .ufs-batch-meta{font-size:12px;color:var(--ufs-muted)}#ufs-app .ufs-batch-current{background:var(--ufs-panel);border-radius:5px;padding:12px;overflow-wrap:anywhere;font-size:12px;display:flex;flex-direction:column;gap:6px}#ufs-app .ufs-batch-current-name{font-size:13px;font-weight:600;color:var(--ufs-text)}#ufs-app .ufs-batch-stats{display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--ufs-muted)}",
     "#ufs-app .ufs-batch-list-back{align-self:flex-start;display:flex;align-items:center;gap:5px;border:0;background:transparent;color:var(--ufs-accent);padding:3px 0;font-size:12px}#ufs-app .ufs-batch-list-search{height:33px;flex:0 0 33px;width:100%;min-width:0;border:1px solid var(--ufs-border);border-radius:4px;padding:6px 9px;background:var(--ufs-bg);color:var(--ufs-text)}#ufs-app .ufs-batch-list-scroll{height:min(320px,40vh);min-height:120px;max-height:40vh;overflow-y:auto;overscroll-behavior:contain;border:1px solid var(--ufs-border);border-radius:5px}#ufs-app .ufs-batch-list-row{display:flex;align-items:center;gap:7px;min-width:0;min-height:36px;padding:6px 8px;border-bottom:1px solid var(--ufs-border)}#ufs-app .ufs-batch-list-row[data-status=copying]{background:var(--ufs-accent-soft)}#ufs-app .ufs-batch-list-index{flex:0 0 26px;color:var(--ufs-muted);font-size:11px}#ufs-app .ufs-batch-list-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}#ufs-app .ufs-batch-list-state{flex:0 0 auto;font-size:11px;color:var(--ufs-muted)}#ufs-app .ufs-batch-list-row[data-status=success] .ufs-batch-list-state{color:#258755}#ufs-app .ufs-batch-list-row[data-status=failed] .ufs-batch-list-state,#ufs-app .ufs-batch-list-row[data-status=uncertain] .ufs-batch-list-state{color:#c13d37}",
     "#ufs-app .ufs-batch-stop-choices{border:1px solid var(--ufs-border);border-radius:5px;padding:10px;display:flex;flex-direction:column;gap:8px}#ufs-app .ufs-batch-stop-choices button{padding:7px 9px;border:1px solid var(--ufs-border);border-radius:5px;background:var(--ufs-bg);color:var(--ufs-text);text-align:left}#ufs-app .ufs-batch-stop-choices button:hover{background:var(--ufs-hover)}#ufs-app .ufs-batch-warning{color:#a74c13;font-size:12px;overflow-wrap:anywhere}#ufs-app .ufs-batch-result-title{font-weight:600;font-size:14px}#ufs-app .ufs-batch-result-title[data-phase=success]{color:#258755}#ufs-app .ufs-batch-result-title[data-phase=uncertain]{color:#c13d37}",
+    // v0.2.7.5: shared layout tokens for single-entry and batch-copy progress.
+    "#ufs-app .ufs-unified-progress .ufs-copy-progress-status{margin:16px 0 8px;gap:12px}",
+    "#ufs-app .ufs-unified-progress .ufs-copy-progress-state-text{font-size:13px;font-weight:600}",
+    "#ufs-app .ufs-unified-progress .ufs-copy-progress-indicator,#ufs-app .ufs-unified-progress .ufs-batch-percent{font-size:19px;font-weight:650;color:var(--ufs-accent);font-variant-numeric:tabular-nums}",
+    "#ufs-app .ufs-unified-progress .ufs-copy-progress-track,#ufs-app .ufs-unified-progress .ufs-batch-track{height:8px;border-radius:8px;background:var(--ufs-panel);overflow:hidden}",
+    "#ufs-app .ufs-unified-progress .ufs-batch-fill{background:var(--ufs-accent);border-radius:8px}",
+    "#ufs-app .ufs-unified-meta{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:8px;color:var(--ufs-muted);font-size:11px;line-height:1.5}",
+    "#ufs-app .ufs-unified-meta span:last-child{text-align:right}",
+    "#ufs-app .ufs-unified-progress .ufs-copy-progress-stages{margin:14px 0 13px;font-size:11px}",
+    "#ufs-app .ufs-unified-current{background:var(--ufs-panel);border-radius:5px;padding:12px;display:flex;flex-direction:column;gap:0;min-width:0;margin-top:3px}",
+    "#ufs-app .ufs-unified-current-top{display:flex;justify-content:space-between;gap:8px;color:var(--ufs-muted);font-size:11px;margin-bottom:7px}",
+    "#ufs-app .ufs-unified-current-name{font-weight:600;font-size:13px;color:var(--ufs-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}",
+    "#ufs-app .ufs-unified-current .ufs-copy-current-file{margin-top:6px;min-height:0;color:var(--ufs-muted);font-size:11px}",
+    "#ufs-app .ufs-unified-metrics{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;border-top:1px solid var(--ufs-border);padding-top:11px;margin-top:11px;min-height:0}",
+    "#ufs-app .ufs-unified-metric,#ufs-app .ufs-unified-progress .ufs-batch-speed-row{display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-start;gap:4px;min-width:0;color:var(--ufs-muted);font-size:11px}",
+    "#ufs-app .ufs-unified-metric strong,#ufs-app .ufs-unified-progress .ufs-batch-speed-value{font-size:16px;font-weight:650;line-height:1.35;color:var(--ufs-text);text-align:left;word-break:break-word;overflow-wrap:anywhere}",
+    "#ufs-app .ufs-unified-transfer{grid-column:1/-1;color:var(--ufs-muted);font-size:11px}",
+    "#ufs-app .ufs-unified-progress .ufs-batch-current{gap:0;overflow:visible}",
+    "#ufs-app .ufs-unified-progress .ufs-batch-current-name{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+    "#ufs-app .ufs-unified-progress .ufs-batch-current-info{margin-top:4px}",
+    "#ufs-app .ufs-unified-progress .ufs-copy-progress-note,#ufs-app .ufs-unified-progress .ufs-batch-warning{margin-top:11px;font-size:11px;line-height:1.6}",
+    "#ufs-app .ufs-unified-progress .ufs-batch-stats{margin-top:11px}",
+    "#ufs-app .ufs-unified-progress .ufs-batch-open-list{margin:10px 0 0 auto}",
+    "#ufs-app .ufs-unified-progress[data-phase=success] .ufs-batch-fill{background:#34895e}",
+    "@media(max-width:470px){#ufs-app .ufs-unified-current{padding:10px}#ufs-app .ufs-unified-metric strong,#ufs-app .ufs-unified-progress .ufs-batch-speed-value{font-size:14px}}",
     // v0.2.5.1: show every preflight conflict above the destination picker.
     "#ufs-app .ufs-preflight-notice{display:flex;flex-direction:column;gap:8px;border:1px solid #eac7c1;border-radius:6px;padding:12px;background:var(--ufs-bg);min-width:0}#ufs-app .ufs-preflight-notice[hidden]{display:none!important}#ufs-app .ufs-preflight-head{display:flex;align-items:center;gap:8px;color:#b34231;font-size:14px}#ufs-app .ufs-preflight-head .ufs-svg{flex:0 0 18px;width:18px;height:18px}#ufs-app .ufs-preflight-detail,#ufs-app .ufs-preflight-advice{font-size:12px;line-height:1.55;color:var(--ufs-text);overflow-wrap:anywhere}#ufs-app .ufs-preflight-conflicts{max-height:152px;overflow:auto;overscroll-behavior:contain;border:1px solid var(--ufs-border);border-radius:5px;padding:3px 8px}#ufs-app .ufs-preflight-conflicts[hidden]{display:none!important}#ufs-app .ufs-preflight-conflict-row{display:flex;align-items:flex-start;gap:7px;min-width:0;padding:6px 2px;border-bottom:1px solid var(--ufs-border);font-size:12px;color:var(--ufs-text)}#ufs-app .ufs-preflight-conflict-row:last-child{border-bottom:0}#ufs-app .ufs-preflight-conflict-row>span{min-width:0;overflow-wrap:anywhere}#ufs-app .ufs-preflight-conflict-row .ufs-svg{flex:0 0 15px;width:15px;height:15px}#ufs-app .ufs-preflight-checking{display:flex;align-items:center;gap:12px;padding:16px 4px;min-height:110px}#ufs-app .ufs-preflight-checking-icon{width:21px;height:21px;color:var(--ufs-accent);flex:0 0 21px;animation:ufs-copy-spin 1.4s linear infinite}#ufs-app .ufs-preflight-checking-body{display:flex;flex-direction:column;gap:8px;color:var(--ufs-text);font-size:13px}#ufs-app .ufs-preflight-checking-detail{font-size:12px;color:var(--ufs-muted);line-height:1.5}@media(prefers-reduced-motion:reduce){#ufs-app .ufs-preflight-checking-icon{animation:none}}",
     // v0.2.5: scheme-A task badge and bottom-right multi-task center.
@@ -3600,7 +3625,7 @@
     }
     // Prepared once; shown in place of the picker only after the user submits.
     // This is an indeterminate animation, never a synthetic percentage.
-    const progressPanel=element('div','ufs-copy-progress-panel');
+    const progressPanel=element('div','ufs-copy-progress-panel ufs-unified-progress');
     progressPanel.dataset.phase='checking';
     progressPanel.dataset.progressMode='indeterminate';
     progressPanel.append(element('label','ufs-create-label','复制到'));
@@ -3625,6 +3650,11 @@
     const fill=element('div','ufs-copy-progress-fill');
     track.append(fill);
     progressPanel.append(track);
+    const singleSummary=element('div','ufs-unified-meta');
+    const singleDone=element('span','','已完成 0 / 1 项');
+    const singleBasis=element('span','',entry.folder?'文件夹总体进度未知':'当前文件进度');
+    singleSummary.append(singleDone,singleBasis);
+    progressPanel.append(singleSummary);
     const progressStages=element('div','ufs-copy-progress-stages');
     const stages=[
       ['checking','目标检查'],['copying','文件复制'],['verifying','完成核对']
@@ -3636,9 +3666,26 @@
       return node;
     });
     progressPanel.append(progressStages);
+    const singleCurrent=element('div','ufs-unified-current');
+    const singleCurrentTop=element('div','ufs-unified-current-top');
+    singleCurrentTop.append(element('span','','当前项目 · 第 1 / 1 项'),
+      element('span','',entry.folder?'文件夹':'文件'));
+    const singleCurrentName=element('div','ufs-unified-current-name',entry.name);
+    singleCurrentName.title=entry.name;
     const progressFile=element('div','ufs-copy-current-file');
-    const progressMetrics=element('div','ufs-copy-progress-metrics');
-    progressPanel.append(progressFile,progressMetrics);
+    const progressMetrics=element('div','ufs-copy-progress-metrics ufs-unified-metrics');
+    const speedMetric=element('div','ufs-unified-metric');
+    const speedLabel=element('span','','当前速度');
+    const speedValue=element('strong','','正在获取复制速度…');
+    speedMetric.append(speedLabel,speedValue);
+    const etaMetric=element('div','ufs-unified-metric');
+    const etaLabel=element('span','','当前文件预计剩余');
+    const etaValue=element('strong','','—');
+    etaMetric.append(etaLabel,etaValue);
+    const transferValue=element('div','ufs-unified-transfer');
+    progressMetrics.append(speedMetric,etaMetric,transferValue);
+    singleCurrent.append(singleCurrentTop,singleCurrentName,progressFile,progressMetrics);
+    progressPanel.append(singleCurrent);
     const progressNote=element('div','ufs-copy-progress-note');
     progressNote.setAttribute('role','status');
     progressNote.setAttribute('aria-live','polite');
@@ -3648,23 +3695,26 @@
     function renderSingleCopyMetrics() {
       if(visibleCopyPhase!=='copying') return;
       const rate=currentCopySpeed(copyJob);
-      progressMetrics.textContent=[
-        lastCopyTransferred?'已传输 '+lastCopyTransferred:'',
-        '当前速度：'+(rate || (copyJob?.speedUpdatedAt?'暂无实时速度数据':'正在获取复制速度…')),
-        rate && lastCopyEta?'剩余 '+lastCopyEta:''
-      ].filter(Boolean).join(' · ');
+      speedValue.textContent=rate || (copyJob?.speedUpdatedAt?'暂无实时速度数据':'正在获取复制速度…');
+      etaValue.textContent=rate && lastCopyEta?lastCopyEta:'—';
+      transferValue.textContent=lastCopyTransferred?'已传输 '+lastCopyTransferred:'';
     }
-    function renderCopyProgress(phase,message='') {
-      visibleCopyPhase=phase;
-      progressPanel.dataset.phase=phase;
+    function renderSharedCopyStages(nodes,phase,lastStep=1) {
       const stageIndex=stages.findIndex(([key])=>key===phase);
-      stageNodes.forEach((node,index)=>{
-        const state=phase==='success'?'done':phase==='uncertain'
-          ?(index<lastActiveCopyStep?'done':index===lastActiveCopyStep?'error':'pending')
+      nodes.forEach((node,index)=>{
+        const state=phase==='success'?'done':phase==='uncertain'||phase==='failed'||phase==='stopped'
+          ?(index<lastStep?'done':index===lastStep?'error':'pending')
           :(index<stageIndex?'done':index===stageIndex?'active':'pending');
         node.dataset.status=state;
         node.textContent=(state==='done'?'✓ ':state==='active'?'● ':state==='error'?'! ':'○ ')+stages[index][1];
       });
+    }
+    function renderCopyProgress(phase,message='') {
+      visibleCopyPhase=phase;
+      progressPanel.dataset.phase=phase;
+      renderSharedCopyStages(stageNodes,phase,lastActiveCopyStep);
+      singleDone.textContent='已完成 '+(phase==='success'?1:0)+' / 1 项';
+      singleBasis.textContent=entry.folder?'文件夹总体进度未知':'当前文件进度';
       const labels={
         checking:['正在检查目标…','准备中','正在检查源文件和目标目录…'],
         copying:['正在复制文件…','进行中','正在等待 Unraid 完成文件操作，请勿关闭页面。'],
@@ -3679,7 +3729,9 @@
       if(phase!=='copying') {
         progressFile.textContent='';
         progressFile.removeAttribute('title');
-        progressMetrics.textContent='';
+        speedValue.textContent=phase==='success'?'已完成':'—';
+        etaValue.textContent='—';
+        transferValue.textContent='';
         lastCopyTransferred='';
         lastCopyEta='';
       } else renderSingleCopyMetrics();
@@ -3703,8 +3755,8 @@
           progressFile.textContent='当前文件：'+shortenCopyName(current.split('/').pop()||current,90);
           progressFile.title=current;
         }
-        if(info?.percent!=null) {
-          if(copyJob && !entry.folder) {
+        if(info?.percent!=null && !entry.folder) {
+          if(copyJob) {
             copyJob.percent=Math.max(copyJob.percent??0,Math.min(99.9,info.percent));
             updateCopyTaskButton();
           }
@@ -4125,9 +4177,15 @@
 
     // Batch mode reuses this dialog's existing target-tree picker, inline mkdir,
     // copyNativeEntry write lock, and current-page background session.
-    const batchPanel=element('div','ufs-batch-panel');
+    const batchPanel=element('div','ufs-batch-panel ufs-unified-progress');
+    const batchTargetLabel=element('label','ufs-create-label','复制到');
+    const batchTarget=element('div','ufs-copy-progress-target');
+    batchTarget.append(icon('folder','ufs-folder-icon'));
+    const batchTargetPath=element('span','ufs-copy-progress-target-text');
+    batchTarget.append(batchTargetPath);
+    batchPanel.append(batchTargetLabel,batchTarget);
     const batchListPanel=element('div','ufs-batch-panel ufs-batch-list-panel');
-    const batchHeading=element('div','ufs-batch-line');
+    const batchHeading=element('div','ufs-batch-line ufs-copy-progress-status');
     const batchCaption=element('strong','','总体进度');
     const batchPercentText=element('span','ufs-batch-percent','0%');
     batchHeading.append(batchCaption,batchPercentText);
@@ -4138,20 +4196,34 @@
     batchTrack.setAttribute('aria-valuemax','100');
     const batchFill=element('div','ufs-batch-fill');
     batchTrack.append(batchFill);
-    const batchMeta=element('div','ufs-batch-line ufs-batch-meta');
+    const batchMeta=element('div','ufs-batch-line ufs-batch-meta ufs-unified-meta');
     const batchDone=element('span','','已完成 0 / '+entries.length+' 项');
     const batchBasis=element('span','','按项目进度计算');
     batchMeta.append(batchDone,batchBasis);
-    const batchCurrent=element('div','ufs-batch-current');
+    const batchStages=element('div','ufs-copy-progress-stages');
+    const batchStageNodes=stages.map(([phase,title])=>{
+      const node=element('span','ufs-copy-progress-stage','○ '+title);
+      node.dataset.step=phase;
+      batchStages.append(node);
+      return node;
+    });
+    const batchCurrent=element('div','ufs-batch-current ufs-unified-current');
+    const batchCurrentTop=element('div','ufs-unified-current-top');
+    const batchCurrentOrdinal=element('span','','当前项目 · 第 1 / '+entries.length+' 项');
+    const batchCurrentType=element('span','','准备中');
+    batchCurrentTop.append(batchCurrentOrdinal,batchCurrentType);
     const batchCurrentName=element('span','ufs-batch-current-name','正在准备复制任务…');
-    const batchCurrentInfo=element('span','ufs-batch-meta','等待安全预检');
-    const batchCurrentMetrics=element('div','ufs-batch-speed-row');
+    const batchCurrentInfo=element('span','ufs-batch-meta ufs-batch-current-info','等待安全预检');
+    const batchCurrentFile=element('div','ufs-copy-current-file');
+    const batchCurrentMetrics=element('div','ufs-unified-metrics');
+    const batchSpeedRow=element('div','ufs-batch-speed-row');
     const batchSpeedValue=element('strong','ufs-batch-speed-value','正在获取复制速度…');
-    batchCurrentMetrics.append(element('span','ufs-batch-meta','当前速度'),batchSpeedValue);
+    batchSpeedRow.append(element('span','ufs-batch-meta','当前速度'),batchSpeedValue);
     const batchEtaRow=element('div','ufs-batch-speed-row');
-    const batchEtaValue=element('span','ufs-batch-speed-value','—');
-    batchEtaRow.append(element('span','ufs-batch-meta','预计剩余'),batchEtaValue);
-    batchCurrent.append(batchCurrentName,batchCurrentInfo,batchCurrentMetrics,batchEtaRow);
+    const batchEtaValue=element('strong','ufs-batch-speed-value','—');
+    batchEtaRow.append(element('span','ufs-batch-meta','当前文件预计剩余'),batchEtaValue);
+    batchCurrentMetrics.append(batchSpeedRow,batchEtaRow);
+    batchCurrent.append(batchCurrentTop,batchCurrentName,batchCurrentInfo,batchCurrentFile,batchCurrentMetrics);
     const batchStats=element('div','ufs-batch-stats');
     const batchStatsDone=element('span','','成功 0');
     const batchStatsPending=element('span','','待执行 '+entries.length);
@@ -4190,7 +4262,7 @@
     });
     batchStopChoices.append(stopSafely,stopNow,
       element('div','ufs-batch-warning','停止当前项目需要原生任务归属检查，结果可能不确定。'));
-    batchPanel.append(batchHeading,batchTrack,batchMeta,batchCurrent,batchStats,
+    batchPanel.append(batchHeading,batchTrack,batchMeta,batchStages,batchCurrent,batchStats,
       batchListOpen,batchStopChoices,batchNote);
     const batchListBack=element('button','ufs-batch-list-back','← 返回');
     batchListBack.type='button';
@@ -4272,10 +4344,13 @@
         phase==='verifying'?'正在核对复制结果…':
         rate || (copyJob?.speedUpdatedAt?'暂无实时速度数据':'正在获取复制速度…');
       batchEtaValue.textContent=phase==='copying' && rate && copyJob?.eta?copyJob.eta:'—';
-      batchEtaRow.hidden=phase!=='copying';
     }
     function renderBatchProgress() {
       if(!multi) return;
+      const visualPhase=batch.finished?batch.phase:copyJob?.phase||'copying';
+      batchPanel.dataset.phase=visualPhase;
+      renderSharedCopyStages(batchStageNodes,visualPhase,
+        visualPhase==='verifying'?2:1);
       const done=batch.rows.filter(row=>['success','skipped'].includes(row.status)).length;
       const skipped=batch.rows.filter(row=>row.status==='skipped').length;
       const waiting=batch.rows.filter(row=>row.status==='pending').length;
@@ -4287,7 +4362,7 @@
       batchFill.style.width=batch.percent+'%';
       batchTrack.setAttribute('aria-valuenow',String(batch.percent));
       batchDone.textContent='已完成 '+done+' / '+batch.rows.length+' 项';
-      batchBasis.textContent=batch.mode==='bytes'?'按数据大小计算':'按项目进度计算';
+      batchBasis.textContent=batch.mode==='bytes'?'按文件大小计算':'按项目计算 · 非字节进度';
       batchStatsDone.textContent='成功 '+(done-skipped)+(skipped?' · 忽略 '+skipped:'');
       batchStatsPending.textContent=batch.finished
         ?'未执行 '+waiting
@@ -4295,14 +4370,18 @@
       if(batch.finished) {
         const problems=batch.rows.filter(row=>row.status==='failed'||row.status==='uncertain').length;
         batchCaption.textContent='总体进度';
+        batchCurrentOrdinal.textContent='已完成 '+done+' / '+batch.rows.length+' 项';
+        batchCurrentType.textContent=batch.phase==='success'?'已完成':'需核实';
+        batchCurrentFile.textContent='';
         batchCurrentName.textContent=batch.phase==='success'?
           '已处理 '+done+' 项（忽略 '+skipped+' 项）':batch.phase==='stopped'?
           '队列已停止，后续任务未执行':
           '复制任务已暂停，需检查失败或待核实项目';
         batchCurrentInfo.textContent='成功 '+(done-skipped)+' · 忽略 '+skipped+' · 问题 '+problems+' · 未执行 '+waiting;
-        batchCurrentMetrics.hidden=batch.phase==='success'||!batch.error;
-        batchCurrentMetrics.textContent=batch.error;
-        batchEtaRow.hidden=true;
+        batchCurrentMetrics.hidden=true;
+        batchCurrentInfo.title=batch.error||'';
+        batchNote.textContent=batch.error || (batch.phase==='success'?'复制结果已核对。':
+          '请核实未完成项目，切勿直接重试。');
         batchListOpen.textContent='查看全部 '+batch.rows.length+' 项结果 →';
         batchStopChoices.hidden=true;
         if(batch.phase==='success') {
@@ -4311,6 +4390,8 @@
         }
       } else if(current) {
         refreshBatchCurrentMetrics();
+        batchCurrentOrdinal.textContent='当前项目 · 第 '+(batch.currentIndex+1)+' / '+entries.length+' 项';
+        batchCurrentType.textContent=current.entry.folder?'文件夹':'文件';
         batchCurrentName.textContent=current.entry.name;
         batchCurrentInfo.textContent='第 '+(batch.currentIndex+1)+' / '+entries.length+' 项'+
           (current.entry.folder?' · 文件夹':' · 文件')+
@@ -4418,7 +4499,9 @@
       cancel.disabled=false;
       background.hidden=false;
       dismiss.title='后台运行';
+      batchTargetPath.textContent=selected;
       showCopyFields(batchPanel);
+      renderBatchProgress();
       focusDialog();
       const batchMetricsTimer=setInterval(()=>{
         if(!destroyed && !closed && batch.view==='main') refreshBatchCurrentMetrics();
@@ -4436,6 +4519,8 @@
             copyJob.eta='';
             batchSpeedValue.textContent='正在获取复制速度…';
             batchEtaValue.textContent='—';
+            batchCurrentFile.textContent='';
+            batchCurrentFile.removeAttribute('title');
             batchCurrentMetrics.hidden=false;
             batchEtaRow.hidden=false;
             const row=batch.rows[i];
@@ -4451,6 +4536,14 @@
               if(phase==='verifying') batchCurrentInfo.textContent='正在核对复制结果…';
               if(info && Number.isFinite(info.percent) && !row.entry.folder) {
                 batch.currentPercent=Math.max(batch.currentPercent??0,info.percent);
+              }
+              if(phase==='checking' || phase==='verifying') {
+                batchCurrentFile.textContent='';
+                batchCurrentFile.removeAttribute('title');
+              } else if(info?.filename && copyJob.phase==='copying') {
+                const filename=info.filename.trim().replace(/\/$/,'');
+                batchCurrentFile.textContent='当前文件：'+shortenCopyName(filename.split('/').pop()||filename,90);
+                batchCurrentFile.title=filename;
               }
               if(info?.eta) copyJob.eta=info.eta;
               renderBatchProgress();
