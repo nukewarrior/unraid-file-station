@@ -197,7 +197,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.6\.1\b/);
+  assert.match(script, /@version\s+0\.2\.6\.2\b/);
 });
 
 
@@ -501,7 +501,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.6\.1\b/);
+  assert.match(script, /@version\s+0\.2\.6\.2\b/);
 });
 
 
@@ -1773,4 +1773,34 @@ test('v0.2.6.1 radio 改为外圈 + 小圆点，悬浮与焦点提示不同时�
   assert.match(script,/ufs-copy-policy:not\(:has\(\.ufs-copy-policy-choice:hover\)\)/);
   assert.doesNotMatch(script,/ufs-copy-policy-choice:focus-within::after/);
   assert.match(script,/option\.append\(radio,element\('span','ufs-copy-policy-ring'\)/);
+});
+
+test('v0.2.6.2 rsync 真实速度只在运行且未过期时可见，5 秒后隐藏',()=>{
+  const {api}=createAPI();
+  const job={status:'running',phase:'copying',speed:'85.6MB/s',speedUpdatedAt:10000,percent:42};
+  assert.equal(api.currentCopySpeed(job,14000),'85.6MB/s');
+  assert.equal(api.currentCopySpeed(job,15000),'85.6MB/s');
+  assert.equal(api.currentCopySpeed(job,15001),'');
+  assert.equal(api.currentCopySpeed({...job,phase:'verifying'},11000),'');
+  assert.equal(api.currentCopySpeed({...job,status:'queued'},11000),'');
+  assert.equal(api.currentCopySpeed({...job,speedUpdatedAt:0},11000),'');
+  assert.equal(api.copyJobMeta(job),'速度暂无数据');
+  assert.equal(api.copyJobMeta({...job,speedUpdatedAt:0}),'速度获取中…');
+  assert.equal(api.copyJobMeta({...job,phase:'checking'}),'正在验证源文件和目标目录');
+  assert.equal(api.copyJobMeta({...job,phase:'verifying'}),'正在核对复制结果');
+  assert.equal(api.copyJobStatusLabel(job),'复制中 42%');
+  assert.equal(api.copyJobStatusLabel({...job,phase:'checking'}),'正在检查');
+  assert.equal(api.copyJobStatusLabel({...job,phase:'verifying'}),'正在核验');
+});
+
+test('v0.2.6.2 任务中心、底部胶囊同时显示速度并沿用同一旋转节点',()=>{
+  assert.match(script,/function copyJobSignal\(job,phase,info\)/);
+  assert.match(script,/function synchronizeCopySpeedTimer\(active\)/);
+  assert.match(script,/copyJob\.speedUpdatedAt=0/);
+  assert.match(script,/ufs-task-badge-speed/);
+  assert.match(script,/ufs-task-center-meta/);
+  assert.match(script,/data-status=running/);
+  assert.match(script,/button\.dataset\.renderKey!==signature/);
+  assert.match(script,/@media\(prefers-reduced-motion:reduce\).*ufs-task-live-spinner/);
+  assert.match(script,/\.ufs-task-live-spinner\{.*animation:ufs-copy-spin/);
 });

@@ -490,7 +490,7 @@ test('v0.2.3.14 工具栏「新建文件夹」一次点击直接打开弹窗，�
   await page.locator('.ufs-entry').filter({hasText:'直接创建测试'}).first().waitFor();
   assert.deepEqual(created,['直接创建测试']);
   assert.equal(nativePosts.filter(post=>post.mode==='file').length,1);
-  assert.equal(errors.length,0,errors.join('\\n'));
+  assert.equal(errors.length,0,errors.join('\n'));
 });
 
 test('v0.2.1 新建文件夹经模拟原生接口提交一次并验证出现后刷新', async t=>{
@@ -1861,7 +1861,7 @@ test('v0.2.3.15 浅灰实体操作按钮的高度、边界、文字和箭头对�
   assert.equal(await page.locator('.ufs-menu').count(),0);
   assert.equal(nativePosts.filter(p=>p.mode==='file').length,0);
   await page.locator('.ufs-create-cancel').click();
-  assert.equal(errors.length,0,errors.join('\\n'));
+  assert.equal(errors.length,0,errors.join('\n'));
 });
 
 test('v0.2.3.16 文件操作栏不显示冗余「文件」标签，两个按钮保持左侧对齐和原有功能',async t=>{
@@ -2206,5 +2206,91 @@ test('v0.2.6 同名文件夹按忽略策略合并，不将目录本身整体跳�
   assert.equal(posts.length,1);
   assert.equal(posts[0].action,'3');
   assert.equal(posts[0].exist,'');
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.6.2 真实 rsync 速度同步任务中心和底部胶囊，动画稳定且超时消失',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t,{
+    simulateNativeMonitor:true,longCopy:true
+  });
+  await openCopyDialog(page,'notes.txt');
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-progress-panel[data-phase="copying"]').waitFor();
+  await page.locator('.ufs-copy-background').click();
+  const badge=page.locator('.ufs-status .ufs-copy-task-trigger');
+  await badge.waitFor({state:'visible'});
+  await badge.click();
+  const row=page.locator('.ufs-task-center-row[data-status="running"]');
+  await row.waitFor();
+  const spin=badge.locator('.ufs-task-live-spinner');
+  assert.equal(await spin.count(),1);
+  const token=await spin.evaluate(el=>{
+    el.dataset.identity='spinner-stable';
+    return getComputedStyle(el).animationName;
+  });
+  assert.equal(token,'ufs-copy-spin');
+  assert.match(await row.locator('.ufs-task-center-meta').innerText(),/速度获取中/);
+  await page.evaluate(()=>window.__ufsMonitorTest.emitFileManager({
+    status:'Copying ... notes.txt\n  4,194,304  42%  85.6MB/s  0:00:05'
+  }));
+  await badge.getByText('85.6MB/s').waitFor();
+  assert.match(await row.locator('.ufs-task-center-meta').innerText(),/速度 85.6MB\/s/);
+  assert.match(await badge.innerText(),/42%/);
+  const unchanged=await spin.evaluate(el=>el.dataset.identity);
+  assert.equal(unchanged,'spinner-stable','速度变化不能重建旋转节点');
+  await page.evaluate(()=>window.__ufsMonitorTest.emitFileManager({
+    status:'Copying ... notes.txt\n  5,194,304  48%  91.2MB/s  0:00:04'
+  }));
+  await badge.getByText('91.2MB/s').waitFor();
+  assert.equal(await spin.evaluate(el=>el.dataset.identity),'spinner-stable');
+  await page.waitForFunction(()=>
+    !document.querySelector('.ufs-task-badge-speed')?.textContent.includes('91.2MB/s'),
+    null,{timeout:9000});
+  assert.equal(await badge.locator('.ufs-task-badge-speed').innerText(),'');
+  assert.match(await row.locator('.ufs-task-center-meta').innerText(),/速度暂无数据/);
+  assert.match(await badge.innerText(),/复制中/);
+  assert.equal(nativePosts.filter(p=>p.mode==='file').length,1,
+    '速度展示不得额外提交原生任务');
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.6.2 多任务排队保留等待数量，仅活动任务展示速度和 Spinner',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t,{
+    simulateNativeMonitor:true,firstCopyHoldReads:12
+  });
+  await openCopyDialog(page,'notes.txt');
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-progress-panel[data-phase="copying"]').waitFor();
+  await page.locator('.ufs-copy-background').click();
+  await openCopyDialog(page,'Photos');
+  await page.getByRole('button',{name:'选择 appdata'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-background').click();
+  const badge=page.locator('.ufs-status .ufs-copy-task-trigger');
+  await badge.locator('.ufs-task-badge-wait').getByText('1',{exact:true}).waitFor();
+  await badge.click();
+  await page.locator('.ufs-task-center-row[data-status="queued"]').waitFor();
+  assert.equal(await page.locator('.ufs-task-center-row[data-status="queued"] .ufs-task-live-spinner').count(),0);
+  assert.equal(await page.locator('.ufs-task-center-row[data-status="running"] .ufs-task-live-spinner').count(),1);
+  await page.evaluate(()=>window.__ufsMonitorTest.emitFileManager({
+    status:'Copying ... notes.txt\n  4,194,304  42%  66.3MB/s  0:00:09'
+  }));
+  await badge.getByText('66.3MB/s').waitFor();
+  await page.waitForFunction(()=>
+    document.querySelector('.ufs-task-center-row[data-status="running"] .ufs-task-center-name')?.textContent.includes('Photos'),
+    null,{timeout:25000});
+  assert.equal(await badge.locator('.ufs-task-badge-speed').innerText(),'',
+    '启动下一项时不得沿用上一项速度');
+  assert.equal(await page.locator('.ufs-task-center-row[data-status="success"]').count(),1);
+  assert.equal(await page.locator('.ufs-task-center-row[data-status="running"]').count(),1);
+  assert.equal(nativePosts.filter(p=>p.mode==='file').length,2);
+  await page.evaluate(()=>window.__ufsMonitorTest.emitFileManager({
+    status:'Copying ... Photos\n  1,024  6%  42.3MB/s  0:00:09'
+  }));
+  await badge.getByText('42.3MB/s').waitFor();
+  assert.equal(await badge.locator('.ufs-task-badge-percent').innerText(),'',
+    '文件夹不得使用单个内部文件的百分比冒充整体进度');
   assert.equal(errors.length,0,errors.join('\n'));
 });

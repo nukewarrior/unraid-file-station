@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.6.1
+// @version      0.2.6.2
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -1042,6 +1042,14 @@
     // v0.2.5: scheme-A task badge and bottom-right multi-task center.
     "#ufs-app .ufs-status .ufs-copy-task-trigger{display:inline-flex;align-items:center;justify-content:center;gap:5px;max-width:56%;flex:0 0 auto;padding:1px 8px;font-size:11px}#ufs-app .ufs-status .ufs-copy-task-trigger[hidden]{display:none!important}#ufs-app .ufs-copy-task-trigger>.ufs-svg{height:13px;width:13px;flex:0 0 13px}#ufs-app .ufs-task-badge-main{color:inherit;white-space:nowrap}#ufs-app .ufs-task-badge-divider{width:1px;height:13px;background:#e8c6aa;flex:0 0 1px;margin:0 1px}#ufs-app .ufs-task-badge-wait{display:inline-flex;align-items:center;gap:3px;color:inherit}#ufs-app .ufs-task-badge-wait>.ufs-svg{height:12px;width:12px}#ufs-app .ufs-task-badge-chevron{margin-left:1px}#ufs-app .ufs-status .ufs-copy-task-trigger[data-phase=paused]{background:#fff1e4;color:#a74c13}#ufs-app .ufs-status .ufs-copy-task-trigger[data-phase=queued]{background:#f0f2f5;color:#4f5b6a;border-color:#d9dfe6}",
     "#ufs-app .ufs-copy-task-center{position:absolute;right:10px;bottom:37px;z-index:2147483635;width:min(355px,calc(100% - 20px));max-height:min(405px,65vh);display:flex;flex-direction:column;background:var(--ufs-bg);border:1px solid var(--ufs-border);border-radius:9px;box-shadow:0 12px 30px #0003;overflow:hidden}#ufs-app .ufs-task-center-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex:0 0 43px;padding:0 12px;border-bottom:1px solid var(--ufs-border);font-size:13px;color:var(--ufs-text)}#ufs-app .ufs-task-center-close{border:0;background:transparent;font-size:20px;color:var(--ufs-muted);padding:3px 6px}#ufs-app .ufs-task-center-body{overflow-y:auto;min-height:0;padding:5px 9px}#ufs-app .ufs-task-center-row{display:flex;flex-direction:column;gap:4px;padding:9px 5px;border-bottom:1px solid var(--ufs-border)}#ufs-app .ufs-task-center-open{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;border:0;background:transparent;color:var(--ufs-text);padding:2px;min-width:0;text-align:left}#ufs-app .ufs-task-center-open:hover{color:var(--ufs-accent)}#ufs-app .ufs-task-center-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}#ufs-app .ufs-task-center-status{flex:0 0 auto;font-size:11px;color:var(--ufs-muted)}#ufs-app .ufs-task-center-row[data-status=running] .ufs-task-center-status{color:var(--ufs-accent)}#ufs-app .ufs-task-center-row[data-status=success] .ufs-task-center-status{color:#258755}#ufs-app .ufs-task-center-row[data-status=failed] .ufs-task-center-status,#ufs-app .ufs-task-center-row[data-status=uncertain] .ufs-task-center-status{color:#c13d37}#ufs-app .ufs-task-center-progress{height:5px;background:var(--ufs-border);border-radius:9px;overflow:hidden}#ufs-app .ufs-task-center-progress-fill{height:100%;background:var(--ufs-accent)}#ufs-app .ufs-task-center-remove{align-self:flex-end;padding:3px 7px;background:var(--ufs-bg);border:1px solid var(--ufs-border);border-radius:4px;color:var(--ufs-muted);font-size:11px}#ufs-app .ufs-task-center-paused{padding:11px 12px;border-top:1px solid var(--ufs-border);font-size:12px;color:var(--ufs-muted);display:flex;flex-direction:column;gap:8px}#ufs-app .ufs-task-center-paused button{border:1px solid var(--ufs-border);background:var(--ufs-panel);border-radius:5px;padding:7px;color:var(--ufs-text)}",
+    // v0.2.6.2: task-center rate, phase icons and persistent spinner nodes.
+    "#ufs-app .ufs-task-live-spinner{box-sizing:border-box;display:inline-block;flex:0 0 14px;width:14px;height:14px;border:2px solid rgba(235,120,37,.22);border-top-color:var(--ufs-accent);border-radius:50%;animation:ufs-copy-spin .9s linear infinite}",
+    "#ufs-app .ufs-task-center-state{display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;white-space:nowrap}#ufs-app .ufs-task-center-state>.ufs-svg{height:13px;width:13px;flex:0 0 13px;color:var(--ufs-muted)}",
+    "#ufs-app .ufs-task-center-row[data-status=success] .ufs-task-center-state>.ufs-svg{color:#258755}#ufs-app .ufs-task-center-row[data-status=failed] .ufs-task-center-state>.ufs-svg,#ufs-app .ufs-task-center-row[data-status=uncertain] .ufs-task-center-state>.ufs-svg{color:#c13d37}",
+    "#ufs-app .ufs-task-center-meta{text-align:right;min-height:14px;line-height:1.3;font-size:11px;color:var(--ufs-muted);font-variant-numeric:tabular-nums}#ufs-app .ufs-task-center-meta-muted{color:var(--ufs-muted)}#ufs-app .ufs-task-center-name{font-size:12px}",
+    "#ufs-app .ufs-status .ufs-copy-task-trigger[data-phase=running]{max-width:75%}#ufs-app .ufs-task-badge-percent,#ufs-app .ufs-task-badge-speed{white-space:nowrap;font-variant-numeric:tabular-nums}#ufs-app .ufs-task-badge-spinner{flex:0 0 13px;width:13px;height:13px;border-width:1.8px}",
+    "@media(max-width:720px){#ufs-app .ufs-status .ufs-copy-task-trigger[data-phase=running]{max-width:84%}#ufs-app .ufs-task-badge-percent{display:none!important}}",
+    "@media(prefers-reduced-motion:reduce){#ufs-app .ufs-task-live-spinner{animation:none}}",
     // Only the enhanced Browse view is locked; the native view and every other Unraid page scroll normally.
     'html.ufs-active-page,html.ufs-active-page body{overflow-y:hidden!important;overscroll-behavior-y:none}',
     // Unraid adds two fixed global page-scroll arrows; neither applies to our internally scrolling browser.
@@ -1274,6 +1282,68 @@
   let copyJobCounter=0;
   let copyQueueRunning=false;
   let copyQueuePaused=false;
+  // The displayed rate is a native rsync observation, never an estimated total.
+  const COPY_SPEED_TTL_MS=5000;
+  let copySpeedRefreshTimer=null;
+  function currentCopySpeed(job,now=Date.now()) {
+    return job?.status==='running' && job.phase==='copying' &&
+      typeof job.speed==='string' && job.speed &&
+      Number.isFinite(job.speedUpdatedAt) &&
+      now-job.speedUpdatedAt>=0 && now-job.speedUpdatedAt<=COPY_SPEED_TTL_MS
+      ?job.speed:'';
+  }
+  function copyJobPhaseLabel(job) {
+    if(job.phase==='checking') return '正在检查';
+    if(job.phase==='verifying') return '正在核验';
+    return '复制中';
+  }
+  function copyJobStatusLabel(job) {
+    return job.status==='running'?copyJobPhaseLabel(job)+
+      (job.phase==='copying' && Number.isFinite(job.percent)?' '+Math.floor(job.percent)+'%':''):
+      job.status==='queued'?'等待中':job.status==='success'?'已完成':
+      job.status==='failed'?(job.preflightRejected?'预检未通过 · 未开始':'失败'):
+      job.status==='uncertain'?'待核实':'已停止';
+  }
+  function copyJobMeta(job) {
+    if(job.phase==='checking') return '正在验证源文件和目标目录';
+    if(job.phase==='verifying') return '正在核对复制结果';
+    const speed=currentCopySpeed(job);
+    return speed?'速度 '+speed:(job.speedUpdatedAt?'速度暂无数据':'速度获取中…');
+  }
+  function copySpinner(className='') {
+    const spinner=element('span','ufs-task-live-spinner'+(className?' '+className:''));
+    spinner.setAttribute('aria-hidden','true');
+    return spinner;
+  }
+  function copyJobSignal(job,phase,info) {
+    if(!job || job.status!=='running') return;
+    if(phase==='checking' || phase==='verifying' || phase==='copying') {
+      if(job.phase!==phase) {
+        job.phase=phase;
+        job.speed='';
+        job.speedUpdatedAt=0;
+      }
+    }
+    if(info?.speed && typeof info.speed==='string' &&
+        /^[\d,.]+\s*[kKMGTPE]?(?:i?B)?\/s$/.test(info.speed)) {
+      job.speed=info.speed.trim();
+      job.speedUpdatedAt=Date.now();
+    }
+    updateCopyTaskButton();
+  }
+  function synchronizeCopySpeedTimer(active) {
+    if(active && !copySpeedRefreshTimer) {
+      copySpeedRefreshTimer=setInterval(()=>{
+        if(destroyed || !copyJobs.some(job=>job.status==='running')) {
+          clearInterval(copySpeedRefreshTimer);
+          copySpeedRefreshTimer=null;
+        } else updateCopyTaskButton();
+      },1000);
+    } else if(!active && copySpeedRefreshTimer) {
+      clearInterval(copySpeedRefreshTimer);
+      copySpeedRefreshTimer=null;
+    }
+  }
   function registerCopyJob(job) {
     job.id=++copyJobCounter;
     job.status='queued';
@@ -1300,7 +1370,10 @@
         while(nativeWriteBusy && !destroyed) await waitNative(150);
         if(destroyed || copyQueuePaused || job.status!=='queued') continue;
         job.status='running';
-        job.phase='copying';
+        job.phase='checking';
+        job.speed='';
+        job.speedUpdatedAt=0;
+        job.percent=null;
         activeCopySession=job;
         job.prepare?.();
         updateCopyTaskButton();
@@ -1356,33 +1429,36 @@
     for(const job of copyJobs) {
       const row=element('div','ufs-task-center-row');
       row.dataset.status=job.status;
+      row.dataset.phase=job.phase||'';
       const main=element('button','ufs-task-center-open');
       main.type='button';
       const info=element('span','ufs-task-center-name',job.name);
-      const status=element('span','ufs-task-center-status',
-        job.status==='running'?'复制中'+(Number.isFinite(job.percent)?' '+Math.floor(job.percent)+'%':''):
-        job.status==='queued'?'等待中':job.status==='success'?'已完成':
-        job.status==='failed'?(job.preflightRejected?'预检未通过 · 未开始':'失败'):
-        job.status==='uncertain'?'待核实':'已停止');
-      main.append(info,status);
-      main.addEventListener('click',()=>{
-        closeCopyTaskCenter();
-        job.reopen();
-      });
+      info.title=job.name;
+      const statusWrap=element('span','ufs-task-center-state');
+      if(job.status==='running') statusWrap.append(copySpinner());
+      else statusWrap.append(icon(job.status==='queued'?'clock-3':
+        job.status==='success'?'check-circle':'alert-circle'));
+      statusWrap.append(element('span','ufs-task-center-status',copyJobStatusLabel(job)));
+      main.append(info,statusWrap);
+      main.addEventListener('click',()=>{closeCopyTaskCenter();job.reopen();});
       row.append(main);
-      if(job.status==='running' && Number.isFinite(job.percent)) {
-        const track=element('div','ufs-task-center-progress');
-        const fill=element('div','ufs-task-center-progress-fill');
-        fill.style.width=Math.min(99.9,job.percent)+'%';
-        track.append(fill);
-        row.append(track);
+      if(job.status==='running') {
+        const meta=element('div','ufs-task-center-meta',copyJobMeta(job));
+        meta.classList.toggle('ufs-task-center-meta-muted',!currentCopySpeed(job));
+        row.append(meta);
+        if(job.phase==='copying' && Number.isFinite(job.percent)) {
+          const track=element('div','ufs-task-center-progress');
+          const fill=element('div','ufs-task-center-progress-fill');
+          fill.style.width=Math.min(99.9,job.percent)+'%';
+          track.append(fill);
+          row.append(track);
+        }
       }
       if(job.status==='queued') {
         const cancel=element('button','ufs-task-center-remove','取消排队');
         cancel.type='button';
         cancel.addEventListener('click',()=>{
           job.cancelQueued();
-          // A queued task is never submitted to Unraid.
           closeCopyTaskCenter();
           updateCopyTaskButton();
         });
@@ -1410,42 +1486,71 @@
     const button=app && $('.ufs-copy-task-trigger',app);
     if(!button) return;
     button.hidden=copyJobs.length===0;
+    const active=copyJobs.find(job=>job.status==='running');
+    synchronizeCopySpeedTimer(active);
     if(!copyJobs.length) {
       button.replaceChildren();
+      delete button.dataset.renderKey;
       button.removeAttribute('data-phase');
       closeCopyTaskCenter();
       return;
     }
-    const active=copyJobs.find(job=>job.status==='running');
     const queued=copyJobs.filter(job=>job.status==='queued').length;
     const problems=copyJobs.some(job=>['failed','uncertain','stopped'].includes(job.status));
     const complete=copyJobs.every(job=>job.status==='success');
-    const base=element('span','ufs-task-badge-main',
-      copyQueuePaused&&queued?'复制已暂停':
-      active?'复制中'+(Number.isFinite(active.percent)?' '+Math.floor(active.percent)+'%':''):
+    const phase=copyQueuePaused?'paused':active?'running':
+      queued?'queued':complete?'success':problems?'failed':'queued';
+    const text=copyQueuePaused&&queued?'复制已暂停':
+      active?copyJobPhaseLabel(active):
       queued?'等待中':complete?'复制完成 '+copyJobs.length+' 项':
       problems?(copyJobs.some(job=>job.status==='uncertain'||job.status==='stopped'||
         (job.status==='failed'&&!job.preflightRejected))?'复制待核实':
-        '预检未通过'):'复制任务 '+copyJobs.length+' 项');
-    button.replaceChildren();
-    button.append(icon(copyQueuePaused&&queued?'alert-circle':active?'loader-circle':
-      queued?'clock-3':complete?'check-circle':problems?'alert-circle':'copy'));
-    button.append(base);
-    if(queued) {
-      const sep=element('span','ufs-task-badge-divider');
-      sep.setAttribute('aria-hidden','true');
-      const wait=element('span','ufs-task-badge-wait');
-      wait.append(icon('clock-3'),element('span','',String(queued)));
-      button.append(sep,wait);
+        '预检未通过'):'复制任务 '+copyJobs.length+' 项';
+    const signature=phase+'|'+Boolean(queued);
+    // Keep the spinner node alive between rsync events and one-second TTL checks.
+    if(button.dataset.renderKey!==signature) {
+      button.replaceChildren();
+      button.append(active?copySpinner('ufs-task-badge-spinner'):
+        icon(copyQueuePaused&&queued?'alert-circle':queued?'clock-3':
+          complete?'check-circle':problems?'alert-circle':'copy'));
+      button.append(element('span','ufs-task-badge-main'));
+      if(active) {
+        button.append(element('span','ufs-task-badge-percent'));
+        button.append(element('span','ufs-task-badge-speed'));
+      }
+      if(queued) {
+        const sep=element('span','ufs-task-badge-divider');
+        sep.setAttribute('aria-hidden','true');
+        const wait=element('span','ufs-task-badge-wait');
+        wait.append(icon('clock-3'),element('span','',String(queued)));
+        button.append(sep,wait);
+      }
+      button.append(icon('chevron-up','ufs-task-badge-chevron'));
+      button.dataset.renderKey=signature;
     }
-    button.append(icon('chevron-up','ufs-task-badge-chevron'));
-    button.dataset.phase=copyQueuePaused?'paused':active?'running':
-      complete?'success':problems?'failed':'queued';
-    button.title='复制任务：'+(active?'1 项运行中，':'')+
+    const main=button.querySelector('.ufs-task-badge-main');
+    if(main) main.textContent=text;
+    if(active) {
+      const percent=button.querySelector('.ufs-task-badge-percent');
+      const speed=button.querySelector('.ufs-task-badge-speed');
+      if(percent) {
+        percent.textContent=active.phase==='copying' && Number.isFinite(active.percent)?
+          ' '+Math.floor(active.percent)+'%':'';
+        percent.hidden=!percent.textContent;
+      }
+      const liveRate=currentCopySpeed(active);
+      if(speed) {
+        speed.textContent=liveRate?' · '+liveRate:'';
+        speed.hidden=!liveRate;
+      }
+    }
+    const count=button.querySelector('.ufs-task-badge-wait span');
+    if(count) count.textContent=String(queued);
+    button.dataset.phase=phase;
+    button.title='复制任务：'+(active?'1 项运行中'+
+      (currentCopySpeed(active)?'，速度 '+currentCopySpeed(active):'')+'，':'')+
       queued+' 项等待，'+copyJobs.length+' 项总计；点击查看';
     button.setAttribute('aria-label',button.title);
-    // Keep the task center live when a job changes phase. Progress-only
-    // updates touch existing nodes without rebuilding the panel.
     const open=$('.ufs-copy-task-center',app);
     if(open) {
       const nodes=Array.from(open.querySelectorAll('.ufs-task-center-row'));
@@ -1461,10 +1566,24 @@
       }
       const row=open.querySelector('.ufs-task-center-row[data-status=running]');
       if(row && active) {
+        row.dataset.phase=active.phase||'';
         const label=row.querySelector('.ufs-task-center-status');
-        if(label) label.textContent='复制中'+(Number.isFinite(active.percent)?' '+Math.floor(active.percent)+'%':'');
-        const fill=row.querySelector('.ufs-task-center-progress-fill');
-        if(fill && Number.isFinite(active.percent)) fill.style.width=Math.min(99.9,active.percent)+'%';
+        if(label) label.textContent=copyJobStatusLabel(active);
+        const meta=row.querySelector('.ufs-task-center-meta');
+        if(meta) {
+          meta.textContent=copyJobMeta(active);
+          meta.classList.toggle('ufs-task-center-meta-muted',!currentCopySpeed(active));
+        }
+        let track=row.querySelector('.ufs-task-center-progress');
+        if(active.phase==='copying' && Number.isFinite(active.percent)) {
+          if(!track) {
+            track=element('div','ufs-task-center-progress');
+            track.append(element('div','ufs-task-center-progress-fill'));
+            row.append(track);
+          }
+          track.querySelector('.ufs-task-center-progress-fill').style.width=
+            Math.min(99.9,active.percent)+'%';
+        } else track?.remove();
       }
     }
   }
@@ -2709,6 +2828,7 @@
     let lastActiveCopyStep=0;
     function updateCopyProgress(message,phase,info) {
       if(closed || destroyed) return;
+      copyJobSignal(copyJob,phase,info);
       if(phase) {
         const next=stages.findIndex(([key])=>key===phase);
         if(next>=0) lastActiveCopyStep=Math.max(lastActiveCopyStep,next);
@@ -3356,6 +3476,7 @@
       // Refuse an unsafe destination BEFORE starting the batch. No native writes
       // occur during this phase, so a conflict leaves the target picker usable.
       batch.preflighting=true;
+      copyJobSignal(copyJob,'checking');
       submit.disabled=true;
       cancel.disabled=true;
       dismiss.disabled=true;
@@ -3398,6 +3519,8 @@
       activeCopySession=copyJob;
       copyJob.plan=null;
       copyJob.phase='copying';
+      copyJob.speed='';
+      copyJob.speedUpdatedAt=0;
       updateCopyTaskButton();
       heading.textContent='正在复制';
       submit.hidden=true;
@@ -3416,6 +3539,8 @@
             if(batch.stopAfterCurrent) {batch.phase='stopped';break;}
             batch.currentIndex=i;
             batch.currentPercent=null;
+            copyJob.speed='';
+            copyJob.speedUpdatedAt=0;
             batchCurrentMetrics.textContent='';
             const row=batch.rows[i];
             row.status='copying';
@@ -3424,6 +3549,7 @@
             activeCopySession.plan=plans[i];
             renderBatchProgress();
             const outcome=await copyNativeEntry(plans[i],(message,phase,info)=>{
+              copyJobSignal(copyJob,phase,info);
               if(phase==='checking') batchCurrentInfo.textContent='正在检查源文件和目标目录…';
               if(phase==='verifying') batchCurrentInfo.textContent='正在核对复制结果…';
               if(info && Number.isFinite(info.percent) && !row.entry.folder) {
@@ -3496,7 +3622,9 @@
       finalPhase='copying';
       activeCopySession=copyJob;
       copyJob.plan=plan;
-      copyJob.phase='copying';
+      copyJob.phase='checking';
+      copyJob.speed='';
+      copyJob.speedUpdatedAt=0;
       updateCopyTaskButton();
       submit.disabled=true;
       cancel.disabled=false;
@@ -4179,7 +4307,7 @@
   }
   // Explicit opt-in hook for pure-function tests; never enabled on production WebGUI.
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
-    window.__UFS_TEST_API__ = { findBatchCopyConflicts, findBatchCopyTypeConflicts, batchCopyOverallProgress, safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, COPY_ENABLED, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, nativeCopyTarget, matchesCopyTask, copyDestinationAllowed, copyNativeEntry, decodeRsyncFilename, parseRsyncProgress, shortenCopyName, requestCancelNativeCopy, takeOverNativeFileMonitor, availableHeight, visibleEntries, sortedCopyFolders, safeCopyName, safeCopyPath, copyBlockedReason, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
+    window.__UFS_TEST_API__ = { currentCopySpeed, copyJobPhaseLabel, copyJobStatusLabel, copyJobMeta, findBatchCopyConflicts, findBatchCopyTypeConflicts, batchCopyOverallProgress, safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, COPY_ENABLED, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, nativeCopyTarget, matchesCopyTask, copyDestinationAllowed, copyNativeEntry, decodeRsyncFilename, parseRsyncProgress, shortenCopyName, requestCancelNativeCopy, takeOverNativeFileMonitor, availableHeight, visibleEntries, sortedCopyFolders, safeCopyName, safeCopyPath, copyBlockedReason, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();
