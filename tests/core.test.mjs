@@ -197,7 +197,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.4\b/);
+  assert.match(script, /@version\s+0\.2\.5\b/);
 });
 
 
@@ -501,7 +501,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.4\b/);
+  assert.match(script, /@version\s+0\.2\.5\b/);
 });
 
 
@@ -1347,9 +1347,9 @@ test('v0.2.3.3 取消任务需持有当前写入锁，拒绝未归属的全局�
 
 test('v0.2.3.3 后台任务、手动完成与取消确认的保护逻辑存在',()=>{
   assert.match(script,/ufs-copy-task-trigger/);
-  assert.match(script,/activeCopySession=\{dialog,plan,phase:'copying',reopen\}/);
+  assert.match(script,/activeCopySession=copyJob/);
   assert.match(script,/await copyNativeEntry\(plan,updateCopyProgress,control\)/);
-  assert.match(script,/button\.hidden=!activeCopySession/);
+  assert.match(script,/button\.hidden=copyJobs\.length===0/);
   assert.match(script,/background\.addEventListener\('click',minimize\)/);
   assert.match(script,/Unraid 使用全局停止接口/);
   assert.match(script,/requestCancelNativeCopy\(activeCopySession\.plan,control\)/);
@@ -1656,4 +1656,32 @@ test('v0.2.4 后台入口位于底部右侧状态栏，不占工具栏高度',()
   assert.match(script,/#ufs-app \.ufs-status \.ufs-copy-task-trigger\{flex:0 0 auto/);
   assert.match(script,/const minimize=\(\)=>/);
   assert.match(script,/const reopen=\(\)=>/);
+});
+
+
+test('v0.2.5 队列使用单一执行器、逐项启动并只在执行时检查原生写入锁',()=>{
+  assert.match(script,/const copyJobs=\[\]/);
+  assert.match(script,/function registerCopyJob\(job\)/);
+  assert.match(script,/async function runCopyQueue\(\)/);
+  assert.match(script,/if\(copyQueueRunning \|\| copyQueuePaused \|\| destroyed\) return/);
+  assert.match(script,/const job=copyJobs\.find\(item=>item\.status==='queued'\)/);
+  assert.match(script,/while\(nativeWriteBusy && !destroyed\) await waitNative\(150\)/);
+  assert.match(script,/await job\.execute\(\)/);
+  assert.match(script,/if\(\(job\.status==='failed' && !job\.recoverable\)/);
+  assert.match(script,/if\(!window\.confirm\('确认已核实失败或不确定的原生复制任务/);
+  assert.match(script,/prepare:\(\)=>\{submit\.hidden=false;submit\.disabled=false;\}/);
+  assert.match(script,/cancelQueued:\(\)=>/);
+  assert.match(script,/if\(copyJob\?\.status==='queued'\)/);
+});
+
+test('v0.2.5 方案 A 底部胶囊显示运行中总进度与独立排队数量',()=>{
+  assert.match(script,/const queued=copyJobs\.filter\(job=>job\.status==='queued'\)\.length/);
+  assert.match(script,/active\?'复制中'\+\(Number\.isFinite\(active\.percent\)/);
+  assert.match(script,/element\('span','ufs-task-badge-divider'\)/);
+  assert.match(script,/element\('span','ufs-task-badge-wait'\)/);
+  assert.match(script,/function showCopyTaskCenter\(\)/);
+  assert.match(script,/job\.cancelQueued\(\)/);
+  assert.match(script,/function resumeCopyQueue\(\)/);
+  assert.match(script,/#ufs-app \.ufs-status \.ufs-copy-task-trigger\[hidden\]\{display:none!important\}/);
+  assert.match(script,/\.addEventListener\('click',showCopyTaskCenter\)/);
 });

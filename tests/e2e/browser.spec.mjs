@@ -186,7 +186,8 @@ async function pageFor(t, options = {}) {
     if (mode==='read') {
       const busy=options.nativeBusy ?
         JSON.stringify({action:'6',source:'/mnt/user/TimeMachine/backup',target:''}) :
-        latestCopy && (options.longCopy ? !copyStopped : ++copyActiveReads===1) ? JSON.stringify({
+        latestCopy && (options.longCopy ? !copyStopped :
+          ++copyActiveReads <= (options.firstCopyHoldReads && copied.length===1 ? options.firstCopyHoldReads : 1)) ? JSON.stringify({
           action:latestCopy.folder?'3':'8',source:latestCopy.source,
           target:latestCopy.destinationDir+'/'}) : '';
       await route.fulfill({status:200,body:busy});
@@ -1004,6 +1005,7 @@ test('v0.2.3.3 真实进度显示 UTF-8 文件名、传输百分比、速度和 
   assert.equal(await page.locator('.ufs-copy-dialog').count(),0);
   assert.equal(await page.locator('.ufs-copy-task-trigger').isVisible(),true);
   await page.locator('.ufs-copy-task-trigger').click();
+  await page.locator('.ufs-task-center-open').first().click();
   assert.equal(await page.locator('.ufs-copy-progress-indicator').innerText(),'42%');
   assert.equal(errors.length,0,errors.join('\n'));
 });
@@ -1736,6 +1738,7 @@ test('v0.2.3.13 复制任务执行中 Esc 只转后台，重新打开后 Esc 再
   assert.equal(nativePosts.filter(post=>post.action==='99').length,0,
     'Esc 不得调用 Unraid 全局停止接口');
   await page.locator('.ufs-copy-task-trigger').click();
+  await page.locator('.ufs-task-center-open').first().click();
   await page.locator('.ufs-copy-dialog').waitFor();
   assert.equal(await page.evaluate(()=>document.activeElement?.classList.contains('ufs-copy-dialog')),true,
     '后台恢复时应重新获得焦点');
@@ -2008,6 +2011,7 @@ test('v0.2.4 批量后台按钮收纳到底部状态栏，可恢复窗口和安�
   });
   assert.ok(bounds.right<=15 && bounds.right>=0 && bounds.within,JSON.stringify(bounds));
   await task.click();
+  await page.locator('.ufs-task-center-open').first().click();
   await page.locator('.ufs-batch-panel').waitFor();
   assert.equal(await page.locator('.ufs-copy-dialog').count(),1);
   await page.locator('.ufs-copy-cancel').click();
@@ -2019,5 +2023,62 @@ test('v0.2.4 批量后台按钮收纳到底部状态栏，可恢复窗口和安�
   await page.keyboard.press('Escape');
   await page.locator('.ufs-copy-dialog').waitFor({state:'detached'});
   assert.equal(await task.isVisible(),true);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+
+test('v0.2.5 方案 A：第一项执行时第二项排队，右下角显示等待数并可进入任务中心',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t,{firstCopyHoldReads:8});
+  await openCopyDialog(page,'notes.txt');
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-progress-panel[data-phase="copying"]').waitFor();
+  await page.locator('.ufs-copy-background').click();
+  await openCopyDialog(page,'Photos');
+  await page.getByRole('button',{name:'选择 appdata'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  const footer=page.locator('.ufs-status .ufs-copy-task-trigger');
+  await footer.getByText('1',{exact:true}).waitFor();
+  assert.match(await footer.innerText(),/复制中/);
+  assert.equal(await footer.locator('.ufs-task-badge-wait').innerText(),'1');
+  assert.equal(nativePosts.filter(p=>p.mode==='file').length,1,
+    '第二项排队期间原生接口只能提交第一项');
+  await page.locator('.ufs-copy-background').click();
+  await footer.click();
+  await page.locator('.ufs-copy-task-center').waitFor();
+  assert.equal(await page.locator('.ufs-task-center-row').count(),2);
+  assert.equal(await page.locator('.ufs-task-center-row[data-status="queued"]').count(),1);
+  await page.locator('.ufs-task-center-row[data-status="queued"] .ufs-task-center-remove').click();
+  assert.equal(await footer.locator('.ufs-task-badge-wait').count(),0);
+  assert.equal(nativePosts.filter(p=>p.action==='99').length,0);
+  assert.equal(nativePosts.filter(p=>p.mode==='file').length,1);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.5 队列顺序执行两项、后台完成保留结果、均确认后入口消失',async t=>{
+  const {page,errors,nativePosts,copied}=await pageFor(t,{firstCopyHoldReads:7});
+  await openCopyDialog(page,'notes.txt');
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-background').click();
+  await openCopyDialog(page,'Photos');
+  await page.getByRole('button',{name:'选择 appdata'}).click();
+  await page.locator('.ufs-copy-submit').click();
+  await page.locator('.ufs-copy-background').click();
+  await page.waitForFunction(()=>
+    document.querySelector('.ufs-status .ufs-task-badge-wait')?.textContent.trim()==='1');
+  await page.waitForFunction(()=>document.querySelector('.ufs-copy-task-trigger')?.textContent.includes('复制完成 2 项'),
+    {timeout:30000});
+  assert.deepEqual(nativePosts.filter(p=>p.mode==='file').map(p=>p.action),['8','3']);
+  assert.equal(copied.length,2);
+  await page.locator('.ufs-copy-task-trigger').click();
+  assert.equal(await page.locator('.ufs-task-center-row[data-status="success"]').count(),2);
+  await page.locator('.ufs-task-center-open').first().click();
+  await page.locator('.ufs-copy-dialog').waitFor();
+  await page.locator('.ufs-copy-submit',{hasText:'完成'}).click();
+  await page.locator('.ufs-copy-task-trigger').click();
+  await page.locator('.ufs-task-center-open').first().click();
+  await page.locator('.ufs-copy-submit',{hasText:'完成'}).click();
+  assert.equal(await page.locator('.ufs-copy-task-trigger').isVisible(),false);
   assert.equal(errors.length,0,errors.join('\n'));
 });
