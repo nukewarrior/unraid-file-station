@@ -1861,3 +1861,76 @@ test('v0.2.6.5 folder-open SVG 不包含错误的额外线段参数',()=>{
     'M3 7a2 2 0 0 1 2-2h4l2 2h9a2 2 0 0 1 2 2');
   assert.doesNotMatch(icons['folder-open'][0],/l2 2 2h9/);
 });
+
+
+test('v0.2.7 阶段一：任务快照仅包含安全可序列化数据',()=>{
+  const {api}=createAPI();
+  const task={
+    taskId:'task_abcdefgh',name:'复制资料',destination:'/mnt/user/downloads',
+    conflictPolicy:'skip',status:'queued',createdAt:100,updatedAt:101,
+    dialog:{nodeType:1},execute(){throw new Error('不应调用 UI 或执行器');},
+    items:[
+      {source:'/mnt/user/TimeMachine/a.zip',folder:false,size:1024,
+        status:'queued',submission:'not-submitted',updatedAt:100},
+      {source:'/mnt/user/TimeMachine/Photos',folder:true,size:null,
+        status:'queued',submission:'not-submitted',updatedAt:100}
+    ]
+  };
+  const snapshot=api.validateCopyQueueSnapshot({schema:1,savedAt:200,tasks:[task]});
+  assert.equal(snapshot.tasks.length,1);
+  assert.equal(snapshot.tasks[0].items.length,2);
+  assert.equal(snapshot.tasks[0].dialog,undefined);
+  assert.equal(snapshot.tasks[0].execute,undefined);
+  assert.doesNotThrow(()=>JSON.stringify(snapshot));
+  assert.equal(snapshot.tasks[0].items[1].size,null);
+  assert.equal(api.copyRecoveryAssessment(snapshot).requiresConfirmation,true);
+});
+
+test('v0.2.7 阶段一：原生提交意图永远恢复为待核实，不会宣称完成',()=>{
+  const {api}=createAPI();
+  const template={
+    taskId:'task_abcdefgh',name:'批量复制',destination:'/mnt/user/downloads',
+    conflictPolicy:'overwrite',status:'copying',createdAt:100,updatedAt:150,
+    items:[
+      {source:'/mnt/user/TimeMachine/a.zip',folder:false,size:100,
+        status:'success',submission:'confirmed'},
+      {source:'/mnt/user/TimeMachine/b.zip',folder:false,size:200,
+        status:'submission-intent',submission:'intent-saved'},
+      {source:'/mnt/user/TimeMachine/c.zip',folder:false,size:300,
+        status:'queued',submission:'not-submitted'}
+    ]
+  };
+  const output=api.copyRecoveryAssessment({schema:1,tasks:[template],savedAt:200});
+  assert.deepEqual(Array.from(output.tasks[0].items.map(x=>x.restoreStatus)),
+    ['terminal','needs-verification','waiting']);
+  assert.equal(output.requiresConfirmation,true);
+  assert.equal(output.tasks[0].restoreStatus,'needs-verification');
+  const changed=JSON.parse(JSON.stringify(template));
+  changed.items[1].submission='unknown';
+  changed.items[1].status='failed';
+  const unknown=api.copyRecoveryAssessment({schema:1,tasks:[changed]}).tasks[0].items[1];
+  assert.equal(unknown.restoreStatus,'needs-verification');
+});
+
+test('v0.2.7 阶段一：坏快照、目录自复制及重复 ID 全部拒绝恢复',()=>{
+  const {api}=createAPI();
+  const base={
+    taskId:'task_abcdefgh',name:'文件夹复制',destination:'/mnt/user/downloads',
+    conflictPolicy:'skip',status:'queued',
+    items:[{source:'/mnt/user/TimeMachine/Photos',folder:true,
+      status:'queued',submission:'not-submitted'}]
+  };
+  const snap={schema:1,tasks:[base]};
+  assert.doesNotThrow(()=>api.validateCopyQueueSnapshot(snap));
+  assert.throws(()=>api.validateCopyQueueSnapshot({...snap,schema:2}),/不兼容/);
+  assert.throws(()=>api.validateCopyQueueSnapshot({schema:1,tasks:[base,base]}),/重复/);
+  assert.throws(()=>api.validateCopyQueueSnapshot({schema:1,tasks:[
+    {...base,destination:'/mnt/user/TimeMachine/Photos/deep'}
+  ]}),/不安全/);
+  assert.throws(()=>api.validateCopyQueueSnapshot({schema:1,tasks:[
+    {...base,items:[{...base.items[0],source:'/etc/shadow'}]}
+  ]}),/不安全/);
+  assert.throws(()=>api.createCopyQueueStore(null),/不可用/);
+  assert.match(script,/table\.get\('dispatcher'\)/);
+  assert.match(script,/table\.put\(\{key:'dispatcher',owner,expiresAt:now\+ttl\}\)/);
+});

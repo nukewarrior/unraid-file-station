@@ -1283,6 +1283,156 @@
     columnWidths: readColumnWidths(localStorage.getItem(STORE + 'columns'))
   };
   let app;
+
+  // v0.2.7 stage 1: durable data model only. Reading snapshots never submits
+  // native writes, starts the scheduler or silently confirms copied files.
+  const COPY_QUEUE_SCHEMA=1;
+  const COPY_QUEUE_DATABASE='ufs-copy-queue-v1';
+  const COPY_QUEUE_STATES=new Set([
+    'queued','checking','submission-intent','copying','verifying',
+    'success','skipped','failed','uncertain','excluded'
+  ]);
+  function normalizeSavedCopyItem(item) {
+    if (!item || typeof item!=='object' || Array.isArray(item) ||
+        !safeCopyPath(item.source) || typeof item.folder!=='boolean' ||
+        !COPY_QUEUE_STATES.has(item.status) ||
+        !['not-submitted','intent-saved','confirmed','unknown'].includes(item.submission)) {
+      throw new Error('持久化复制项目格式错误或路径不安全');
+    }
+    return {
+      source:item.source,folder:item.folder,
+      name:fileName(item.source),
+      size:Number.isFinite(item.size)&&item.size>=0?item.size:null,
+      status:item.status,submission:item.submission,
+      updatedAt:Number.isFinite(item.updatedAt)?item.updatedAt:0
+    };
+  }
+  function normalizeSavedCopyTask(task) {
+    if (!task || typeof task!=='object' || Array.isArray(task) ||
+        typeof task.taskId!=='string' || !/^[a-zA-Z0-9_-]{8,96}$/.test(task.taskId) ||
+        typeof task.name!=='string' || !task.name || task.name.length>300 ||
+        !safeCopyPath(task.destination,true) ||
+        !['skip','overwrite','fail'].includes(task.conflictPolicy) ||
+        !COPY_QUEUE_STATES.has(task.status) ||
+        !Array.isArray(task.items) || !task.items.length || task.items.length>10000) {
+      throw new Error('持久化复制任务格式错误或路径不安全');
+    }
+    const items=task.items.map(normalizeSavedCopyItem);
+    if(items.some(item=>!copyDestinationAllowed(
+      {source:item.source,folder:item.folder},task.destination))) {
+      throw new Error('恢复任务包含不安全或自包含的目标目录');
+    }
+    return {
+      taskId:task.taskId,name:task.name,destination:task.destination,
+      conflictPolicy:task.conflictPolicy,status:task.status,
+      createdAt:Number.isFinite(task.createdAt)?task.createdAt:0,
+      updatedAt:Number.isFinite(task.updatedAt)?task.updatedAt:0,
+      items
+    };
+  }
+  function validateCopyQueueSnapshot(snapshot) {
+    if(!snapshot || typeof snapshot!=='object' || Array.isArray(snapshot) ||
+        snapshot.schema!==COPY_QUEUE_SCHEMA ||
+        !Array.isArray(snapshot.tasks) || snapshot.tasks.length>1000) {
+      throw new Error('复制队列持久化格式不兼容，禁止自动恢复');
+    }
+    const tasks=snapshot.tasks.map(normalizeSavedCopyTask);
+    const ids=new Set(tasks.map(task=>task.taskId));
+    if(ids.size!==tasks.length)
+      throw new Error('复制队列存在重复任务 ID，禁止自动恢复');
+    return {
+      schema:COPY_QUEUE_SCHEMA,
+      savedAt:Number.isFinite(snapshot.savedAt)?snapshot.savedAt:0,
+      tasks
+    };
+  }
+  function copyRecoveryAssessment(snapshot) {
+    const valid=validateCopyQueueSnapshot(snapshot);
+    // Any pre-existing intent is ambiguous after reload, even when Browse.php
+    // reports a matching filename and a size; a file may be incomplete.
+    const tasks=valid.tasks.map(task=>{
+      const items=task.items.map(item=>{
+        const ambiguous=item.submission==='intent-saved' ||
+          item.submission==='unknown' ||
+          ['submission-intent','copying','verifying','uncertain'].includes(item.status);
+        return {...item,restoreStatus:ambiguous?'needs-verification':
+          ['success','skipped','excluded'].includes(item.status)?'terminal':
+          item.status==='queued'||item.status==='checking'?'waiting':'blocked'};
+      });
+      return {...task,restoreStatus:items.some(item=>item.restoreStatus==='needs-verification')
+        ?'needs-verification':items.some(item=>item.restoreStatus==='waiting')
+          ?'waiting':'terminal',items};
+    });
+    return {schema:valid.schema,savedAt:valid.savedAt,tasks,
+      requiresConfirmation:tasks.some(task=>task.restoreStatus!=='terminal')};
+  }
+  function createCopyQueueStore(idb,dbName=COPY_QUEUE_DATABASE) {
+    if(!idb || typeof idb.open!=='function')
+      throw new Error('IndexedDB 不可用，无法保证复制任务持久化');
+    let opened=null;
+    const open=()=>opened ||= new Promise((resolve,reject)=>{
+      const request=idb.open(dbName,COPY_QUEUE_SCHEMA);
+      request.onupgradeneeded=()=>{
+        const db=request.result;
+        if(!db.objectStoreNames.contains('snapshots'))
+          db.createObjectStore('snapshots',{keyPath:'key'});
+        if(!db.objectStoreNames.contains('leases'))
+          db.createObjectStore('leases',{keyPath:'key'});
+      };
+      request.onsuccess=()=>resolve(request.result);
+      request.onerror=()=>reject(request.error||new Error('无法打开复制任务数据库'));
+      request.onblocked=()=>reject(new Error('复制任务数据库被其他页面阻塞'));
+    }).catch(error=>{opened=null;throw error;});
+    const transaction=(store,mode,work)=>open().then(db=>new Promise((resolve,reject)=>{
+      const tx=db.transaction(store,mode);
+      const table=tx.objectStore(store);
+      let result;
+      tx.oncomplete=()=>resolve(result);
+      tx.onabort=()=>reject(tx.error||new Error('复制队列事务被中止'));
+      tx.onerror=()=>{}; // onabort reports the transaction failure.
+      try {work(table,value=>{result=value;},tx);} catch(error) {
+        try{tx.abort();}catch(_){}
+        reject(error);
+      }
+    }));
+    const read=()=>transaction('snapshots','readonly',(table,result)=>{
+      const request=table.get('active');
+      request.onsuccess=()=>result(request.result?.snapshot??null);
+    }).then(raw=>raw?validateCopyQueueSnapshot(raw):null);
+    const write=snapshot=>{
+      const valid=validateCopyQueueSnapshot(snapshot);
+      return transaction('snapshots','readwrite',table=>
+        {table.put({key:'active',snapshot:valid});});
+    };
+    // Transaction serialization is crucial: separate tabs cannot both take
+    // an active lease using a non-atomic localStorage "check then set".
+    const claim=(owner,now=Date.now(),ttl=30000)=> {
+      if(typeof owner!=='string' || owner.length<8 || owner.length>128 ||
+          !Number.isFinite(ttl) || ttl<3000 || ttl>120000)
+        return Promise.reject(new Error('无效的队列所有权参数'));
+      return transaction('leases','readwrite',(table,result)=>{
+        const request=table.get('dispatcher');
+        request.onsuccess=()=>{
+          const previous=request.result;
+          if(previous && previous.owner!==owner && previous.expiresAt>now) {
+            result(false);
+            return;
+          }
+          table.put({key:'dispatcher',owner,expiresAt:now+ttl});
+          result(true);
+        };
+      });
+    };
+    const release=owner=>transaction('leases','readwrite',(table,result)=>{
+      const request=table.get('dispatcher');
+      request.onsuccess=()=>{
+        if(request.result?.owner===owner) table.delete('dispatcher');
+        result(true);
+      };
+    });
+    return {open,read,write,claim,release};
+  }
+
   let activeCopySession = null;
   const copyJobs=[];
   let copyJobCounter=0;
@@ -4474,7 +4624,7 @@
   }
   // Explicit opt-in hook for pure-function tests; never enabled on production WebGUI.
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
-    window.__UFS_TEST_API__ = { currentCopySpeed, copyJobPhaseLabel, copyJobStatusLabel, copyJobMeta, findBatchCopyConflicts, findBatchCopyTypeConflicts, batchCopyOverallProgress, safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, COPY_ENABLED, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, nativeCopyTarget, matchesCopyTask, copyDestinationAllowed, copyNativeEntry, decodeRsyncFilename, parseRsyncProgress, shortenCopyName, requestCancelNativeCopy, takeOverNativeFileMonitor, availableHeight, visibleEntries, sortedCopyFolders, safeCopyName, safeCopyPath, copyBlockedReason, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
+    window.__UFS_TEST_API__ = { normalizeSavedCopyItem, normalizeSavedCopyTask, validateCopyQueueSnapshot, copyRecoveryAssessment, createCopyQueueStore, currentCopySpeed, copyJobPhaseLabel, copyJobStatusLabel, copyJobMeta, findBatchCopyConflicts, findBatchCopyTypeConflicts, batchCopyOverallProgress, safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, COPY_ENABLED, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, nativeCopyTarget, matchesCopyTask, copyDestinationAllowed, copyNativeEntry, decodeRsyncFilename, parseRsyncProgress, shortenCopyName, requestCancelNativeCopy, takeOverNativeFileMonitor, availableHeight, visibleEntries, sortedCopyFolders, safeCopyName, safeCopyPath, copyBlockedReason, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();
