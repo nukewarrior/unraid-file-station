@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.6.5
+// @version      0.2.7
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -680,7 +680,7 @@
     return !plan.folder || (destinationDir !== plan.source &&
       !destinationDir.startsWith(plan.source + '/'));
   }
-  async function copyNativeEntry(plan, progress = () => {}, control = {}) {
+  async function copyNativeEntry(plan, progress = () => {}, control = {}, beforeSubmit = null) {
     return withNativeWriteLock(async () => {
       if (!COPY_ENABLED || !plan || plan.type !== 'copy' ||
           !['fail','skip','overwrite'].includes(plan.conflictPolicy) || plan.previewOnly !== true ||
@@ -716,6 +716,8 @@
         return {...existing,copyOutcome:'skipped'};
       if (await readNativeActive()) throw new Error('Unraid 正在执行其他原生文件任务，请稍后重试');
       nativeCsrfToken();
+      // Durable intent must be committed before any native file action.
+      if(beforeSubmit) await beforeSubmit();
       let submitted = false;
       let eventError = '';
       let eventDone = false;
@@ -1290,7 +1292,7 @@
   const COPY_QUEUE_DATABASE='ufs-copy-queue-v1';
   const COPY_QUEUE_STATES=new Set([
     'queued','checking','submission-intent','copying','verifying',
-    'success','skipped','failed','uncertain','excluded'
+    'success','skipped','failed','uncertain','excluded','running','stopped','removed'
   ]);
   function normalizeSavedCopyItem(item) {
     if (!item || typeof item!=='object' || Array.isArray(item) ||
@@ -1357,7 +1359,7 @@
           ['submission-intent','copying','verifying','uncertain'].includes(item.status);
         return {...item,restoreStatus:ambiguous?'needs-verification':
           ['success','skipped','excluded'].includes(item.status)?'terminal':
-          item.status==='queued'||item.status==='checking'?'waiting':'blocked'};
+          item.status==='queued'||item.status==='checking'?'waiting':'needs-verification'};
       });
       return {...task,restoreStatus:items.some(item=>item.restoreStatus==='needs-verification')
         ?'needs-verification':items.some(item=>item.restoreStatus==='waiting')
@@ -1385,7 +1387,7 @@
     }).catch(error=>{opened=null;throw error;});
     const transaction=(store,mode,work)=>open().then(db=>new Promise((resolve,reject)=>{
       const tx=db.transaction(store,mode);
-      const table=tx.objectStore(store);
+      const table=tx.objectStore(Array.isArray(store)?store[0]:store);
       let result;
       tx.oncomplete=()=>resolve(result);
       tx.onabort=()=>reject(tx.error||new Error('复制队列事务被中止'));
@@ -1403,6 +1405,22 @@
       const valid=validateCopyQueueSnapshot(snapshot);
       return transaction('snapshots','readwrite',table=>
         {table.put({key:'active',snapshot:valid});});
+    };
+    // Lease verification and queue write MUST occur in the same transaction.
+    // A tab that lost its lease must not overwrite the new controller's state.
+    const writeOwned=(snapshot,owner)=>{
+      const valid=validateCopyQueueSnapshot(snapshot);
+      return transaction(['snapshots','leases'],'readwrite',(stores,result,tx)=>{
+        const request=tx.objectStore('leases').get('dispatcher');
+        request.onsuccess=()=>{
+          if(!request.result || request.result.owner!==owner ||
+              request.result.expiresAt<=Date.now()) {
+            tx.abort();return;
+          }
+          tx.objectStore('snapshots').put({key:'active',snapshot:valid});
+          result(true);
+        };
+      });
     };
     // Transaction serialization is crucial: separate tabs cannot both take
     // an active lease using a non-atomic localStorage "check then set".
@@ -1430,7 +1448,7 @@
         result(true);
       };
     });
-    return {open,read,write,claim,release};
+    return {open,read,write,writeOwned,claim,release};
   }
 
   let activeCopySession = null;
@@ -1438,6 +1456,264 @@
   let copyJobCounter=0;
   let copyQueueRunning=false;
   let copyQueuePaused=false;
+
+  // Browser persistence is deliberately fail-closed. The only automatic
+  // startup action is reading/restoring records, never scheduling work.
+  let persistentCopyStore=null;
+  let persistenceStartup=null;
+  let persistenceError='';
+  let copyRecoveryLocked=false;
+  let copyPersistTail=Promise.resolve();
+  let copyOwnerHeld=false;
+  let copyLeaseTimer=null;
+  const copyOwnerId='ufs_'+Date.now().toString(36)+'_'+
+    Math.random().toString(36).slice(2,16);
+  const COPY_LEASE_TTL=30000;
+  function copySavedSnapshot() {
+    return validateCopyQueueSnapshot({schema:COPY_QUEUE_SCHEMA,savedAt:Date.now(),
+      tasks:copyJobs.filter(job=>job.record).map(job=>job.record)});
+  }
+  async function ensureCopyOwnership() {
+    if(persistenceError) throw new Error(persistenceError);
+    if(!persistentCopyStore) throw new Error('持久化尚未初始化，不能提交复制任务');
+    const won=await persistentCopyStore.claim(copyOwnerId,Date.now(),COPY_LEASE_TTL);
+    if(!won) {
+      copyOwnerHeld=false;
+      throw new Error('已有其他标签页管理 NAS 复制队列，当前页面禁止写入');
+    }
+    copyOwnerHeld=true;
+    if(!copyLeaseTimer) {
+      copyLeaseTimer=setInterval(()=>{
+        if(!copyOwnerHeld || destroyed) return;
+        void persistentCopyStore.claim(copyOwnerId,Date.now(),COPY_LEASE_TTL)
+          .then(ok=>{
+            if(!ok) {
+              copyOwnerHeld=false;
+              copyQueuePaused=true;
+              updateCopyTaskButton();
+            }
+          }).catch(error=>copyPersistenceFailure(error));
+      },10000);
+    }
+  }
+  function copyPersistenceFailure(error) {
+    persistenceError='复制任务持久化失败：'+String(error?.message||error);
+    copyQueuePaused=true;
+    copyOwnerHeld=false;
+    updateCopyTaskButton();
+    notify(persistenceError+'；后续任务已暂停，请勿直接重试。');
+  }
+  function persistCopyQueue() {
+    // Serialize snapshots in enqueue order; keep the promise after a failure
+    // so no later write can silently bypass an earlier failed write.
+    const snap=copySavedSnapshot();
+    const pending=copyPersistTail.then(async()=>{
+      if(!copyOwnerHeld || !persistentCopyStore)
+        throw new Error('当前标签页没有安全的队列写入权限');
+      await persistentCopyStore.writeOwned(snap,copyOwnerId);
+    });
+    copyPersistTail=pending.catch(error=>{copyPersistenceFailure(error);throw error;});
+    // Give callers the original error without creating a dangling rejection.
+    void copyPersistTail.catch(()=>{});
+    return pending;
+  }
+  async function copyItemCheckpoint(job,index,status,submission) {
+    if(!job?.record?.items[index])
+      throw new Error('持久化项目索引不一致，拒绝原生复制');
+    const item=job.record.items[index];
+    item.status=status;
+    if(submission) item.submission=submission;
+    item.updatedAt=Date.now();
+    job.record.updatedAt=item.updatedAt;
+    await persistCopyQueue();
+    if(destroyed || !copyOwnerHeld || (copyQueuePaused && status!=='excluded'))
+      throw new Error('持久化状态不可信或队列已暂停，拒绝继续复制');
+  }
+  function newCopyRecord(entries,destination,conflictPolicy,name) {
+    return normalizeSavedCopyTask({
+      taskId:'copy_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,16),
+      name,destination,conflictPolicy,status:'queued',
+      createdAt:Date.now(),updatedAt:Date.now(),
+      items:entries.map(entry=>({
+        source:entry.path,folder:entry.folder,size:entry.size,
+        status:'queued',submission:'not-submitted',updatedAt:Date.now()
+      }))
+    });
+  }
+  async function initializeCopyPersistence() {
+    if(persistenceStartup) return persistenceStartup;
+    persistenceStartup=(async()=>{
+      try {
+        persistentCopyStore=createCopyQueueStore(window.indexedDB);
+        const saved=await persistentCopyStore.read();
+        if(destroyed) return;
+        if(saved?.tasks.length) {
+          const assessed=copyRecoveryAssessment(saved);
+          // Records recovered from a page reload have no old JavaScript
+          // execution context. Even unsubmitted work must await user consent.
+          copyQueuePaused=assessed.requiresConfirmation;
+          copyRecoveryLocked=assessed.requiresConfirmation;
+          for(const data of assessed.tasks) {
+            const record=normalizeSavedCopyTask(data);
+            // A checked but never submitted item can safely run a fresh
+            // preflight after explicit user confirmation.
+            for(const item of record.items)
+              if(item.status==='checking' && item.submission==='not-submitted')
+                item.status='queued';
+            const job={
+              id:++copyJobCounter,taskId:record.taskId,record,recovered:true,
+              name:record.name,destination:record.destination,
+              conflictPolicy:record.conflictPolicy,count:record.items.length,
+              status:data.restoreStatus==='terminal'?'success':
+                data.restoreStatus==='needs-verification'?'uncertain':'queued',
+              phase:data.restoreStatus==='needs-verification'?'uncertain':'queued',
+              percent:null,speed:'',speedUpdatedAt:0,
+              reopen:()=>showRecoveredCopyDetails(job),
+              cancelQueued:()=>void discardRecoveredCopyJob(job),
+              prepare:()=>{},
+              execute:()=>executeRecoveredCopyJob(job)
+            };
+            copyJobs.push(job);
+          }
+          updateCopyTaskButton();
+        }
+      } catch(error) {
+        persistenceError='无法读取复制任务数据库：'+String(error?.message||error);
+        copyQueuePaused=true;
+        notify(persistenceError);
+      }
+    })();
+    return persistenceStartup;
+  }
+  async function discardRecoveredCopyJob(job) {
+    if(!job?.recovered || job.status==='running') return;
+    try {
+      await ensureCopyOwnership();
+      const index=copyJobs.indexOf(job);
+      if(index<0)return;
+      copyJobs.splice(index,1);
+      await persistCopyQueue();
+      copyRecoveryLocked=copyJobs.some(x=>x.recovered&&
+        (x.status==='queued'||x.status==='uncertain'));
+      updateCopyTaskButton();
+      closeCopyTaskCenter();
+      showCopyTaskCenter();
+    } catch(error){copyPersistenceFailure(error);}
+  }
+  async function executeRecoveredCopyJob(job) {
+    for(let i=0;i<job.record.items.length;i++){
+      const item=job.record.items[i];
+      if(['success','skipped','excluded'].includes(item.status))continue;
+      if(item.status!=='queued' || item.submission!=='not-submitted')
+        throw new Error('恢复任务包含未核实的原生提交记录，禁止执行');
+      const plan=planFileOperation({type:'copy',source:item.source,
+        folder:item.folder,destinationDir:job.destination,
+        conflictPolicy:job.conflictPolicy});
+      try {
+        await copyItemCheckpoint(job,i,'checking','not-submitted');
+        const result=await copyNativeEntry(plan,(_,phase,info)=>{
+          copyJobSignal(job,phase,info);
+        },{},async()=>copyItemCheckpoint(job,i,'submission-intent','intent-saved'));
+        await copyItemCheckpoint(job,i,result.copyOutcome==='skipped'?'skipped':'success',
+          result.copyOutcome==='skipped'?'not-submitted':'confirmed');
+      } catch(error) {
+        const unsafe=item.submission!=='not-submitted';
+        item.status=unsafe?'uncertain':'failed';
+        if(unsafe)item.submission='unknown';
+        await persistCopyQueue().catch(()=>{});
+        job.phase=unsafe?'uncertain':'failed';
+        throw error;
+      }
+    }
+    job.phase='success';
+  }
+  async function confirmRecoveredCopyQueue() {
+    if(!copyRecoveryLocked || destroyed || !copyJobs.some(j=>j.recovered&&j.status==='queued'))return;
+    if(copyJobs.some(j=>j.recovered&&j.status==='uncertain')) {
+      notify('存在原生结果待核实的任务，请先逐项核实并排除，不能直接恢复队列');
+      return;
+    }
+    if(!window.confirm('确认恢复尚未执行的复制队列？\n\n恢复后将使用原先的忽略/覆盖策略执行文件操作。'))return;
+    try {
+      await ensureCopyOwnership();
+      if(await readNativeActive())
+        throw new Error('Unraid 正在执行原生任务，请等待其完成后再恢复');
+      const fresh=await persistentCopyStore.read();
+      if(!fresh || JSON.stringify(fresh.tasks.map(j=>j.taskId))!==
+          JSON.stringify(copyJobs.filter(j=>j.record).map(j=>j.record.taskId)))
+        throw new Error('队列已在其他标签页发生变化，需重新加载后核实');
+      copyQueuePaused=false;
+      copyRecoveryLocked=false;
+      await persistCopyQueue();
+      updateCopyTaskButton();
+      void runCopyQueue();
+      closeCopyTaskCenter();
+    } catch(error) {
+      copyQueuePaused=true;
+      copyRecoveryLocked=true;
+      notify('未恢复队列：'+String(error?.message||error));
+    }
+  }
+  function showRecoveredCopyDetails(job) {
+    if($('.ufs-dialog-overlay',app))return;
+    closeCopyTaskCenter();
+    const overlay=element('div','ufs-dialog-overlay');
+    const dialog=element('div','ufs-create-dialog ufs-copy-dialog');
+    dialog.setAttribute('role','dialog');
+    dialog.setAttribute('aria-label','恢复复制任务详情');
+    const h=element('div','ufs-create-head');
+    h.append(element('h3','','已保存复制任务'));
+    const close=element('button','ufs-create-dismiss','×');
+    close.type='button';close.addEventListener('click',()=>overlay.remove());
+    h.append(close);
+    const body=element('div','ufs-create-fields');
+    body.append(element('div','ufs-batch-meta','目标：'+job.destination),
+      element('div','ufs-batch-meta','同名处理：'+
+        (job.conflictPolicy==='overwrite'?'覆盖':'忽略')));
+    for(let i=0;i<job.record.items.length;i++){
+      const item=job.record.items[i];
+      const row=element('div','ufs-batch-preview-row');
+      const label=item.status==='success'?'已完成':
+        item.status==='skipped'?'已忽略':
+        item.status==='excluded'?'已核实并跳过':
+        ['submission-intent','copying','verifying','uncertain'].includes(item.status) ||
+        ['intent-saved','unknown'].includes(item.submission)?'待核实':
+        item.status==='queued'?'等待恢复':'需要检查';
+      row.append(element('span','',item.name+' · '+label));
+      if((label==='待核实'||label==='需要检查') && job.status!=='running') {
+        const skip=element('button','ufs-task-center-remove','已人工核实，跳过此项');
+        skip.type='button';
+        skip.addEventListener('click',async()=>{
+          if(!window.confirm('请先在 Unraid 核实该项的复制结果。\n选择跳过后本队列不会重新复制这个文件，确认吗？'))return;
+          try {
+            await ensureCopyOwnership();
+            if(await readNativeActive()) throw new Error('Unraid 仍有原生任务运行，禁止清除此状态');
+            await copyItemCheckpoint(job,i,'excluded','confirmed');
+            job.status='queued';job.phase='queued';
+            if(job.record.items.every(x=>['success','skipped','excluded'].includes(x.status))){
+              job.status='success';job.phase='success';
+            }
+            job.record.status=job.status;
+            await persistCopyQueue();
+            copyRecoveryLocked=copyJobs.some(x=>x.recovered&&
+              (x.status==='queued'||x.status==='uncertain'));
+            if(!copyRecoveryLocked)copyQueuePaused=false;
+            updateCopyTaskButton();
+            overlay.remove();
+            showRecoveredCopyDetails(job);
+          }catch(error){notify('核实状态保存失败：'+String(error?.message||error));}
+        });
+        row.append(skip);
+      }
+      body.append(row);
+    }
+    const footer=element('div','ufs-create-buttons');
+    const done=element('button','ufs-create-submit','关闭');
+    done.type='button';done.addEventListener('click',()=>overlay.remove());
+    footer.append(done);dialog.append(h,body,footer);
+    overlay.append(dialog);app.append(overlay);
+  }
+
   // The displayed rate is a native rsync observation, never an estimated total.
   const COPY_SPEED_TTL_MS=5000;
   let copySpeedRefreshTimer=null;
@@ -1500,11 +1776,21 @@
       copySpeedRefreshTimer=null;
     }
   }
-  function registerCopyJob(job) {
+  async function registerCopyJob(job) {
+    await initializeCopyPersistence();
+    if(persistenceError || copyRecoveryLocked)
+      throw new Error(persistenceError||'请先处理之前恢复的复制队列，再创建新任务');
+    await ensureCopyOwnership();
     job.id=++copyJobCounter;
     job.status='queued';
     job.phase='queued';
     copyJobs.push(job);
+    try { await persistCopyQueue(); }
+    catch(error) {
+      copyJobs.splice(copyJobs.indexOf(job),1);
+      updateCopyTaskButton();
+      throw error;
+    }
     updateCopyTaskButton();
     void runCopyQueue();
   }
@@ -1512,10 +1798,12 @@
     const index=copyJobs.indexOf(job);
     if(index>=0 && job.status!=='running') copyJobs.splice(index,1);
     if(activeCopySession===job && job.status!=='running') activeCopySession=null;
+    if(job.record && copyOwnerHeld) void persistCopyQueue().catch(()=>{});
     updateCopyTaskButton();
   }
   async function runCopyQueue() {
-    if(copyQueueRunning || copyQueuePaused || destroyed) return;
+    if(copyQueueRunning || copyQueuePaused || copyRecoveryLocked ||
+        destroyed || !copyOwnerHeld) return;
     copyQueueRunning=true;
     try {
       while(!destroyed && !copyQueuePaused) {
@@ -1534,6 +1822,13 @@
         job.prepare?.();
         updateCopyTaskButton();
         try {
+          if(job.record) {
+            job.record.status='running';
+            job.record.updatedAt=Date.now();
+            await persistCopyQueue();
+          }
+          if(destroyed || copyQueuePaused || !copyOwnerHeld)
+            throw new Error('任务持久化权限已失效，拒绝执行');
           await job.execute();
           if(job.status==='running') {
             const state=job.phase;
@@ -1548,6 +1843,11 @@
           if(activeCopySession===job) activeCopySession=null;
           if((job.status==='failed' && !job.recoverable) ||
               job.status==='uncertain'||job.status==='stopped') copyQueuePaused=true;
+          if(job.record) {
+            job.record.status=job.status;
+            job.record.updatedAt=Date.now();
+            await persistCopyQueue().catch(()=>{});
+          }
           updateCopyTaskButton();
         }
       }
@@ -1557,7 +1857,8 @@
     }
   }
   function resumeCopyQueue() {
-    if(!copyQueuePaused || !copyJobs.some(job=>job.status==='queued')) return;
+    if(copyRecoveryLocked || !copyQueuePaused ||
+        !copyJobs.some(job=>job.status==='queued')) return;
     if(!window.confirm('确认已核实失败或不确定的原生复制任务及目标目录？\n\n继续只会启动尚未执行的排队任务，不会重试已失败的项目。')) return;
     copyQueuePaused=false;
     updateCopyTaskButton();
@@ -1611,7 +1912,8 @@
         }
       }
       if(job.status==='queued') {
-        const cancel=element('button','ufs-task-center-remove','取消排队');
+        const cancel=element('button','ufs-task-center-remove',
+          job.recovered?'移除保存记录':'取消排队');
         cancel.type='button';
         cancel.addEventListener('click',()=>{
           job.cancelQueued();
@@ -1623,7 +1925,29 @@
       body.append(row);
     }
     panel.append(body);
-    if(copyQueuePaused && copyJobs.some(job=>job.status==='queued')) {
+    if(copyRecoveryLocked) {
+      const panel=element('div','ufs-task-center-paused ufs-task-recovery');
+      const uncertain=copyJobs.filter(job=>job.recovered&&job.status==='uncertain').length;
+      const waiting=copyJobs.filter(job=>job.recovered&&job.status==='queued').length;
+      panel.append(element('div','',uncertain?
+        '上次复制有 '+uncertain+' 项待核实。请打开任务详情，核实后选择跳过；不能自动重试。':
+        '检测到上次保存的 '+waiting+' 项待恢复任务，当前队列已暂停。'));
+      const later=element('button','','稍后处理');
+      later.type='button';later.addEventListener('click',closeCopyTaskCenter);
+      panel.append(later);
+      const confirm=element('button','',uncertain?'请先核实任务':'确认恢复队列');
+      confirm.type='button';confirm.disabled=uncertain>0 || waiting===0;
+      confirm.addEventListener('click',()=>void confirmRecoveredCopyQueue());
+      panel.append(confirm);
+      panel.setAttribute('role','group');
+      panel.setAttribute('aria-label','复制队列手动恢复');
+      panel.dataset.pending=String(waiting);
+      panel.dataset.uncertain=String(uncertain);
+      panel.classList.add('ufs-task-recovery-actions');
+      panel.setAttribute('aria-live','polite');
+      panel.style.cssText='display:flex;flex-wrap:wrap;align-items:center;gap:8px';
+      body.append(panel);
+    } else if(copyQueuePaused && copyJobs.some(job=>job.status==='queued')) {
       const paused=element('div','ufs-task-center-paused');
       paused.append(element('div','','后续队列已暂停，请先核实失败或待核实任务。'));
       const resume=element('button','','确认已核实，继续排队任务');
@@ -1655,9 +1979,13 @@
     const queued=copyJobs.filter(job=>job.status==='queued').length;
     const problems=copyJobs.some(job=>['failed','uncertain','stopped'].includes(job.status));
     const complete=copyJobs.every(job=>job.status==='success');
-    const phase=copyQueuePaused?'paused':active?'running':
+    const phase=copyRecoveryLocked?'recovery':copyQueuePaused?'paused':active?'running':
       queued?'queued':complete?'success':problems?'failed':'queued';
-    const text=copyQueuePaused&&queued?'复制已暂停':
+    const waitingRestore=copyJobs.filter(job=>job.recovered&&job.status==='queued').length;
+    const needsCheck=copyJobs.filter(job=>job.recovered&&job.status==='uncertain').length;
+    const text=copyRecoveryLocked?
+      (needsCheck?'有 '+needsCheck+' 项任务待核实':'有 '+waitingRestore+' 项任务待恢复'):
+      copyQueuePaused&&queued?'复制已暂停':
       active?copyJobPhaseLabel(active):
       queued?'等待中':complete?'复制完成 '+copyJobs.length+' 项':
       problems?(copyJobs.some(job=>job.status==='uncertain'||job.status==='stopped'||
@@ -1668,7 +1996,9 @@
     if(button.dataset.renderKey!==signature) {
       button.replaceChildren();
       button.append(active?copySpinner('ufs-task-badge-spinner'):
-        icon(copyQueuePaused&&queued?'alert-circle':queued?'clock-3':
+        icon(copyRecoveryLocked&&needsCheck?'alert-circle':
+          copyRecoveryLocked?'clock-3':
+          copyQueuePaused&&queued?'alert-circle':queued?'clock-3':
           complete?'check-circle':problems?'alert-circle':'copy'));
       button.append(element('span','ufs-task-badge-main'));
       if(active) {
@@ -1704,7 +2034,8 @@
     const count=button.querySelector('.ufs-task-badge-wait span');
     if(count) count.textContent=String(queued);
     button.dataset.phase=phase;
-    button.title='复制任务：'+(active?'1 项运行中'+
+    button.title=(copyRecoveryLocked?'复制队列待手动恢复：':'复制任务：')+
+      (active?'1 项运行中'+
       (currentCopySpeed(active)?'，速度 '+currentCopySpeed(active):'')+'，':'')+
       queued+' 项等待，'+copyJobs.length+' 项总计；点击查看';
     button.setAttribute('aria-label',button.title);
@@ -1904,9 +2235,14 @@
     document.documentElement.classList.remove('ufs-active-page');
   }
   window.addEventListener('pagehide', (event) => { if (!event.persisted) cleanupApp(); });
+  onCleanup(()=>{
+    if(copyLeaseTimer)clearInterval(copyLeaseTimer);
+    if(copyOwnerHeld && persistentCopyStore)
+      void persistentCopyStore.release(copyOwnerId).catch(()=>{});
+  });
   // Until v0.2.7 persists the queue, a true reload may discard browser jobs.
   window.addEventListener('beforeunload', event=>{
-    if(!copyJobs.some(job=>['running','queued','uncertain'].includes(job.status))) return;
+    if(!copyJobs.some(job=>['running','uncertain'].includes(job.status))) return;
     event.preventDefault();
     event.returnValue='';
   }, {signal:lifecycle.signal});
@@ -3846,6 +4182,7 @@
             control={cancelRequested:false,observedOwnTask:false};
             activeCopySession.plan=plans[i];
             renderBatchProgress();
+            await copyItemCheckpoint(copyJob,i,'checking','not-submitted');
             const outcome=await copyNativeEntry(plans[i],(message,phase,info)=>{
               copyJobSignal(copyJob,phase,info);
               if(phase==='checking') batchCurrentInfo.textContent='正在检查源文件和目标目录…';
@@ -3856,7 +4193,10 @@
               if(info?.speed || info?.eta) batchCurrentMetrics.textContent=
                 [info.speed||'',info.eta?'剩余 '+info.eta:''].filter(Boolean).join(' · ');
               renderBatchProgress();
-            },control);
+            },control,async()=>copyItemCheckpoint(copyJob,i,'submission-intent','intent-saved'));
+            await copyItemCheckpoint(copyJob,i,
+              outcome.copyOutcome==='skipped'?'skipped':'success',
+              outcome.copyOutcome==='skipped'?'not-submitted':'confirmed');
             row.status=outcome.copyOutcome==='skipped'?'skipped':'success';
             renderBatchRows();
             batch.currentPercent=null;
@@ -3870,6 +4210,14 @@
           batch.error.includes('结果不确定') || batch.error.includes('已请求取消');
         if(batch.currentIndex>=0 && batch.rows[batch.currentIndex].status==='copying') {
           const row=batch.rows[batch.currentIndex];
+          const record=copyJob.record?.items[batch.currentIndex];
+          if(record) {
+            const mayHaveSubmitted=record.submission!=='not-submitted';
+            record.status=mayHaveSubmitted?'uncertain':'failed';
+            if(mayHaveSubmitted)record.submission='unknown';
+            record.updatedAt=Date.now();
+            await persistCopyQueue().catch(()=>{});
+          }
           row.status=uncertain?'uncertain':'failed';
           row.error=batch.error;
           renderBatchRows();
@@ -3940,7 +4288,12 @@
       focusDialog();
       renderCopyProgress('checking');
       try {
-        const outcome=await copyNativeEntry(plan,updateCopyProgress,control);
+        await copyItemCheckpoint(copyJob,0,'checking','not-submitted');
+        const outcome=await copyNativeEntry(plan,updateCopyProgress,control,
+          async()=>copyItemCheckpoint(copyJob,0,'submission-intent','intent-saved'));
+        await copyItemCheckpoint(copyJob,0,
+          outcome.copyOutcome==='skipped'?'skipped':'success',
+          outcome.copyOutcome==='skipped'?'not-submitted':'confirmed');
         if(closed || destroyed) return;
         finalPhase='success';
         heading.textContent=outcome.copyOutcome==='skipped'?'已忽略同名文件':'复制完成';
@@ -3965,6 +4318,14 @@
       } catch(error) {
         if(closed || destroyed) return;
         const message=String(error?.message||error);
+        if(copyJob?.record?.items[0]) {
+          const saved=copyJob.record.items[0];
+          const mayHaveSubmitted=saved.submission!=='not-submitted';
+          saved.status=mayHaveSubmitted?'uncertain':'failed';
+          if(mayHaveSubmitted)saved.submission='unknown';
+          saved.updatedAt=Date.now();
+          await persistCopyQueue().catch(()=>{});
+        }
         if(message.includes('结果不确定') || control.cancelRequested || message.includes('已请求取消')) {
           finalPhase=control.cancelRequested?'cancelled':'uncertain';
           heading.textContent=control.cancelRequested?'复制已请求停止':'复制结果待核实';
@@ -4009,8 +4370,9 @@
         }
       }
     }
-    function submitCopyJob() {
-      if(closed || destroyed || busy || batch?.preflighting || inlineDraft ||
+    let enqueuePending=false;
+    async function submitCopyJob() {
+      if(closed || destroyed || busy || enqueuePending || batch?.preflighting || inlineDraft ||
           mkdirUncertain || submit.disabled || !selected) return;
       if(copyJob && copyJob.status!=='failed') return;
       if(copyJob && copyJob.status==='failed') removeCopyJob(copyJob);
@@ -4021,8 +4383,10 @@
           new Set(plans.map(plan=>plan.target)).size!==plans.length)
           throw new Error('目标位置无效或存在重复目标名称');
       } catch(error) {setFeedback(String(error?.message||error),true);return;}
+      const name=multi?entries[0].name+' 等 '+entries.length+' 项':entry.name;
+      const record=newCopyRecord(entries,selected,conflictPolicy,name);
       copyJob={
-        dialog,reopen,execute:executeCopyJob,
+        dialog,reopen,execute:executeCopyJob,record,taskId:record.taskId,
         prepare:()=>{submit.hidden=false;submit.disabled=false;},
         cancelQueued:()=>{
           if(copyJob?.status!=='queued') return;
@@ -4031,8 +4395,8 @@
           removeCopyJob(job);
           copyJob=null;closed=true;++requestVersion;overlay.remove();restoreFocus();
         },
-        name:multi?entries[0].name+' 等 '+entries.length+' 项':entry.name,
-        destination:selected,conflictPolicy,count:entries.length,batch,percent:null,plan:null,error:''
+        name,destination:selected,conflictPolicy,count:entries.length,
+        batch,percent:null,plan:null,error:''
       };
       heading.textContent='等待复制';
       const waiting=element('div','ufs-batch-panel');
@@ -4047,14 +4411,27 @@
       cancel.textContent='取消排队';
       background.hidden=false;
       dismiss.title='后台运行';
-      registerCopyJob(copyJob);
+      enqueuePending=true;
+      try {
+        await registerCopyJob(copyJob);
+      } catch(error) {
+        if(copyJob && copyJobs.includes(copyJob)) copyJobs.splice(copyJobs.indexOf(copyJob),1);
+        copyJob=null;
+        fields.replaceChildren(summary,location);
+        cancel.textContent='取消';
+        submit.hidden=false;
+        submit.disabled=false;
+        background.hidden=true;
+        setFeedback('未加入队列：'+String(error?.message||error),true);
+        updateCopyTaskButton();
+      } finally {enqueuePending=false;}
     }
     form.addEventListener('submit',event=>{
       event.preventDefault();
       if(multi && batch?.finished) {close();return;}
       if(!multi && (finalPhase==='success'||finalPhase==='uncertain'||
           finalPhase==='cancelled')) {close();return;}
-      submitCopyJob();
+      void submitCopyJob();
     });
     void loadChildren(PREFIX);
   }
@@ -4477,6 +4854,7 @@
     }
     // Resolve the root before creating a tab: do not briefly render the
     // "all shares" listing or put the virtual group into tab history.
+    void initializeCopyPersistence();
     void initializeBrowser(start);
     return true;
   }

@@ -2482,3 +2482,102 @@ test('v0.2.6.5 所有内建 SVG 图标的 path d 都能由 Chromium 正常解析
   assert.deepEqual(lengths.filter(x=>!Number.isFinite(x.length)),[]);
   assert.equal(errors.length,0,errors.join('\n'));
 });
+
+test('v0.2.7 F5 后只恢复保存的任务，用户手动确认前不发送原生复制',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t,{simulateNativeMonitor:true});
+  await page.locator('.ufs-entry').first().waitFor();
+  await page.evaluate(async()=>{
+    const snapshot={schema:1,savedAt:Date.now(),tasks:[{
+      taskId:'copy_saved_queued01',name:'notes.txt',destination:'/mnt/user/downloads',
+      conflictPolicy:'skip',status:'queued',createdAt:Date.now(),updatedAt:Date.now(),
+      items:[{source:'/mnt/user/TimeMachine/notes.txt',folder:false,size:1024,
+        status:'queued',submission:'not-submitted',updatedAt:Date.now()}]
+    }]};
+    const db=await new Promise((resolve,reject)=>{
+      const r=indexedDB.open('ufs-copy-queue-v1',1);
+      r.onsuccess=()=>resolve(r.result);
+      r.onerror=()=>reject(r.error);
+    });
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction('snapshots','readwrite');
+      tx.objectStore('snapshots').put({key:'active',snapshot});
+      tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);
+    });
+    db.close();
+  });
+  await page.reload({waitUntil:'domcontentloaded'});
+  const trigger=page.locator('.ufs-status .ufs-copy-task-trigger');
+  await trigger.getByText('有 1 项任务待恢复').waitFor();
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,0,
+    '页面初始化绝不能自动执行恢复任务');
+  await trigger.click();
+  const center=page.locator('.ufs-copy-task-center');
+  await center.getByRole('button',{name:'确认恢复队列'}).waitFor();
+  assert.equal(await center.locator('.ufs-task-center-row').count(),1);
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,0);
+  page.once('dialog',dialog=>dialog.accept());
+  await center.getByRole('button',{name:'确认恢复队列'}).click();
+  await page.waitForFunction(()=>!document.querySelector('.ufs-task-recovery'),null,
+    {timeout:10000});
+  await page.waitForFunction(()=>document.querySelector('.ufs-task-center-row[data-status="success"]'),
+    null,{timeout:25000});
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,1);
+  const posts=nativePosts.filter(x=>x.mode==='file');
+  assert.equal(posts[0].exist,'');
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.7 恢复前原生已提交项目必须先人工核实并跳过，不能直接重发',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t,{simulateNativeMonitor:true});
+  await page.locator('.ufs-entry').first().waitFor();
+  await page.evaluate(async()=>{
+    const snapshot={schema:1,savedAt:Date.now(),tasks:[{
+      taskId:'copy_saved_mixed001',name:'2 个文件',destination:'/mnt/user/downloads',
+      conflictPolicy:'overwrite',status:'running',createdAt:Date.now(),updatedAt:Date.now(),
+      items:[
+        {source:'/mnt/user/TimeMachine/notes.txt',folder:false,size:1024,
+          status:'submission-intent',submission:'intent-saved'},
+        {source:'/mnt/user/TimeMachine/Photos',folder:true,size:null,
+          status:'queued',submission:'not-submitted'}
+      ]
+    }]};
+    const db=await new Promise((resolve,reject)=>{
+      const r=indexedDB.open('ufs-copy-queue-v1',1);
+      r.onsuccess=()=>resolve(r.result);
+      r.onerror=()=>reject(r.error);
+    });
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction('snapshots','readwrite');
+      tx.objectStore('snapshots').put({key:'active',snapshot});
+      tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);
+    });
+    db.close();
+  });
+  await page.reload({waitUntil:'domcontentloaded'});
+  const badge=page.locator('.ufs-status .ufs-copy-task-trigger');
+  await badge.getByText('有 1 项任务待核实').waitFor();
+  await badge.click();
+  const center=page.locator('.ufs-copy-task-center');
+  assert.equal(await center.getByRole('button',{name:'请先核实任务'}).isDisabled(),true);
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,0);
+  await center.locator('.ufs-task-center-open').first().click();
+  const details=page.getByRole('dialog',{name:'恢复复制任务详情'});
+  await details.waitFor();
+  assert.match(await details.innerText(),/notes.txt · 待核实/);
+  page.once('dialog',dialog=>dialog.accept());
+  await details.getByRole('button',{name:'已人工核实，跳过此项'}).click();
+  await details.getByRole('button',{name:'关闭'}).click();
+  await badge.click();
+  const refreshed=page.locator('.ufs-copy-task-center');
+  await refreshed.getByRole('button',{name:'确认恢复队列'}).waitFor();
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,0);
+  page.once('dialog',dialog=>dialog.accept());
+  await refreshed.getByRole('button',{name:'确认恢复队列'}).click();
+  await page.waitForFunction(()=>document.querySelector('.ufs-task-center-row[data-status="success"]'),
+    null,{timeout:25000});
+  const posts=nativePosts.filter(x=>x.mode==='file');
+  assert.equal(posts.length,1,'核实并跳过的第一项不得重复提交');
+  assert.match(decodeURIComponent(posts[0].source),/Photos/);
+  assert.equal(posts[0].exist,'1','恢复任务保留创建时的覆盖策略');
+  assert.equal(errors.length,0,errors.join('\n'));
+});

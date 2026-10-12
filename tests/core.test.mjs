@@ -197,7 +197,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.6\.5\b/);
+  assert.match(script, /@version\s+0\.2\.7\b/);
 });
 
 
@@ -501,7 +501,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.6\.5\b/);
+  assert.match(script, /@version\s+0\.2\.7\b/);
 });
 
 
@@ -1933,4 +1933,51 @@ test('v0.2.7 阶段一：坏快照、目录自复制及重复 ID 全部拒绝恢
   assert.throws(()=>api.createCopyQueueStore(null),/不可用/);
   assert.match(script,/table\.get\('dispatcher'\)/);
   assert.match(script,/table\.put\(\{key:'dispatcher',owner,expiresAt:now\+ttl\}\)/);
+});
+
+
+test('v0.2.7 执行前必须先保存原生提交意图，失去持久化所有权拒绝复制',()=>{
+  assert.match(script,/if\(beforeSubmit\) await beforeSubmit\(\);/);
+  assert.match(script,/await copyItemCheckpoint\(copyJob,0,'submission-intent','intent-saved'\)/);
+  assert.match(script,/outcome\.copyOutcome==='skipped'\?'not-submitted':'confirmed'/);
+  assert.match(script,/function persistCopyQueue\(\)/);
+  assert.match(script,/persistentCopyStore\.writeOwned\(snap,copyOwnerId\)/);
+  assert.match(script,/const writeOwned=\(snapshot,owner\)=>/);
+  assert.match(script,/tx\.objectStore\('leases'\)\.get\('dispatcher'\)/);
+  assert.match(script,/if\(destroyed \|\| !copyOwnerHeld \|\| \(copyQueuePaused && status!=='excluded'\)\)/);
+});
+
+test('v0.2.7 恢复任务仅展示记录，自动暂停，必须手动确认',()=>{
+  assert.match(script,/copyRecoveryLocked=assessed\.requiresConfirmation/);
+  assert.match(script,/function confirmRecoveredCopyQueue\(\)/);
+  assert.match(script,/copyQueuePaused=assessed\.requiresConfirmation/);
+  assert.match(script,/确认恢复队列/);
+  assert.match(script,/稍后处理/);
+  assert.match(script,/if\(copyQueueRunning \|\| copyQueuePaused \|\| copyRecoveryLocked/);
+  assert.match(script,/if\(copyRecoveryLocked \|\| !copyQueuePaused/);
+  assert.match(script,/需要人工核实的任务/);
+  assert.match(script,/function executeRecoveredCopyJob\(job\)/);
+});
+
+test('v0.2.7 持久化恢复状态不允许盲目重发失败及提交阶段项目',()=>{
+  const {api}=createAPI();
+  const items=[
+    ['queued','not-submitted'],
+    ['checking','not-submitted'],
+    ['submission-intent','intent-saved'],
+    ['copying','unknown'],
+    ['failed','not-submitted'],
+    ['success','confirmed']
+  ].map(([status,submission],i)=>({
+    source:'/mnt/user/TimeMachine/test'+i+'.txt',
+    status,submission,folder:false
+  }));
+  const r=api.copyRecoveryAssessment({schema:1,tasks:[{
+    taskId:'copy_abcdefgh',name:'混合队列',destination:'/mnt/user/downloads',
+    conflictPolicy:'skip',status:'running',items
+  }]});
+  assert.deepEqual(Array.from(r.tasks[0].items.map(i=>i.restoreStatus)),[
+    'waiting','waiting','needs-verification','needs-verification','needs-verification','terminal'
+  ]);
+  assert.equal(r.requiresConfirmation,true);
 });
