@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.7.6
+// @version      0.2.8.0
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
@@ -163,11 +163,22 @@
     // Unraid 7.2.2 applies rawurldecode to this parameter after PHP has decoded the query.
     url.searchParams.set('dir', encodeURIComponent(path));
     url.searchParams.set('path', location.pathname.replace(/^\/+/, ''));
-    const response = await fetch(url.toString(), { credentials: 'same-origin', cache: 'no-store', signal: options.signal });
-    if (!response.ok) throw new Error('读取失败：HTTP ' + response.status);
-    const html = await response.text();
-    if (/Invalid path/i.test(html)) throw new Error('目录无效或没有访问权限');
-    return parseBrowse(html, path);
+    const started=Date.now();
+    try {
+      const response = await fetch(url.toString(), { credentials: 'same-origin', cache: 'no-store', signal: options.signal });
+      if (!response.ok) throw new Error('读取失败：HTTP ' + response.status);
+      const html = await response.text();
+      if (/Invalid path/i.test(html)) throw new Error('目录无效或没有访问权限');
+      const entries=parseBrowse(html,path);
+      const elapsed=Date.now()-started;
+      if(elapsed>1500)diagnosticLog('WARN','directory.slow',{path,elapsed,count:entries.length});
+      else diagnosticLog('DEBUG','directory.loaded',{path,elapsed,count:entries.length});
+      return entries;
+    } catch(error) {
+      if(error?.name!=='AbortError')
+        diagnosticLog('WARN','directory.load_failed',{path,elapsed:Date.now()-started,message:error?.message});
+      throw error;
+    }
   }
 
 
@@ -384,12 +395,18 @@
     return token;
   }
   async function postNativeControl(fields) {
+    const diagnosticStart=Date.now();
+    if(fields.mode!=='read')diagnosticLog('INFO','native.request',{mode:fields.mode,action:fields.action||null});
     const body = new URLSearchParams({ ...fields, csrf_token: nativeCsrfToken() });
     const response = await fetch(NATIVE_CONTROL_URL, {
       method: 'POST', credentials: 'same-origin', cache: 'no-store',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
       body: body.toString(), signal: lifecycle.signal
     });
+    const elapsed=Date.now()-diagnosticStart;
+    if(!response.ok)diagnosticLog('ERROR','native.http_failed',{mode:fields.mode,status:response.status,elapsed});
+    else if(fields.mode!=='read'||elapsed>1000)diagnosticLog(elapsed>1000?'WARN':'INFO','native.response',{mode:fields.mode,status:response.status,elapsed});
+    else diagnosticLog('DEBUG','native.poll',{elapsed});
     if (!response.ok) throw new Error('原生文件接口 HTTP ' + response.status);
     return response.text();
   }
@@ -420,10 +437,14 @@
         try {
           const data = JSON.parse(raw);
           if (data && typeof data === 'object') onProgress(data);
-        } catch (_) { /* Malformed progress events cannot authorize success. */ }
+        } catch (error) {
+          diagnosticLog('WARN','native.progress_malformed',{message:error?.message,bytes:String(raw).length});
+        }
       });
       subscriber.start();
-    } catch (_) { /* Read-only task polling remains available. */ }
+    } catch (error) {
+      diagnosticLog('WARN','native.progress_subscribe_failed',{message:error?.message});
+    }
     return () => { try { subscriber?.stop(); } catch (_) {} };
   }
   function waitNative(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
@@ -736,8 +757,13 @@
         entry.name===fileName(plan.source) || entry.path===plan.target);
       if(existing && (existing.folder!==plan.folder || existing.copyPathVerified===false))
         throw new Error('目标已有同名但类型不一致或路径不可信的项目，未执行复制');
-      if(existing && plan.conflictPolicy==='fail')
+      diagnosticLog('INFO','copy.preflight',{taskId:activeCopySession?.taskId,
+        source:plan.source,destination:plan.destinationDir,folder:plan.folder,
+        conflictPolicy:plan.conflictPolicy,existing:!!existing});
+      if(existing && plan.conflictPolicy==='fail') {
+        diagnosticLog('WARN','copy.conflict_blocked',{taskId:activeCopySession?.taskId,source:plan.source});
         throw new Error('目标文件夹中已有同名项目，未执行复制');
+      }
       // A top-level file can be skipped without submitting a native task.
       // A folder must still be merged by the native rsync task.
       if(existing && !plan.folder && plan.conflictPolicy==='skip')
@@ -746,15 +772,22 @@
       nativeCsrfToken();
       // Durable intent must be committed before any native file action.
       if(beforeSubmit) await beforeSubmit();
+      diagnosticLog('INFO','copy.submission_intent',{taskId:activeCopySession?.taskId,source:plan.source});
       let submitted = false;
       let eventError = '';
       let eventDone = false;
       let observedOwnTask = false;
+      let lastProgressDiagnostic=0;
       const unwatch = observeNativeProgress(data => {
         const payload=nativeCopyProgressPayload(data);
         if(payload) {
           const info=parseRsyncProgress(payload);
           if(info.text) progress(info.text, null, info);
+          if(Date.now()-lastProgressDiagnostic>=4000) {
+            lastProgressDiagnostic=Date.now();
+            diagnosticLog('DEBUG','copy.native_progress',{taskId:activeCopySession?.taskId,
+              percent:info.percent,speed:info.speed,filename:info.filename,hasText:!!info.text});
+          }
         }
         if (data.error) eventError = stripNativeStatusHtml(data.error).slice(0, 200);
         if (data.done === 1) eventDone = true;
@@ -768,6 +801,7 @@
           hdlink: '', sparse: '', exist: plan.conflictPolicy==='overwrite'?'1':'', zfs: ''
         });
         if (reply.trim()) throw new Error('原生接口返回了非预期内容');
+        diagnosticLog('INFO','copy.submitted',{taskId:activeCopySession?.taskId});
         progress('正在复制，完成后自动核对目标…', 'copying');
         // Large rsync tasks are allowed to continue for hours. The UI never
         // retries, issues mode=start, or stops someone else's global task.
@@ -788,6 +822,7 @@
             if (!matchesCopyTask(active, plan)) {
               throw new Error('原生任务被其他操作占用，无法确认复制结果');
             }
+            if(!observedOwnTask)diagnosticLog('INFO','copy.native_task_matched',{taskId:activeCopySession?.taskId});
             observedOwnTask = true;
             control.observedOwnTask=true;
             consecutiveIdle = 0;
@@ -821,9 +856,12 @@
         }
         // A directory appearing proves only its top-level presence. The native
         // job's completion is required; we do not claim checksum verification.
+        diagnosticLog('INFO','copy.verified',{taskId:activeCopySession?.taskId,source:plan.source});
         return {...result,copyOutcome:existing && plan.folder?'merged':
           existing && plan.conflictPolicy==='overwrite'?'overwrite-allowed':'copied'};
       } catch (error) {
+        diagnosticLog('ERROR','copy.native_failed',{taskId:activeCopySession?.taskId,
+          submitted,cancelRequested:!!control.cancelRequested,message:error?.message});
         if (control.cancelRequested && submitted) {
           throw new Error('复制已请求取消；目标目录可能留有不完整文件，请手动检查。详情：'+
             String(error?.message||error));
@@ -874,6 +912,7 @@
     'clock-3':['M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z','M12 6v6h4'],
     file:['M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z','M14 2v6h6'],
     more:['M5 12h.01','M12 12h.01','M19 12h.01'],
+    bug:['M8 2l1.6 2.5','M16 2l-1.6 2.5','M3 12h4','M17 12h4','M4 5l3 3','M20 5l-3 3','M4 19l3-3','M20 19l-3-3','M9 7h6a4 4 0 0 1 4 4v3a7 7 0 0 1-14 0v-3a4 4 0 0 1 4-4z','M9 11h6'],
     archive:['M4 4h16v16H4z','M4 9h16','M12 9v8','M10 13h4'],
     image:['M3 3h18v18H3z','M8 8h.01','m3 13 5-5 5 5'],
     video:['M3 5h18v14H3z','m10 4 5 3-5 3z'],
@@ -1167,6 +1206,13 @@
     '#ufs-app .ufs-file-actions .ufs-operations>.ufs-svg{flex:0 0 16px;width:16px;height:16px;min-width:16px;vertical-align:middle}',
     '#ufs-app .ufs-search-wrap{display:flex;align-items:center;gap:3px;min-width:0;flex-shrink:0;margin-left:auto}#ufs-app .ufs-search{width:150px;min-width:0;max-width:none}#ufs-app [hidden]{display:none!important}',
     '@media(max-width:850px){#ufs-app .ufs-preview-chip{display:none}#ufs-app .ufs-search{width:115px}}',
+    '.ufs-diagnostic-overlay{position:fixed;inset:0;z-index:2147483640;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box}',
+    '.ufs-diagnostic-panel{box-sizing:border-box;width:min(860px,100%);max-height:90vh;display:flex;flex-direction:column;gap:12px;border-radius:12px;padding:18px;background:#20252c;color:#e8edf3;box-shadow:0 15px 65px rgba(0,0,0,.45);font:13px/1.5 system-ui,sans-serif}',
+    '.ufs-diagnostic-head{display:flex;justify-content:space-between;align-items:center;font-size:16px}.ufs-diagnostic-head button{font-size:23px;min-width:32px}',
+    '.ufs-diagnostic-panel p{margin:0;color:#b8c2cf}.ufs-diagnostic-controls{display:flex;flex-wrap:wrap;gap:8px}',
+    '.ufs-diagnostic-controls button,.ufs-diagnostic-head button{cursor:pointer;border:1px solid #5c6472;border-radius:6px;background:#303741;color:#f2f5f9;padding:7px 10px}',
+    '.ufs-diagnostic-controls .ufs-diagnostic-primary{background:#2563a5;border-color:#2563a5;color:white}.ufs-diagnostic-controls button:focus-visible{outline:2px solid #fbbf24}',
+    '.ufs-diagnostic-status{color:#cad5e2}.ufs-diagnostic-events{margin:0;overflow:auto;max-height:55vh;min-height:220px;white-space:pre-wrap;overflow-wrap:anywhere;background:#10151b;color:#cbd5e1;border-radius:8px;padding:12px;font:12px/1.6 ui-monospace,monospace}',
     '@media(max-width:720px){#ufs-app .ufs-brand-divider{display:none}#ufs-app .ufs-top{padding:0 7px;gap:6px}#ufs-app .ufs-navigation{padding:0 6px;gap:3px}#ufs-app .ufs-search{width:90px}#ufs-app .ufs-view-controls .ufs-details-button{display:none}}',
   ].join('\n');
 
@@ -1349,6 +1395,349 @@
     columnWidths: readColumnWidths(localStorage.getItem(STORE + 'columns'))
   };
   let app;
+
+  // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
+  const DIAGNOSTIC_VERSION='0.2.8.0';
+  const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
+  const DIAGNOSTIC_MAX_EVENTS=2500;
+  const DIAGNOSTIC_RETENTION=24*60*60*1000;
+  const diagnosticSessionId='session_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,10);
+  const diagnosticTabId=(()=>{
+    try {
+      const key=STORE+'diagnostic-tab';
+      let value=window.sessionStorage?.getItem(key);
+      if(!value) {
+        value='tab_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,10);
+        window.sessionStorage?.setItem(key,value);
+      }
+      return value;
+    } catch (_) { return 'tab_'+Math.random().toString(36).slice(2,10); }
+  })();
+  const diagnosticSalt=(()=>{
+    try {
+      const key=STORE+'diagnostic-salt';
+      let value=localStorage.getItem(key);
+      if(!value) {
+        value=Math.random().toString(36).slice(2)+Math.random().toString(36).slice(2);
+        localStorage.setItem(key,value);
+      }
+      return value;
+    } catch (_) { return diagnosticSessionId; }
+  })();
+  let diagnosticCounter=0;
+  let diagnosticDbPromise=null;
+  let diagnosticFlushTimer=null;
+  let diagnosticWriteTail=Promise.resolve();
+  let diagnosticStorageError='';
+  let diagnosticWritten=0;
+  const diagnosticMemory=[];
+  const diagnosticPending=[];
+  function diagnosticPathId(value) {
+    let h=2166136261;
+    for(const ch of diagnosticSalt+':'+String(value)) {
+      h=Math.imul(h^ch.charCodeAt(0),16777619)>>>0;
+    }
+    return 'path_'+h.toString(36);
+  }
+  function diagnosticScrub(text) {
+    return String(text).slice(0,750)
+      .replace(/(csrf_token|authorization|password|cookie|api[_-]?key|access[_-]?token|secret)\s*[:=]\s*[^,\s;&]+/gi,'$1=[REDACTED]')
+      .replace(/https?:\/\/[^\s"'<>]+/gi,'[URL]')
+      .replace(/\/(?:mnt\/(?:user|disk\d+|cache)|boot)(?:\/[^\s"'<>()[\]{};,]*)?/g,
+        path=>'[PATH:'+diagnosticPathId(path)+']');
+  }
+  function diagnosticSanitize(value,key='',depth=0) {
+    if(/token|cookie|password|secret|authorization|credential|csrf|header|body|requestPayload/i.test(key))
+      return '[REDACTED]';
+    if(value===null || typeof value==='boolean') return value;
+    if(typeof value==='number') return Number.isFinite(value)?value:null;
+    if(typeof value==='string') {
+      if(/^(?:source|target|path|destination|dir|filename|name|file|currentFile)$/i.test(key))
+        return '[PATH:'+diagnosticPathId(value)+']';
+      return diagnosticScrub(value);
+    }
+    if(depth>=4) return '[DEPTH-LIMIT]';
+    if(Array.isArray(value)) return value.slice(0,30)
+      .map(item=>diagnosticSanitize(item,key,depth+1));
+    if(value && typeof value==='object') {
+      const clean={};
+      for(const k of Object.keys(value).slice(0,45))
+        clean[k]=diagnosticSanitize(value[k],k,depth+1);
+      return clean;
+    }
+    return String(value).slice(0,60);
+  }
+  function diagnosticIsVerbose() {
+    try { return Number(localStorage.getItem(STORE+'diagnostic-verbose-until'))>Date.now(); }
+    catch (_) { return false; }
+  }
+  function diagnosticSetVerbose(enabled) {
+    try { localStorage.setItem(STORE+'diagnostic-verbose-until',
+      enabled?String(Date.now()+15*60*1000):'0'); }
+    catch (_) { /* Diagnostic settings must not interrupt file operations. */ }
+    diagnosticLog('INFO','diagnostic.mode',{verbose:diagnosticIsVerbose()});
+  }
+  function diagnosticDatabase() {
+    if(diagnosticDbPromise) return diagnosticDbPromise;
+    if(!window.indexedDB) return Promise.reject(new Error('IndexedDB 不可用'));
+    diagnosticDbPromise=new Promise((resolve,reject)=>{
+      const request=window.indexedDB.open(DIAGNOSTIC_DATABASE,1);
+      request.onupgradeneeded=()=>{
+        const db=request.result;
+        if(!db.objectStoreNames.contains('events')) {
+          const store=db.createObjectStore('events',{keyPath:'id',autoIncrement:true});
+          store.createIndex('time','time');
+        }
+      };
+      request.onsuccess=()=>resolve(request.result);
+      request.onerror=()=>reject(request.error||new Error('无法打开诊断数据库'));
+      request.onblocked=()=>reject(new Error('诊断数据库被其他标签页阻塞'));
+    }).catch(error=>{diagnosticDbPromise=null;throw error;});
+    return diagnosticDbPromise;
+  }
+  function diagnosticLog(level,code,details={}) {
+    try {
+      if(level==='DEBUG' && !diagnosticIsVerbose()) return;
+      const record={
+        eventId:diagnosticSessionId+'_'+(++diagnosticCounter),
+        time:Date.now(),level,code,
+        sessionId:diagnosticSessionId,tabId:diagnosticTabId,
+        details:diagnosticSanitize(details)
+      };
+      diagnosticMemory.push(record);
+      if(diagnosticMemory.length>350) diagnosticMemory.shift();
+      diagnosticPending.push(record);
+      if(diagnosticPending.length>=40) void diagnosticFlush();
+      else if(diagnosticFlushTimer===null) diagnosticFlushTimer=setTimeout(
+        ()=>{diagnosticFlushTimer=null;void diagnosticFlush();},400);
+    } catch (_) { /* Diagnostics must never affect the native workflow. */ }
+  }
+  function diagnosticFlush() {
+    if(diagnosticFlushTimer!==null) {
+      clearTimeout(diagnosticFlushTimer);
+      diagnosticFlushTimer=null;
+    }
+    const batch=diagnosticPending.splice(0,diagnosticPending.length);
+    if(!batch.length) return diagnosticWriteTail;
+    diagnosticWriteTail=diagnosticWriteTail.then(async()=>{
+      const db=await diagnosticDatabase();
+      await new Promise((resolve,reject)=>{
+        const tx=db.transaction('events','readwrite');
+        const store=tx.objectStore('events');
+        for(const event of batch) store.add(event);
+        tx.oncomplete=resolve;
+        tx.onabort=()=>reject(tx.error||new Error('保存诊断事件失败'));
+        tx.onerror=()=>{};
+      });
+      diagnosticWritten+=batch.length;
+      if(diagnosticWritten>=150) {
+        diagnosticWritten=0;
+        await diagnosticPrune();
+      }
+      diagnosticStorageError='';
+    }).catch(error=>{
+      diagnosticStorageError=diagnosticScrub(error?.message||error);
+    });
+    return diagnosticWriteTail;
+  }
+  async function diagnosticStored() {
+    const db=await diagnosticDatabase();
+    return new Promise((resolve,reject)=>{
+      const tx=db.transaction('events','readonly');
+      const req=tx.objectStore('events').getAll();
+      req.onsuccess=()=>resolve(req.result||[]);
+      req.onerror=()=>reject(req.error||new Error('读取诊断日志失败'));
+    });
+  }
+  async function diagnosticPrune() {
+    const events=await diagnosticStored();
+    const oldest=Date.now()-DIAGNOSTIC_RETENTION;
+    const expired=events.filter((event,index)=>
+      event.time<oldest || index<events.length-DIAGNOSTIC_MAX_EVENTS);
+    if(!expired.length) return;
+    const db=await diagnosticDatabase();
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction('events','readwrite');
+      const store=tx.objectStore('events');
+      for(const event of expired) store.delete(event.id);
+      tx.oncomplete=resolve;
+      tx.onabort=()=>reject(tx.error||new Error('清理旧诊断日志失败'));
+      tx.onerror=()=>{};
+    });
+  }
+  async function diagnosticReadAll() {
+    await diagnosticFlush();
+    let persisted=[];
+    try { persisted=await diagnosticStored(); }
+    catch(error) { diagnosticStorageError=diagnosticScrub(error?.message||error); }
+    const events=new Map();
+    for(const item of [...persisted,...diagnosticMemory]) events.set(item.eventId,item);
+    const oldest=Date.now()-DIAGNOSTIC_RETENTION;
+    return [...events.values()].filter(e=>e.time>=oldest)
+      .sort((a,b)=>a.time-b.time).slice(-DIAGNOSTIC_MAX_EVENTS);
+  }
+  function diagnosticSnapshot() {
+    return {
+      mode:fileManagerMode,view:state.view,
+      path:state.tabs.length?currentPath():null,
+      directoryLoading:state.busy,initializing:state.initializing,
+      selectedCount:state.selection.size,
+      queue:{running:copyQueueRunning,paused:copyQueuePaused,
+        recoveryLocked:copyRecoveryLocked,ownerHeld:copyOwnerHeld,
+        persistentError:Boolean(persistenceError)},
+      tasks:copyJobs.slice(0,80).map(job=>({
+        taskId:job.taskId,status:job.status,phase:job.phase,count:job.count,
+        percent:job.percent,speed:job.speed,recovered:!!job.recovered,
+        items:job.record?.items?.slice(0,30).map(item=>({
+          source:item.source,status:item.status,submission:item.submission
+        }))
+      }))
+    };
+  }
+  function diagnosticMarkIssue() {
+    diagnosticLog('WARN','user.issue_marker',{snapshot:diagnosticSnapshot()});
+  }
+  async function diagnosticExport() {
+    const events=await diagnosticReadAll();
+    const report={
+      schemaVersion:1,app:'Unraid File Station',version:DIAGNOSTIC_VERSION,
+      exportedAt:new Date().toISOString(),
+      retentionHours:24,
+      privacy:'敏感字段已隐藏；路径与文件名使用本地盐生成的非加密标识；导出前仍建议检查文件内容。',
+      environment:{route:location.pathname,userAgent:typeof navigator==='undefined'?'unknown':navigator.userAgent},
+      storageError:diagnosticStorageError||null,
+      snapshot:diagnosticSanitize(diagnosticSnapshot()),events
+    };
+    const blob=new Blob([JSON.stringify(report,null,2)],{type:'application/json;charset=utf-8'});
+    const url=URL.createObjectURL(blob);
+    const link=document.createElement('a');
+    link.href=url;
+    const stamp=new Date().toISOString().replace(/[-:]/g,'').replace('T','-').slice(0,15);
+    link.download='unraid-file-station-diagnostic-'+stamp+'.json';
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),5000);
+  }
+  async function diagnosticClear() {
+    await diagnosticFlush();
+    try {
+      const db=await diagnosticDatabase();
+      await new Promise((resolve,reject)=>{
+        const tx=db.transaction('events','readwrite');
+        tx.objectStore('events').clear();
+        tx.oncomplete=resolve;
+        tx.onabort=()=>reject(tx.error||new Error('清空日志失败'));
+        tx.onerror=()=>{};
+      });
+    } catch(error) {
+      diagnosticStorageError=diagnosticScrub(error?.message||error);
+    }
+    diagnosticMemory.length=0;
+    diagnosticPending.length=0;
+  }
+  function showDiagnosticCenter() {
+    if(document.querySelector('.ufs-diagnostic-overlay')) return;
+    const overlay=element('div','ufs-diagnostic-overlay');
+    const dialog=element('section','ufs-diagnostic-panel');
+    dialog.setAttribute('role','dialog');
+    dialog.setAttribute('aria-modal','true');
+    dialog.setAttribute('aria-label','File Station 诊断中心');
+    const head=element('div','ufs-diagnostic-head');
+    head.append(element('strong','','诊断中心 · v'+DIAGNOSTIC_VERSION));
+    const close=element('button','','×');
+    close.type='button';close.title='关闭';
+    const dismiss=()=>overlay.remove();
+    close.addEventListener('click',dismiss);
+    head.append(close);
+    const hint=element('p','','日志仅保存于当前浏览器。路径和文件名会脱敏；请在分享前检查导出文件。');
+    const controls=element('div','ufs-diagnostic-controls');
+    const debug=element('button','',diagnosticIsVerbose()?'关闭增强诊断':'开启增强诊断（15分钟）');
+    const mark=element('button','','标记问题');
+    const refresh=element('button','','刷新日志');
+    const download=element('button','ufs-diagnostic-primary','导出 JSON');
+    const clear=element('button','','清空日志');
+    for(const button of [debug,mark,refresh,download,clear]) button.type='button';
+    controls.append(debug,mark,refresh,download,clear);
+    const status=element('div','ufs-diagnostic-status','正在读取诊断记录…');
+    const preview=element('pre','ufs-diagnostic-events','');
+    const reload=async()=>{
+      const events=await diagnosticReadAll();
+      status.textContent='已记录 '+events.length+' 条事件'+
+        (diagnosticStorageError?' · 持久化不可用：'+diagnosticStorageError:'')+
+        (diagnosticIsVerbose()?' · 增强诊断中':'');
+      preview.textContent=events.slice(-100).map(event=>
+        new Date(event.time).toLocaleTimeString('zh-CN',{hour12:false})+'  '+
+        event.level.padEnd(5)+'  '+event.code+'  '+
+        JSON.stringify(event.details)).join('\n')||'暂无日志';
+      preview.scrollTop=preview.scrollHeight;
+    };
+    debug.addEventListener('click',()=>{
+      diagnosticSetVerbose(!diagnosticIsVerbose());
+      debug.textContent=diagnosticIsVerbose()?'关闭增强诊断':'开启增强诊断（15分钟）';
+      void reload();
+    });
+    mark.addEventListener('click',()=>{
+      diagnosticMarkIssue();
+      void reload();
+    });
+    refresh.addEventListener('click',()=>void reload());
+    download.addEventListener('click',async()=>{
+      download.disabled=true;
+      try { await diagnosticExport(); }
+      catch(error) { status.textContent='导出失败：'+diagnosticScrub(error?.message||error); }
+      finally { download.disabled=false; }
+    });
+    clear.addEventListener('click',async()=>{
+      if(!window.confirm('确认清空本浏览器保存的 File Station 诊断记录？')) return;
+      await diagnosticClear();
+      void reload();
+    });
+    overlay.addEventListener('click',event=>{if(event.target===overlay)dismiss();});
+    overlay.addEventListener('keydown',event=>{
+      if(event.key==='Escape') {event.preventDefault();dismiss();}
+    });
+    dialog.append(head,hint,controls,status,preview);
+    overlay.append(dialog);
+    document.body.append(overlay);
+    close.focus();
+    void reload();
+  }
+  function startDiagnosticMonitoring() {
+    diagnosticLog('INFO','page.mount',{version:DIAGNOSTIC_VERSION,route:location.pathname,
+      verbose:diagnosticIsVerbose()});
+    const captureError=event=>{
+      const file=String(event.filename||'');
+      const stack=String(event.error?.stack||'');
+      if(!/unraid-file-station|ufs-/i.test(file+' '+stack)) return;
+      diagnosticLog('ERROR','javascript.error',{
+        type:event.error?.name||'Error',message:event.message||event.error?.message,
+        file,line:event.lineno,column:event.colno,stack
+      });
+    };
+    const captureRejection=event=>{
+      const reason=event.reason;
+      const stack=String(reason?.stack||'');
+      if(!/unraid-file-station|ufs-/i.test(stack)) return;
+      diagnosticLog('ERROR','javascript.unhandled_rejection',{
+        type:reason?.name||'Error',message:reason?.message||String(reason),stack
+      });
+    };
+    window.addEventListener('error',captureError,{signal:lifecycle.signal});
+    window.addEventListener('unhandledrejection',captureRejection,{signal:lifecycle.signal});
+    window.addEventListener('pagehide',()=>{
+      diagnosticLog('INFO','page.hide',{snapshot:diagnosticSnapshot()});
+      void diagnosticFlush();
+    },{signal:lifecycle.signal});
+    onCleanup(()=>{
+      if(diagnosticFlushTimer!==null)clearTimeout(diagnosticFlushTimer);
+      void diagnosticFlush();
+    });
+    void diagnosticPrune().catch(error=>{
+      diagnosticStorageError=diagnosticScrub(error?.message||error);
+    });
+  }
+
 
   // v0.2.7 stage 1: durable data model only. Reading snapshots never submits
   // native writes, starts the scheduler or silently confirms copied files.
@@ -1562,6 +1951,7 @@
     }
   }
   function copyPersistenceFailure(error) {
+    diagnosticLog('ERROR','queue.persistence_failed',{message:error?.message});
     persistenceError='复制任务持久化失败：'+String(error?.message||error);
     copyQueuePaused=true;
     copyOwnerHeld=false;
@@ -1576,6 +1966,7 @@
       if(!copyOwnerHeld || !persistentCopyStore)
         throw new Error('当前标签页没有安全的队列写入权限');
       await persistentCopyStore.writeOwned(snap,copyOwnerId);
+      diagnosticLog('DEBUG','queue.persisted',{tasks:snap.tasks.length});
       lastPersistedTasks=JSON.stringify(snap.tasks);
     });
     copyPersistTail=pending.catch(error=>{copyPersistenceFailure(error);throw error;});
@@ -1592,6 +1983,7 @@
     item.updatedAt=Date.now();
     job.record.updatedAt=item.updatedAt;
     await persistCopyQueue();
+    diagnosticLog('INFO','queue.checkpoint',{taskId:job.taskId,itemIndex:index,status,submission:item.submission});
     if(destroyed || !copyOwnerHeld || (copyQueuePaused && status!=='excluded'))
       throw new Error('持久化状态不可信或队列已暂停，拒绝继续复制');
   }
@@ -1612,10 +2004,14 @@
       try {
         persistentCopyStore=createCopyQueueStore(window.indexedDB);
         const saved=await persistentCopyStore.read();
+        diagnosticLog('INFO','queue.restore_read',{tasks:saved?.tasks.length||0});
         if(destroyed) return;
         lastPersistedTasks=JSON.stringify(saved?.tasks||[]);
         if(saved?.tasks.length) {
           const assessed=copyRecoveryAssessment(saved);
+          diagnosticLog('WARN','queue.restore_assessed',{
+            tasks:assessed.tasks.length,requiresConfirmation:assessed.requiresConfirmation,
+            statuses:assessed.tasks.map(task=>({taskId:task.taskId,status:task.restoreStatus}))});
           // Records recovered from a page reload have no old JavaScript
           // execution context. Even unsubmitted work must await user consent.
           copyQueuePaused=assessed.requiresConfirmation;
@@ -1649,6 +2045,7 @@
             void monitorRecoveredNativeTask();
         }
       } catch(error) {
+        diagnosticLog('ERROR','queue.restore_failed',{message:error?.message});
         persistenceError='无法读取复制任务数据库：'+String(error?.message||error);
         copyQueuePaused=true;
         notify(persistenceError);
@@ -1664,7 +2061,10 @@
     if(destroyed || !copyRecoveryLocked || !copyJobs.some(job=>job.recovered))return;
     let active;
     try {active=await readNativeActive();}
-    catch(_) {return;} // Network errors preserve the existing "待核实" state.
+    catch(error) {
+      diagnosticLog('WARN','queue.recovery_native_read_failed',{message:error?.message});
+      return;
+    } // Network errors preserve the existing "待核实" state.
     if(destroyed || !active) return;
     const matches=[];
     for(const job of copyJobs) {
@@ -1679,8 +2079,12 @@
         if(matchesCopyTask(active,signature))matches.push({job,index:i,signature});
       }
     }
-    if(matches.length!==1)return;
+    if(matches.length!==1) {
+      diagnosticLog('WARN','queue.recovery_match',{matched:matches.length,hasActive:!!active});
+      return;
+    }
     const {job,index,signature}=matches[0];
+    diagnosticLog('INFO','queue.recovery_attached',{taskId:job.taskId,itemIndex:index});
     job.recoveryMonitoring=true;
     job.recoveryMonitorIndex=index;
     job.status='running';
@@ -1743,6 +2147,8 @@
       if(!destroyed && job.recoveryMonitoring) {
         job.recoveryMonitoring=false;
         job.recoveryMonitorIndex=-1;
+        diagnosticLog('WARN','queue.recovery_uncertain',{taskId:job.taskId,itemIndex:index,
+          hadDone:finishedEvent,errorEvent,matched:sameTaskObserved});
         job.status='uncertain';
         job.phase='uncertain';
         job.speed='';
@@ -2020,6 +2426,7 @@
     job.status='queued';
     job.phase='queued';
     copyJobs.push(job);
+    diagnosticLog('INFO','queue.enqueued',{taskId:job.taskId,count:job.count});
     try { await persistCopyQueue(); }
     catch(error) {
       copyJobs.splice(copyJobs.indexOf(job),1);
@@ -2050,6 +2457,7 @@
         if(destroyed || copyQueuePaused || job.status!=='queued') continue;
         job.status='running';
         job.phase='checking';
+        diagnosticLog('INFO','queue.started',{taskId:job.taskId,count:job.count});
         job.speed='';
         job.speedUpdatedAt=0;
         job.percent=null;
@@ -2075,6 +2483,8 @@
           job.phase='failed';
           job.error=String(error?.message||error);
         } finally {
+          diagnosticLog(job.status==='success'?'INFO':'WARN','queue.finished',{
+            taskId:job.taskId,status:job.status,phase:job.phase,message:job.error||''});
           if(activeCopySession===job) activeCopySession=null;
           if((job.status==='failed' && !job.recoverable) ||
               job.status==='uncertain'||job.status==='stopped') copyQueuePaused=true;
@@ -2351,6 +2761,7 @@
       const controller=new AbortController();
       nativeRefreshController=controller;
       const timeout=setTimeout(()=>controller.abort(),10000);
+      const startedRefresh=Date.now();
       try {
         const url=new URL('/webGui/include/Browse.php',location.origin);
         url.searchParams.set('dir',encodeURIComponent(nativeDir));
@@ -2372,9 +2783,11 @@
           catch (_) { /* Native sort plugin may be unavailable. */ }
         }
         nativeListRefreshed=revision;
+        diagnosticLog('DEBUG','native.directory_refreshed',{elapsed:Date.now()-startedRefresh});
         if(nativeRefreshNote) nativeRefreshNote.hidden=true;
         if(nativeRefreshRetry) nativeRefreshRetry.hidden=true;
       } catch(error) {
+        diagnosticLog('WARN','native.directory_refresh_failed',{elapsed:Date.now()-startedRefresh,message:error?.message});
         if(nativeRefreshNote) {
           nativeRefreshNote.textContent='原生目录更新失败（'+
             (error?.name==='AbortError'?'请求超时':String(error?.message||error))+
@@ -2430,7 +2843,9 @@
     if (isDemo && mode==='native') {
       notify('演示模式没有原生文件管理器');return;
     }
+    const previousMode=fileManagerMode;
     fileManagerMode=mode;
+    diagnosticLog('INFO','ui.mode_switch',{from:previousMode,to:mode});
     const native=mode==='native';
     if (!isDemo) {
       if(native) localStorage.setItem(STORE+'native','1');
@@ -2748,6 +3163,7 @@
     } catch (error) {
       if (destroyed || controller.signal.aborted || error.name === 'AbortError' ||
           request !== state.requestId) return;
+      diagnosticLog('WARN','directory.refresh_failed',{path,message:error?.message});
       state.busy = false;
       state.entries = [];
       renderFiles(error.message);
@@ -4880,10 +5296,11 @@
     const menu = element('div', 'ufs-menu');
     menu.setAttribute('role', 'menu');
     const actions = [
+      ['诊断中心（导出日志）', showDiagnosticCenter],
       ['重置文件列表列宽', resetColumnWidths],
       ['返回原生文件管理器（其他写入操作）', nativeMode],
       [state.theme === 'unraid' ? '切换至 DSM 经典主题' : '切换至 Unraid 融合主题', toggleTheme],
-      ['关于 File Station v0.2.3.8', () => notify('File Station v0.2.3.8 · Unraid 7.2.2 · 修复选中背景叠加与文件夹加号图标')]
+      ['关于 File Station v'+DIAGNOSTIC_VERSION, () => notify('File Station v'+DIAGNOSTIC_VERSION+' · 浏览器诊断日志与安全导出')]
     ];
     actions.forEach(([label, fn]) => {
       const button = element('button', '', label);
@@ -4907,6 +5324,7 @@
       '<div class="ufs-tabs" aria-label="目录标签页"></div>',
       '<div class="ufs-app-actions"><span class="ufs-preview-chip">文件操作可用</span>',
       '<button type="button" class="ufs-ico ufs-refresh" title="刷新目录" aria-label="刷新目录"><span data-ufs-icon="refresh"></span></button>',
+      '<button type="button" class="ufs-ico ufs-diagnostic-button" title="诊断日志" aria-label="诊断日志"><span data-ufs-icon="bug"></span></button>',
       '<button type="button" class="ufs-ico ufs-more" title="更多选项" aria-label="更多选项" aria-haspopup="menu" aria-expanded="false"><span data-ufs-icon="more"></span></button>',
       '</div></div>'
     ].join('');
@@ -4969,6 +5387,7 @@
     });
     $('.ufs-refresh', app).addEventListener('click', refreshDirectory);
     $('.ufs-more', app).addEventListener('click', showAppMenu);
+    $('.ufs-diagnostic-button', app).addEventListener('click',showDiagnosticCenter);
     $('.ufs-copy-task-trigger', app).addEventListener('click',showCopyTaskCenter);
     updateCopyTaskButton();
     // Only create-folder is writable in v0.2.1; other native actions remain disabled.
@@ -5213,7 +5632,10 @@
       nativeRefreshRetry.type='button';
       nativeRefreshRetry.hidden=true;
       nativeRefreshRetry.addEventListener('click',()=>void refreshNativeListIfNeeded());
-      nativeControls.append(button,nativeReadonlyNote,nativeRefreshNote,nativeRefreshRetry);
+      const diagnosticButton=element('button','','诊断日志');
+      diagnosticButton.type='button';
+      diagnosticButton.addEventListener('click',showDiagnosticCenter);
+      nativeControls.append(button,diagnosticButton,nativeReadonlyNote,nativeRefreshNote,nativeRefreshRetry);
       native.parentNode.insertBefore(nativeControls,native);
       onCleanup(()=>nativeRefreshController?.abort());
       // Capturing on window precedes native document/body event listeners.
@@ -5223,6 +5645,7 @@
       }
     }
     switchFileManager(initialNative?'native':'file-station');
+    startDiagnosticMonitoring();
     // Native filemonitor.start() is delayed; take ownership before it fires.
     if (!isDemo) {
       if (!takeOverNativeFileMonitor()) {
@@ -5387,7 +5810,9 @@
   }
   // Explicit opt-in hook for pure-function tests; never enabled on production WebGUI.
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
-    window.__UFS_TEST_API__ = { normalizeSavedCopyItem, normalizeSavedCopyTask, validateCopyQueueSnapshot, copyRecoveryAssessment, createCopyQueueStore, currentCopySpeed, copyJobPhaseLabel, copyJobStatusLabel, copyJobMeta, findBatchCopyConflicts, findBatchCopyTypeConflicts, batchCopyOverallProgress, safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, COPY_ENABLED, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, nativeCopyTarget, matchesCopyTask, copyDestinationAllowed, copyNativeEntry, decodeRsyncFilename, parseRsyncProgress, shortenCopyName, requestCancelNativeCopy, takeOverNativeFileMonitor, availableHeight, visibleEntries, sortedCopyFolders, safeCopyName, safeCopyPath, copyBlockedReason, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
+    window.__UFS_TEST_API__ = { diagnosticSanitize, diagnosticScrub, diagnosticLog,
+    diagnosticReadAll, diagnosticSnapshot, diagnosticMarkIssue, diagnosticSetVerbose,
+    diagnosticIsVerbose, normalizeSavedCopyItem, normalizeSavedCopyTask, validateCopyQueueSnapshot, copyRecoveryAssessment, createCopyQueueStore, currentCopySpeed, copyJobPhaseLabel, copyJobStatusLabel, copyJobMeta, findBatchCopyConflicts, findBatchCopyTypeConflicts, batchCopyOverallProgress, safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, COPY_ENABLED, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, nativeCopyTarget, matchesCopyTask, copyDestinationAllowed, copyNativeEntry, decodeRsyncFilename, parseRsyncProgress, shortenCopyName, requestCancelNativeCopy, takeOverNativeFileMonitor, availableHeight, visibleEntries, sortedCopyFolders, safeCopyName, safeCopyPath, copyBlockedReason, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();
