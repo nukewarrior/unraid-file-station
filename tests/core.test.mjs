@@ -1676,7 +1676,9 @@ test('v0.2.5 队列使用单一执行器、逐项启动并只在执行时检查�
 
 test('v0.2.5 方案 A 底部胶囊显示运行中总进度与独立排队数量',()=>{
   assert.match(script,/const queued=copyJobs\.filter\(job=>job\.status==='queued'\)\.length/);
-  assert.match(script,/active\?'复制中'\+\(Number\.isFinite\(active\.percent\)/);
+  assert.match(script,/active\?copyJobPhaseLabel\(active\)/);
+  assert.match(script,/\.ufs-task-badge-percent/);
+  assert.match(script,/\.ufs-task-badge-speed/);
   assert.match(script,/element\('span','ufs-task-badge-divider'\)/);
   assert.match(script,/element\('span','ufs-task-badge-wait'\)/);
   assert.match(script,/function showCopyTaskCenter\(\)/);

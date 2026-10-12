@@ -2278,9 +2278,8 @@ test('v0.2.6.2 多任务排队保留等待数量，仅活动任务展示速度�
     status:'Copying ... notes.txt\n  4,194,304  42%  66.3MB/s  0:00:09'
   }));
   await badge.getByText('66.3MB/s').waitFor();
-  await page.waitForFunction(()=>
-    document.querySelector('.ufs-task-center-row[data-status="running"] .ufs-task-center-name')?.textContent.includes('Photos'),
-    null,{timeout:25000});
+  await page.locator('.ufs-task-center-row[data-status="running"][data-phase="copying"] .ufs-task-center-name',
+    {hasText:'Photos'}).waitFor({timeout:25000});
   assert.equal(await badge.locator('.ufs-task-badge-speed').innerText(),'',
     '启动下一项时不得沿用上一项速度');
   assert.equal(await page.locator('.ufs-task-center-row[data-status="success"]').count(),1);
