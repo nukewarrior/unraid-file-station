@@ -1443,7 +1443,7 @@
     return String(text).slice(0,750)
       .replace(/(csrf_token|authorization|password|cookie|api[_-]?key|access[_-]?token|secret)\s*[:=]\s*[^,\s;&]+/gi,'$1=[REDACTED]')
       .replace(/https?:\/\/[^\s"'<>]+/gi,'[URL]')
-      .replace(/\/(?:mnt\/(?:user|disk\d+|cache)|boot)(?:\/[^\s"'<>()[\]{};,]*)?/g,
+      .replace(/\/(?:mnt\/(?:user|disk\d+|cache)|boot)(?:\/[^\s"'<>]*)?/g,
         path=>'[PATH:'+diagnosticPathId(path)+']');
   }
   function diagnosticSanitize(value,key='',depth=0) {
@@ -1725,10 +1725,6 @@
     };
     window.addEventListener('error',captureError,{signal:lifecycle.signal});
     window.addEventListener('unhandledrejection',captureRejection,{signal:lifecycle.signal});
-    window.addEventListener('pagehide',()=>{
-      diagnosticLog('INFO','page.hide',{snapshot:diagnosticSnapshot()});
-      void diagnosticFlush();
-    },{signal:lifecycle.signal});
     onCleanup(()=>{
       if(diagnosticFlushTimer!==null)clearTimeout(diagnosticFlushTimer);
       void diagnosticFlush();
@@ -2878,6 +2874,8 @@
   function onCleanup(fn) { cleanupTasks.push(fn); }
   function cleanupApp() {
     if (destroyed) return;
+    // Registered pagehide cleanup runs before the diagnostic listener; record before abort.
+    diagnosticLog('INFO','page.hide',{snapshot:diagnosticSnapshot()});
     destroyed = true;
     ++state.initGeneration;
     ++state.requestId;
