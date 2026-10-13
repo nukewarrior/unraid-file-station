@@ -946,6 +946,11 @@
       if(await readNativeActive())throw new Error('Unraid 原生任务正在运行');
       nativeCsrfToken();
       if(beforeSubmit)await beforeSubmit(); // One durable transaction for ALL intents.
+      // The IndexedDB commit can take time. Reduce the race with unrelated
+      // native tasks by checking the shared active slot immediately again.
+      // If busy, the saved intent stays uncertain; NEVER overwrite or retry.
+      if(await readNativeActive())
+        throw new Error('保存提交意图后发现另一个 Unraid 原生任务，整批未发送');
       const rawSources=plans.map(plan=>plan.source).join('\r');
       diagnosticLog('INFO','move.batch_intent',{taskId:activeCopySession?.taskId,
         count:plans.length,sourceDir,destination:plans[0].destinationDir,
