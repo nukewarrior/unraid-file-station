@@ -1,12 +1,23 @@
 # Unraid File Station
 
-> **当前开发版本：v0.2.11.6（移动与原生永久删除开发预览）**。移动/删除属于高风险写入操作，尚待 Unraid 7.2.2 实机专项验收。首次仅在可丢弃的测试共享执行，重要资料请勿试用。
+> **当前开发版本：v0.2.11.7（移动与原生永久删除开发预览）**。移动/删除属于高风险写入操作，尚待 Unraid 7.2.2 实机专项验收。首次仅在可丢弃的测试共享执行，重要资料请勿试用。
 
 在 **Unraid WebGUI** 内提供接近 Synology DSM File Station 的文件管理体验，同时保留 Unraid 的顶部导航、Shares 设置页以及原生文件管理器。
 
-> **开发状态：v0.2.11.6**。v0.2.9 增加安全移动，v0.2.10 增加原生永久删除及任务恢复；新写入操作待真实 NAS 验收。
+> **开发状态：v0.2.11.7**。v0.2.9 增加安全移动，v0.2.10 增加原生永久删除及任务恢复；新写入操作待真实 NAS 验收。
 >
 > 项目与 Unraid、Synology 均无官方关联。设计灵感来自 Synology DSM File Station。
+
+## v0.2.11.7 — 同目录普通文件原生批量 Move（等待 Unraid 实机验收）
+
+- 满足 **2–256 个普通文件、相同父目录、同一目标目录、无同名冲突** 时，使用 Unraid 原生 `Control.php action=9`，把路径按 `\\r` 分隔为单次请求；其他选择（混合文件夹、来源不一致、参数过长等）仍走串行方案。
+- 两次分层预检：整批开始前检查同名与类型；在批次提交前重新读取源目录和目标目录；任何已有同名目标均拒绝，原生已有任务占用亦拒绝。
+- **安全边界**：官方 file_manager 使用 rename(2) 快速路径时仍存在并发创建目标导致覆盖的 TOCTOU 风险；脚本不承诺原子级别 no-clobber。若不能接受此风险，请不要用批量 Move。目标 NAS 具体 file_manager 版本尚需实机验收。
+- **持久化**：记录 `batchMode=native-move-files`（沿用队列 schema 1），所有文件的提交意图在**一次 IndexedDB 独占事务**中落盘，之后才允许一次原生 POST；完成后一次读取源/目标目录，逐项检查缺失、类型、大小，再统一写入成功状态。
+- **F5 恢复**：严格以 `action=9` + 完整 `\\r` 源串 + 目标目录匹配原生任务。只能观察原任务，并在收到完成事件、两次空闲和全部文件校验通过后提交整体成功；其余均待核实，不能自动重发或串行补发。恢复后排队项目仍需手动确认。
+- 批量 Move 的停止粒度为整个原生任务，执行中隐藏停止队列按钮；不能借助全局 action 99 尝试逐项取消。
+- 诊断新增 `move.batch_strategy`、`move.batch_intent`、`move.batch_verified`、`move.batch_failed`、`move.batch_reconcile`、`queue.batch_checkpoint`、`queue.batch_recovery_verified`，能区分批量与串行以及原生请求、监控和核验耗时。
+- **当前不改变复制/删除/文件夹移动模式；不重建 IndexedDB，不修改 NAS 配置。**
 
 ## v0.2.11.6 — 移动任务快速确认与诊断耗时
 
@@ -573,7 +584,7 @@
 
 1. 在浏览器中安装 Tampermonkey 或其他兼容的用户脚本管理器。
 2. 打开 [Unraid File Station UserScript（开发分支 Raw）](https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js) 安装脚本。已有安装若无法自动更新，可重新打开这个链接并在 Tampermonkey 中选择更新已有脚本。
-   当前 `@version` 为 `0.2.11.6`，版本检查和下载均指向上述地址。
+   当前 `@version` 为 `0.2.11.7`，版本检查和下载均指向上述地址。
 3. **建议在用户脚本管理器中将匹配地址收窄为自己的 NAS 主机名或 IP。** 默认规则匹配任何主机上的 `/Shares*` 路径，仅为兼容不同 Unraid 主机名。
 4. 打开 Unraid 7.2.2 的 **SHARES** 页，点击共享名称左边的蓝色浏览图标；或者点击 Shares 下方新出现的 **FILE STATION** 按钮。
 5. File Station 右上角的 **返回原生** 可以恢复原生文件管理页面；原生页面上会有 **打开 File Station** 按钮用于切回。
