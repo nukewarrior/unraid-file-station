@@ -245,7 +245,11 @@ async function pageFor(t, options = {}) {
         // still ONE native action and ONE mode=read task ownership signature.
         for(const path of source.split('\r')) {
           if(options.partialNativeMove && path.split('/').pop()==='another.mkv')continue;
-          moved.push({source:path,destinationDir,folder,name:path.split('/').pop()});
+          const parent=path.slice(0,path.lastIndexOf('/'));
+          const name=path.split('/').pop();
+          const sourceFolder=([...(contents[parent]||[]),...(options.extraEntries?.[parent]||[])])
+            .find(item=>item[0]===name)?.[1]??folder;
+          moved.push({source:path,destinationDir,folder:sourceFolder,name});
         }
       } else deleted.push({source,folder});
       latestMutation={action,source,target:action==='4'||action==='9'?destinationDir+'/':''};
@@ -3568,7 +3572,7 @@ test('v0.2.11.6 移动完成诊断提供可归因的分段耗时，不重复提�
   await center.getByRole('button',{name:'导出 JSON'}).click();
   const file=await pending;
   const report=JSON.parse(readFileSync(await file.path(),'utf8'));
-  assert.equal(report.version,'0.2.11.7');
+  assert.equal(report.version,'0.2.11.8');
   const moves=report.events.filter(e=>e.code==='move.verified');
   assert.equal(moves.length,1);
   const details=moves[0].details;
@@ -3619,7 +3623,7 @@ test('v0.2.11.7 同目录两普通文件一次原生批量 Move，所有项目�
   assert.equal(errors.length,0,errors.join('\n'));
 });
 
-test('v0.2.11.7 文件夹+文件混合选择回退为两次串行原生移动',async t=>{
+test('v0.2.11.8 单文件夹+普通文件混合选择仅一次原生移动',async t=>{
   const {page,nativePosts,moved,errors}=await pageFor(t);
   await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).first().waitFor();
   await page.locator('.ufs-entry[data-ufs-file="/mnt/user/TimeMachine/notes.txt"]').click();
@@ -3631,9 +3635,12 @@ test('v0.2.11.7 文件夹+文件混合选择回退为两次串行原生移动',a
   await page.locator('.ufs-copy-submit',{hasText:'开始移动'}).click();
   await page.locator('.ufs-copy-submit',{hasText:'完成'}).waitFor({timeout:25000});
   const native=nativePosts.filter(x=>x.mode==='file');
-  assert.equal(native.length,2);
-  assert.deepEqual(native.map(x=>x.action).sort(),['4','9']);
+  assert.equal(native.length,1,'同父目录一个文件夹和一个文件只需一次请求');
+  assert.equal(native[0].action,'9');
+  assert.equal(decodeURIComponent(native[0].source).split('\r').length,2);
   assert.equal(moved.length,2);
+  assert.equal(moved.find(x=>x.name==='Photos')?.folder,true);
+  assert.equal(moved.find(x=>x.name==='notes.txt')?.folder,false);
   assert.equal(errors.length,0,errors.join('\n'));
 });
 
@@ -3702,5 +3709,67 @@ test('v0.2.11.7 F5 恢复不重发原生批量：整批意图持久化且必须�
   await page.locator('.ufs-copy-task-trigger').first().click();
   assert.ok(await page.locator('.ufs-task-recovery').count()>=1,
     '不确定的原生批次必须保留手动恢复入口');
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+
+test('v0.2.11.8 多文件夹混合选择保持串行，日志明确标注回退原因',async t=>{
+  const {page,errors,nativePosts,moved}=await pageFor(t,{
+    extraEntries:{'/mnt/user/TimeMachine':[['Archive',true]]}
+  });
+  await page.locator('.ufs-entry[data-ufs-file="/mnt/user/TimeMachine/Photos"]').waitFor();
+  for(const [i,name] of ['Photos','Archive','notes.txt'].entries()) {
+    await page.locator('.ufs-entry[data-ufs-file="/mnt/user/TimeMachine/'+name+'"]')
+      .click(i?{modifiers:['ControlOrMeta']}:{});
+  }
+  await page.locator('.ufs-operations').click();
+  await page.getByRole('menuitem',{name:'移动到…'}).click();
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit',{hasText:'开始移动'}).click();
+  await page.locator('.ufs-copy-submit',{hasText:'完成'}).waitFor({timeout:30000});
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,3);
+  assert.deepEqual(nativePosts.filter(x=>x.mode==='file').map(x=>x.action).sort(),['4','4','9']);
+  assert.equal(moved.length,3);
+  await page.locator('.ufs-copy-submit',{hasText:'完成'}).click();
+  await page.locator('.ufs-diagnostic-button').click();
+  const download=page.waitForEvent('download');
+  await page.getByRole('dialog',{name:'File Station 诊断中心'})
+    .getByRole('button',{name:'导出 JSON'}).click();
+  const file=await download;
+  const report=JSON.parse(readFileSync(await file.path(),'utf8'));
+  const strategies=report.events.filter(e=>e.code==='move.batch_strategy');
+  assert.equal(strategies.at(-1)?.details.reason,'multiple-directories');
+  assert.equal(strategies.at(-1)?.details.strategy,'serial');
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.11.8 混合原生移动完成事件与逐项校验不重复提交',async t=>{
+  const {page,errors,nativePosts,moved}=await pageFor(t,{
+    extraEntries:{'/mnt/user/TimeMachine':[['another.mkv',false]]}
+  });
+  await page.locator('.ufs-entry[data-ufs-file="/mnt/user/TimeMachine/Photos"]').waitFor();
+  for(const [i,name] of ['Photos','notes.txt','another.mkv'].entries()) {
+    await page.locator('.ufs-entry[data-ufs-file="/mnt/user/TimeMachine/'+name+'"]')
+      .click(i?{modifiers:['ControlOrMeta']}:{});
+  }
+  await page.locator('.ufs-operations').click();
+  await page.getByRole('menuitem',{name:'移动到…'}).click();
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit',{hasText:'开始移动'}).click();
+  await page.locator('.ufs-copy-submit',{hasText:'完成'}).waitFor({timeout:30000});
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,1);
+  assert.equal(moved.length,3);
+  assert.equal(moved.filter(x=>x.folder).length,1);
+  assert.equal(await page.locator('.ufs-batch-percent').innerText(),'100%');
+  await page.locator('.ufs-copy-submit',{hasText:'完成'}).click();
+  await page.locator('.ufs-diagnostic-button').click();
+  const dl=page.waitForEvent('download');
+  await page.getByRole('dialog',{name:'File Station 诊断中心'})
+    .getByRole('button',{name:'导出 JSON'}).click();
+  const file=await dl,report=JSON.parse(readFileSync(await file.path(),'utf8'));
+  const event=report.events.find(e=>e.code==='move.batch_verified');
+  assert.equal(event?.details.batchMode,'native-move-mixed');
+  assert.equal(event?.details.folderCount,1);
+  assert.equal(event?.details.folderVerification,'top-level-only');
   assert.equal(errors.length,0,errors.join('\n'));
 });
