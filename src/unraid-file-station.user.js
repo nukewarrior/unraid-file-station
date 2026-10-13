@@ -1820,9 +1820,17 @@
       if(item.evidenceEventIds.length<8)item.evidenceEventIds.push(event.eventId);
       groups.set(spec.issue,item);
     }
+    // Root/blocker events outrank downstream UI symptoms of the same failure.
+    const rootPriority={
+      QUEUE_SNAPSHOT_CHANGED:95,QUEUE_LEASE_LOST:95,QUEUE_PERSISTENCE_FAILURE:95,
+      QUEUE_RESTORE_FAILURE:95,QUEUE_LEASE_DENIED:90,
+      JAVASCRIPT_ERROR:85,UNHANDLED_REJECTION:85,
+      MOVE_TARGET_INVALID:70,MOVE_SUBMISSION_REJECTED:40
+    };
     const issues=[...groups.values()].sort((a,b)=>{
       const weight=s=>s==='critical'?2:1;
       return weight(b.severity)-weight(a.severity) ||
+        (rootPriority[b.code]||0)-(rootPriority[a.code]||0) ||
         Date.parse(b.lastSeen)-Date.parse(a.lastSeen);
     });
     for(const issue of issues) {
