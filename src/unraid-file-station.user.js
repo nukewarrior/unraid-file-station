@@ -2867,6 +2867,21 @@
     } catch(error){copyPersistenceFailure(error);}
   }
   async function executeRecoveredCopyJob(job) {
+    if(job.record.batchMode==='native-move-files') {
+      // A batch that never reached native submission may be manually resumed.
+      // Resume such a record via the conservative per-item path, removing the
+      // batch marker BEFORE any single-item intent is persisted; otherwise
+      // a second F5 would incorrectly look for a CR-joined native signature.
+      if(job.record.items.some(item=>
+          item.submission!=='not-submitted' ||
+          !['queued','success','skipped','excluded'].includes(item.status)))
+        throw new Error('原生批量移动存在已提交或未核实项，禁止恢复执行');
+      delete job.record.batchMode;
+      job.record.updatedAt=Date.now();
+      await persistCopyQueue();
+      diagnosticLog('INFO','move.batch_resume_serial',{taskId:job.taskId,
+        count:job.record.items.length});
+    }
     for(let i=0;i<job.record.items.length;i++){
       const item=job.record.items[i];
       if(['success','skipped','excluded'].includes(item.status))continue;
