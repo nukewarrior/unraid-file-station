@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.11.7
+// @version      0.2.11.8
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -905,24 +905,70 @@
     }
     return plans.map(plan=>plan.source).join('\r').length<=16000;
   }
+  // On Unraid file_manager, actions 4 and 9 share the same move case and
+  // each CR-separated entry is checked using is_dir(). Keep this opt-in narrow:
+  // ONE directory plus ordinary files, all from the same source parent.
+  // Multiple folders, folder-only batches, nested targets and any ambiguous
+  // path stay on the existing safe serial path.
+  function nativeMoveMixedEligible(plans) {
+    if(!Array.isArray(plans) || plans.length<2 || plans.length>256)return false;
+    const first=plans[0];
+    if(!first || typeof first.source!=='string' ||
+       typeof first.destinationDir!=='string')return false;
+    const parent=parentPath(first.source);
+    if(!safeWritePath(parent,true) || !safeWritePath(first.destinationDir,true) ||
+       parent===first.destinationDir)return false;
+    let folders=0,files=0;
+    const seen=new Set();
+    for(const plan of plans) {
+      if(!plan || plan.type!=='move' || typeof plan.folder!=='boolean' ||
+         plan.conflictPolicy!=='fail' || plan.destinationDir!==first.destinationDir ||
+         parentPath(plan.source)!==parent || !safeWritePath(plan.source) ||
+         plan.target!==plan.destinationDir+'/'+fileName(plan.source) ||
+         !copyDestinationAllowed(plan,first.destinationDir) || seen.has(plan.source))
+        return false;
+      seen.add(plan.source);
+      if(plan.folder)folders++;
+      else files++;
+    }
+    return folders===1 && files>=1 &&
+      plans.map(plan=>plan.source).join('\r').length<=16000;
+  }
+  function nativeMoveBatchMode(plans) {
+    if(nativeMoveBatchEligible(plans))return 'native-move-files';
+    if(nativeMoveMixedEligible(plans))return 'native-move-mixed';
+    return null;
+  }
+  function nativeMoveFallbackReason(plans) {
+    if(!Array.isArray(plans) || plans.length<2)return 'insufficient-items';
+    const folders=plans.filter(p=>p.folder===true).length;
+    if(folders>=2)return 'multiple-directories';
+    if(folders===plans.length)return 'directories-only';
+    if(new Set(plans.map(p=>p.destinationDir)).size>1 ||
+       new Set(plans.map(p=>parentPath(p.source))).size>1)
+      return 'different-source-or-target';
+    return 'unsafe-or-unsupported-path';
+  }
   function matchesMoveBatchTask(active,plans) {
-    return nativeMoveBatchEligible(plans) && active &&
+    return !!nativeMoveBatchMode(plans) && active &&
       Number(active.action)===9 &&
       active.source===plans.map(plan=>plan.source).join('\r') &&
       active.target===plans[0].destinationDir+'/';
   }
   function savedMoveBatchPlans(record) {
-    if(record?.operation!=='move' || record.batchMode!=='native-move-files')return null;
+    if(record?.operation!=='move' ||
+       !['native-move-files','native-move-mixed'].includes(record.batchMode))return null;
     const plans=record.items.map(item=>({
       type:'move',source:item.source,folder:item.folder,
       destinationDir:record.destination,
       target:record.destination+'/'+fileName(item.source),conflictPolicy:'fail'
     }));
-    return nativeMoveBatchEligible(plans)?plans:null;
+    return nativeMoveBatchMode(plans)===record.batchMode?plans:null;
   }
   async function moveNativeBatch(plans,progress=()=>{},control={},beforeSubmit=null) {
     return withNativeWriteLock(async()=>{
-      if(!MOVE_ENABLED || !nativeMoveBatchEligible(plans))
+      const batchMode=nativeMoveBatchMode(plans);
+      if(!MOVE_ENABLED || !batchMode)
         throw new Error('不符合原生批量移动条件');
       if(isDemo && window.__UFS_TEST_MODE__!==true)
         throw new Error('演示模式不能执行真实批量移动');
@@ -937,8 +983,8 @@
       const targets=new Set(destinations.map(entry=>entry.name));
       for(const plan of plans) {
         const origin=originals.get(plan.source);
-        if(!origin || origin.folder || origin.copyPathVerified===false)
-          throw new Error('批量移动源文件不可信或已经变化');
+        if(!origin || origin.folder!==plan.folder || origin.copyPathVerified===false)
+          throw new Error('批量移动源项目类型不一致或已经变化');
         if(targets.has(fileName(plan.source)) ||
            destinations.some(entry=>entry.path===plan.target))
           throw new Error('目标存在同名项目，批量移动已拒绝');
@@ -954,7 +1000,8 @@
       const rawSources=plans.map(plan=>plan.source).join('\r');
       diagnosticLog('INFO','move.batch_intent',{taskId:activeCopySession?.taskId,
         count:plans.length,sourceDir,destination:plans[0].destinationDir,
-        strategy:'native-cr-source',overwriteGuard:'preflight-only'});
+        strategy:'native-cr-source',batchMode,folderCount:plans.filter(p=>p.folder).length,
+        overwriteGuard:'preflight-only'});
       let submitted=false,seen=false,done=false,remoteError='';
       const stop=observeNativeProgress(data=>{
         const payload=nativeCopyProgressPayload(data);
@@ -975,7 +1022,8 @@
           hdlink:'',sparse:'',exist:'',zfs:''});
         const requestMs=Date.now()-requestAt;
         if(reply.trim())throw new Error('原生批量移动接口返回非预期内容');
-        progress('Unraid 正在批量移动文件…','copying');
+        progress(batchMode==='native-move-mixed'?
+          'Unraid 正在批量移动文件及文件夹…':'Unraid 正在批量移动文件…','copying');
         const monitorAt=Date.now(),limit=monitorAt+6*60*60*1000;
         let idle=0,polls=0;
         while(Date.now()<limit){
@@ -1006,9 +1054,10 @@
         const results=[];
         for(const plan of plans) {
           const item=resultTargets.get(plan.target),old=originals.get(plan.source);
-          if(afterSourceNames.has(plan.source) || !item || item.folder ||
-             item.copyPathVerified===false ||
-             (Number.isFinite(old.size)&&Number.isFinite(item.size)&&old.size!==item.size))
+          if(afterSourceNames.has(plan.source) || !item ||
+             item.folder!==plan.folder || item.copyPathVerified===false ||
+             (!plan.folder && Number.isFinite(old.size)&&Number.isFinite(item.size)&&
+              old.size!==item.size))
             throw new Error('批量移动存在未核实项目：'+fileName(plan.source));
           results.push({...item,moveOutcome:'moved'});
         }
@@ -1016,12 +1065,14 @@
           taskId:activeCopySession?.taskId,count:plans.length,requestMs,monitorMs,
           verifyMs:Date.now()-verifyAt,totalMs:Date.now()-startedAt,
           polls,observedOwnTask:seen,observedDone:done,
-          strategy:'native-cr-source'});
+          strategy:'native-cr-source',batchMode,folderCount:plans.filter(p=>p.folder).length,
+          folderVerification:'top-level-only'});
         return results;
       }catch(error) {
         diagnosticLog('ERROR','move.batch_failed',{
           taskId:activeCopySession?.taskId,count:plans.length,submitted,
-          message:error?.message,verification:'all-items-uncertain-after-submit'});
+          message:error?.message,batchMode,
+          verification:'all-items-uncertain-after-submit'});
         if(submitted)throw new Error('原生批量移动可能已提交，整批结果待核实；禁止自动重试或转为串行。详情：'+String(error?.message||error));
         throw error;
       }finally{stop();}
@@ -1711,7 +1762,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.11.7';
+  const DIAGNOSTIC_VERSION='0.2.11.8';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -2226,13 +2277,14 @@
       {source:item.source,folder:item.folder},task.destination))) {
       throw new Error('恢复任务包含不安全或自包含的目标目录');
     }
-    if(task.batchMode!==undefined && task.batchMode!=='native-move-files')
+    if(task.batchMode!==undefined &&
+       !['native-move-files','native-move-mixed'].includes(task.batchMode))
       throw new Error('未知的原生批量移动模式');
-    if(task.batchMode==='native-move-files') {
+    if(['native-move-files','native-move-mixed'].includes(task.batchMode)) {
       const plans=items.map(item=>({type:'move',source:item.source,folder:item.folder,
         destinationDir:task.destination,
         target:task.destination+'/'+fileName(item.source),conflictPolicy:task.conflictPolicy}));
-      if(operation!=='move' || !nativeMoveBatchEligible(plans))
+      if(operation!=='move' || nativeMoveBatchMode(plans)!==task.batchMode)
         throw new Error('持久化批量移动签名不匹配');
     }
     return {
@@ -2748,9 +2800,9 @@
     for(let i=0;i<plans.length;i++) {
       const plan=plans[i],item=job.record.items[i];
       const target=targetEntries.get(plan.target);
-      if(sourceNames.has(plan.source) || !target || target.folder ||
-         target.copyPathVerified===false ||
-         (Number.isFinite(item.size) && Number.isFinite(target.size) &&
+      if(sourceNames.has(plan.source) || !target ||
+         target.folder!==plan.folder || target.copyPathVerified===false ||
+         (!plan.folder && Number.isFinite(item.size) && Number.isFinite(target.size) &&
           item.size!==target.size))
         throw new Error('批量恢复仍存在未核实文件');
     }
@@ -2777,7 +2829,8 @@
       throw error;
     }
     diagnosticLog('INFO','queue.batch_recovery_verified',{
-      taskId:job.taskId,count:plans.length,mode:'native-cr-source'});
+      taskId:job.taskId,count:plans.length,mode:'native-cr-source',
+      batchMode:job.record.batchMode,folderVerification:'top-level-only'});
     job.recoveryMonitoring=false;
     job.recoveryMonitorIndex=-1;
     job.recoveryBatch=false;
@@ -2872,7 +2925,7 @@
     } catch(error){copyPersistenceFailure(error);}
   }
   async function executeRecoveredCopyJob(job) {
-    if(job.record.batchMode==='native-move-files') {
+    if(['native-move-files','native-move-mixed'].includes(job.record.batchMode)) {
       // A batch that never reached native submission may be manually resumed.
       // Resume such a record via the conservative per-item path, removing the
       // batch marker BEFORE any single-item intent is persisted; otherwise
@@ -5988,12 +6041,14 @@
       if(destroyed || closed) return;
       // Unraid itself supports CR-joined sources. Only the narrow, verified
       // all-regular-file shape opts in; all other jobs keep the serial path.
-      const groupedMove=isMove && nativeMoveBatchEligible(plans);
+      const batchMoveMode=isMove?nativeMoveBatchMode(plans):null;
+      const groupedMove=!!batchMoveMode;
       batch.nativeGroup=groupedMove;
       if(isMove)diagnosticLog('INFO','move.batch_strategy',{
         taskId:copyJob.taskId,count:plans.length,
-        strategy:groupedMove?'native-cr-source':'serial',
-        reason:groupedMove?'eligible':'not-eligible'});
+        strategy:groupedMove?'native-cr-source':'serial',batchMode:batchMoveMode,
+        folderCount:plans.filter(p=>p.folder).length,
+        reason:batchMoveMode||nativeMoveFallbackReason(plans)});
       batch.started=true;
       batch.phase='copying';
       busy=true;
@@ -6011,7 +6066,7 @@
       if(groupedMove) {
         // A single native request cannot safely stop between individual files.
         cancel.hidden=true;
-        batchNote.textContent='整批文件由 Unraid 一次处理；无法逐文件停止。异常时请在 NAS 核实整批结果，不要重试。';
+        batchNote.textContent='Unraid 将一次处理整批项目；无法逐项停止。文件夹仅核对顶层位置，内部内容请自行核验。异常时不要重试。';
       }
       background.hidden=false;
       dismiss.title='后台运行';
@@ -6029,7 +6084,7 @@
           batch.currentIndex=0;
           batch.currentPercent=null;
           batch.rows.forEach(row=>{row.status='copying';});
-          batchCurrentFile.textContent='正在批量移动 '+plans.length+' 个文件';
+          batchCurrentFile.textContent='正在批量移动 '+plans.length+' 个项目';
           batchCurrentMetrics.hidden=false;
           batchEtaRow.hidden=true;
           renderBatchRows();
@@ -6037,12 +6092,12 @@
           // The marker and ALL not-submitted statuses are recorded in ONE
           // snapshot. No native write occurs before the second durable write
           // changes every entry to submission-intent / intent-saved.
-          copyJob.record.batchMode='native-move-files';
+          copyJob.record.batchMode=batchMoveMode;
           await copyBatchCheckpoint(copyJob,'checking','not-submitted');
           const results=await moveNativeBatch(plans,(message,phase,info)=>{
             copyJobSignal(copyJob,phase,info);
             if(phase==='checking')batchCurrentInfo.textContent='正在核对整批源文件与目标目录…';
-            if(phase==='verifying')batchCurrentInfo.textContent='正在核对全部 '+plans.length+' 个文件…';
+            if(phase==='verifying')batchCurrentInfo.textContent='正在核对全部 '+plans.length+' 个项目…';
             if(info?.filename)batchCurrentFile.textContent='当前文件：'+shortenCopyName(info.filename,90);
             renderBatchProgress();
           },control,async()=>copyBatchCheckpoint(copyJob,'submission-intent','intent-saved'));
