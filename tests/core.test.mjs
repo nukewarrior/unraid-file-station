@@ -2476,3 +2476,103 @@ test('v0.2.11.5 页面卸载不提前释放正在运行或待核实队列的租�
   assert.match(part,/!copyQueueNeedsOwnership\(\)/);
   assert.match(part,/copyPersistTail\.then\(\(\)=>persistentCopyStore\.release\(copyOwnerId\)\)/);
 });
+
+
+function movePollingHarness({activeReads=0,done=true,mismatch=false,moveFiles=true}={}){
+  const start=script.indexOf('  function matchesMoveTask(');
+  const end=script.indexOf('  function matchesDeleteTask(',start);
+  assert.ok(start>=0 && end>start);
+  const plan={type:'move',source:'/mnt/user/TimeMachine/notes.txt',
+    destinationDir:'/mnt/user/downloads',target:'/mnt/user/downloads/notes.txt',
+    folder:false,conflictPolicy:'fail'};
+  let time=10000,submitted=0,reads=0,subscriber=null,moved=false,closed=false;
+  const intervals=[],diagnostics=[];
+  const origin={path:plan.source,name:'notes.txt',folder:false,size:2048};
+  const target={path:plan.target,name:'notes.txt',folder:false,size:2048};
+  const context={
+    MOVE_ENABLED:true,isDemo:false,
+    withNativeWriteLock:async operation=>operation(),
+    safeWritePath:()=>true,copyDestinationAllowed:()=>true,
+    fileName:path=>path.slice(path.lastIndexOf('/')+1),
+    parentPath:path=>path.slice(0,path.lastIndexOf('/')),
+    listDirectory:async path=>path==='/mnt/user/TimeMachine'?
+      (moved?[]:[origin]):(moved?[target]:[]),
+    readNativeActive:async()=>{
+      if(!submitted)return null;
+      reads++;
+      return reads<=activeReads?{
+        action:mismatch?'8':'9',
+        source:plan.source,target:plan.destinationDir+'/'
+      }:null;
+    },
+    nativeCsrfToken:()=>{},
+    observeNativeProgress:listener=>{subscriber=listener;return()=>{closed=true;};},
+    nativeCopyProgressPayload:()=>null,
+    parseRsyncProgress:()=>({}),stripNativeStatusHtml:x=>x,
+    postNativeControl:async payload=>{
+      assert.equal(payload.mode,'file');
+      assert.equal(payload.action,'9','只能使用已有的 Unraid 原生 rsync 移动');
+      submitted++;
+      moved=moveFiles;
+      if(done)subscriber({done:1});
+      return '';
+    },
+    waitNative:async ms=>{intervals.push(ms);time+=ms;},
+    Date:{now:()=>time},
+    diagnosticLog:(level,code,details)=>diagnostics.push({level,code,details})
+  };
+  vm.runInNewContext(script.slice(start,end),context);
+  return {plan,intervals,diagnostics,move:()=>context.moveNativeEntry(plan),
+    get reads(){return reads;},get submitted(){return submitted;},
+    get closed(){return closed;},get time(){return time;}};
+}
+
+test('v0.2.11.6 快速移动轮询：仍需两次空闲和 done 证据，缩短固定等待',async()=>{
+  const harness=movePollingHarness();
+  const result=await harness.move();
+  assert.equal(result.moveOutcome,'moved');
+  assert.deepEqual(harness.intervals,[200,200]);
+  assert.equal(harness.reads,2);
+  const verified=harness.diagnostics.find(event=>event.code==='move.verified');
+  assert.equal(verified.details.monitorMs,400);
+  assert.equal(verified.details.polls,2);
+  assert.equal(verified.details.observedDone,true);
+  assert.equal(verified.details.observedOwnTask,false);
+  assert.equal(harness.submitted,1);
+  assert.equal(harness.closed,true);
+});
+
+test('v0.2.11.6 长移动自动降频；有匹配原生任务才能在缺失 done 时结束',async()=>{
+  const harness=movePollingHarness({activeReads:17,done:false});
+  await harness.move();
+  assert.ok(harness.intervals.includes(700),'超过 3 秒应恢复 700ms 的低频轮询');
+  assert.deepEqual(harness.intervals.slice(-2),[700,700]);
+  const verified=harness.diagnostics.find(event=>event.code==='move.verified');
+  assert.equal(verified.details.observedOwnTask,true);
+  assert.equal(verified.details.observedDone,false);
+  assert.equal(verified.details.polls,19);
+});
+
+test('v0.2.11.6 未收到完成事件且未匹配原生任务时保持时间宽限、拒绝虚报成功',async()=>{
+  const harness=movePollingHarness({activeReads:0,done:false});
+  await assert.rejects(harness.move(),/结果不确定.*未观察到原生移动任务/);
+  assert.ok(harness.time>=13500,'不能把五次快速轮询当作原有启动宽限');
+  assert.ok(harness.reads>5);
+  assert.ok(!harness.diagnostics.some(event=>event.code==='move.verified'));
+  assert.equal(harness.diagnostics.find(event=>event.code==='move.failed').details.submitted,true);
+  assert.equal(harness.submitted,1,'不应自动重发移动请求');
+  assert.equal(harness.closed,true);
+});
+
+test('v0.2.11.6 原生任务归属不匹配或者结果未核实不得标记完成',async()=>{
+  for(const opts of [
+    {activeReads:1,done:false,mismatch:true},
+    {done:true,moveFiles:false}
+  ]){
+    const harness=movePollingHarness(opts);
+    await assert.rejects(harness.move(),/结果不确定/);
+    assert.equal(harness.diagnostics.some(event=>event.code==='move.verified'),false);
+    assert.equal(harness.submitted,1);
+    assert.equal(harness.closed,true);
+  }
+});
