@@ -1,10 +1,10 @@
 # Unraid File Station
 
-> **当前开发版本：v0.2.11.0（移动与原生永久删除开发预览）**。移动/删除属于高风险写入操作，尚待 Unraid 7.2.2 实机专项验收。首次仅在可丢弃的测试共享执行，重要资料请勿试用。
+> **当前开发版本：v0.2.11.1（移动与原生永久删除开发预览）**。移动/删除属于高风险写入操作，尚待 Unraid 7.2.2 实机专项验收。首次仅在可丢弃的测试共享执行，重要资料请勿试用。
 
 在 **Unraid WebGUI** 内提供接近 Synology DSM File Station 的文件管理体验，同时保留 Unraid 的顶部导航、Shares 设置页以及原生文件管理器。
 
-> **开发状态：v0.2.11.0**。v0.2.9 增加安全移动，v0.2.10 增加原生永久删除及任务恢复；新写入操作待真实 NAS 验收。
+> **开发状态：v0.2.11.1**。v0.2.9 增加安全移动，v0.2.10 增加原生永久删除及任务恢复；新写入操作待真实 NAS 验收。
 >
 > 项目与 Unraid、Synology 均无官方关联。设计灵感来自 Synology DSM File Station。
 
@@ -550,7 +550,7 @@
 
 1. 在浏览器中安装 Tampermonkey 或其他兼容的用户脚本管理器。
 2. 打开 [Unraid File Station UserScript（开发分支 Raw）](https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js) 安装脚本。已有安装若无法自动更新，可重新打开这个链接并在 Tampermonkey 中选择更新已有脚本。
-   当前 `@version` 为 `0.2.11.0`，版本检查和下载均指向上述地址。
+   当前 `@version` 为 `0.2.11.1`，版本检查和下载均指向上述地址。
 3. **建议在用户脚本管理器中将匹配地址收窄为自己的 NAS 主机名或 IP。** 默认规则匹配任何主机上的 `/Shares*` 路径，仅为兼容不同 Unraid 主机名。
 4. 打开 Unraid 7.2.2 的 **SHARES** 页，点击共享名称左边的蓝色浏览图标；或者点击 Shares 下方新出现的 **FILE STATION** 按钮。
 5. File Station 右上角的 **返回原生** 可以恢复原生文件管理页面；原生页面上会有 **打开 File Station** 按钮用于切回。
