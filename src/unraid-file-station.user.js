@@ -2623,6 +2623,19 @@
     const matches=[];
     for(const job of copyJobs) {
       if(!job.recovered)continue;
+      const grouped=savedMoveBatchPlans(job.record);
+      if(grouped) {
+        // One native CR-joined task owns ALL entries. Never mistake any one
+        // source for an independently retryable task after a page reload.
+        const ambiguous=job.record.items.every(item=>
+          ['intent-saved','unknown'].includes(item.submission) &&
+          ['submission-intent','copying','verifying','uncertain'].includes(item.status));
+        if(ambiguous && matchesMoveBatchTask(active,grouped))
+          matches.push({job,index:-1,batch:true,
+            signature:{folder:false,source:grouped.map(p=>p.source).join('\r'),
+              destinationDir:job.destination}});
+        continue;
+      }
       for(let i=0;i<job.record.items.length;i++){
         const item=job.record.items[i];
         if(!['intent-saved','unknown'].includes(item.submission) ||
@@ -2638,10 +2651,12 @@
       diagnosticLog('WARN','queue.recovery_match',{matched:matches.length,hasActive:!!active});
       return;
     }
-    const {job,index,signature}=matches[0];
-    diagnosticLog('INFO','queue.recovery_attached',{taskId:job.taskId,itemIndex:index});
+    const {job,index,signature,batch=false}=matches[0];
+    diagnosticLog('INFO','queue.recovery_attached',{
+      taskId:job.taskId,itemIndex:index,batch,count:batch?job.record.items.length:1});
     job.recoveryMonitoring=true;
     job.recoveryMonitorIndex=index;
+    job.recoveryBatch=batch;
     job.status='running';
     job.phase='copying';
     job.percent=null;
@@ -2690,7 +2705,8 @@
           // native progress channel must also have reported completion.
           if(finishedEvent && sameTaskObserved) {
             try {
-              await verifyRecoveredNativeCopy(job,index);
+              if(batch)await verifyRecoveredNativeBatch(job);
+              else await verifyRecoveredNativeCopy(job,index);
               return;
             } catch(_) { /* Inconclusive or concurrent writes: mark uncertain. */ }
           }
@@ -2703,7 +2719,8 @@
       if(!destroyed && job.recoveryMonitoring) {
         job.recoveryMonitoring=false;
         job.recoveryMonitorIndex=-1;
-        diagnosticLog('WARN','queue.recovery_uncertain',{taskId:job.taskId,itemIndex:index,
+        job.recoveryBatch=false;
+        diagnosticLog('WARN','queue.recovery_uncertain',{taskId:job.taskId,itemIndex:index,batch,
           hadDone:finishedEvent,errorEvent,matched:sameTaskObserved});
         job.status='uncertain';
         job.phase='uncertain';
@@ -2714,6 +2731,60 @@
         updateCopyTaskButton();
       }
     }
+  }
+  async function verifyRecoveredNativeBatch(job) {
+    const plans=savedMoveBatchPlans(job.record);
+    if(!plans || destroyed)throw new Error('无法恢复不可信的原生批量移动');
+    const [sources,targets]=await Promise.all([
+      listDirectory(parentPath(plans[0].source)),listDirectory(job.destination)
+    ]);
+    const sourceNames=new Set(sources.map(entry=>entry.path));
+    const targetEntries=new Map(targets.map(entry=>[entry.path,entry]));
+    for(let i=0;i<plans.length;i++) {
+      const plan=plans[i],item=job.record.items[i];
+      const target=targetEntries.get(plan.target);
+      if(sourceNames.has(plan.source) || !target || target.folder ||
+         target.copyPathVerified===false ||
+         (Number.isFinite(item.size) && Number.isFinite(target.size) &&
+          item.size!==target.size))
+        throw new Error('批量恢复仍存在未核实文件');
+    }
+    await ensureCopyOwnership();
+    await copyPersistTail;
+    const saved=await persistentCopyStore.read();
+    if(!saved || JSON.stringify(saved.tasks)!==lastPersistedTasks)
+      throw new Error('批量恢复前队列快照发生变化');
+    const oldItems=job.record.items.map(item=>({...item}));
+    const oldStatus=job.record.status,oldUpdated=job.record.updatedAt;
+    const time=Date.now();
+    for(const item of job.record.items) {
+      item.status='success';
+      item.submission='confirmed';
+      item.updatedAt=time;
+    }
+    job.record.updatedAt=time;
+    job.record.status='success';
+    try {await persistCopyQueue();}
+    catch(error) {
+      job.record.items=oldItems;
+      job.record.status=oldStatus;
+      job.record.updatedAt=oldUpdated;
+      throw error;
+    }
+    diagnosticLog('INFO','queue.batch_recovery_verified',{
+      taskId:job.taskId,count:plans.length,mode:'native-cr-source'});
+    job.recoveryMonitoring=false;
+    job.recoveryMonitorIndex=-1;
+    job.recoveryBatch=false;
+    job.status='success';
+    job.phase='success';
+    job.speed='';
+    job.speedUpdatedAt=0;
+    copyQueuePaused=true;
+    copyRecoveryLocked=copyJobs.some(j=>j.recovered&&
+      (j.status==='queued'||j.status==='uncertain'||j.status==='running'));
+    if(!copyRecoveryLocked)copyQueuePaused=false;
+    updateCopyTaskButton();
   }
   async function verifyRecoveredNativeCopy(job,index) {
     const item=job.record.items[index];
@@ -2879,7 +2950,7 @@
     for(let i=0;i<job.record.items.length;i++){
       const item=job.record.items[i];
       const row=element('div','ufs-batch-preview-row');
-      const label=job.recoveryMonitoring && job.recoveryMonitorIndex===i?(job.record.operation==='delete'?'原生删除中':job.record.operation==='move'?'原生移动中':'原生复制中'):
+      const label=job.recoveryMonitoring && (job.recoveryBatch||job.recoveryMonitorIndex===i)?(job.record.operation==='delete'?'原生删除中':job.record.operation==='move'?'原生移动中':'原生复制中'):
         item.status==='success'?'已完成':
         item.status==='skipped'?'已忽略':
         item.status==='excluded'?'已核实并跳过':
