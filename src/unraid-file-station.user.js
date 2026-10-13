@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.10.1
+// @version      0.2.10.2
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
@@ -1548,7 +1548,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.8.0';
+  const DIAGNOSTIC_VERSION='0.2.10.2';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -2431,7 +2431,7 @@
   async function confirmRecoveredCopyQueue() {
     if(!copyRecoveryLocked || destroyed || !copyJobs.some(j=>j.recovered&&j.status==='queued'))return;
     if(copyJobs.some(j=>j.recovered&&j.recoveryMonitoring)) {
-      notify('当前原生复制仍在运行；等待其结束并核实后才能恢复队列');
+      notify('当前原生文件操作仍在运行；等待其结束并核实后才能恢复队列');
       return;
     }
     if(copyJobs.some(j=>j.recovered&&j.status==='uncertain')) {
@@ -2468,7 +2468,7 @@
     const overlay=element('div','ufs-dialog-overlay');
     const dialog=element('div','ufs-create-dialog ufs-copy-dialog');
     dialog.setAttribute('role','dialog');
-    dialog.setAttribute('aria-label','恢复复制任务详情');
+    dialog.setAttribute('aria-label',job.record.operation==='delete'?'恢复永久删除任务详情':job.record.operation==='move'?'恢复移动任务详情':'恢复复制任务详情');
     const h=element('div','ufs-create-head');
     h.append(element('h3','',job.record.operation==='delete'?'已保存永久删除任务':job.record.operation==='move'?'已保存移动任务':'已保存复制任务'));
     const close=element('button','ufs-create-dismiss','×');
@@ -2484,7 +2484,7 @@
     for(let i=0;i<job.record.items.length;i++){
       const item=job.record.items[i];
       const row=element('div','ufs-batch-preview-row');
-      const label=job.recoveryMonitoring && job.recoveryMonitorIndex===i?'原生复制中':
+      const label=job.recoveryMonitoring && job.recoveryMonitorIndex===i?(job.record.operation==='delete'?'原生删除中':job.record.operation==='move'?'原生移动中':'原生复制中'):
         item.status==='success'?'已完成':
         item.status==='skipped'?'已忽略':
         item.status==='excluded'?'已核实并跳过':
@@ -2492,7 +2492,7 @@
         ['intent-saved','unknown'].includes(item.submission)?'待核实':
         item.status==='queued'?'等待恢复':'需要检查';
       row.append(element('span','',item.name+' · '+label));
-      if(label==='原生复制中') row.append(element('span','ufs-batch-meta',
+      if(['原生复制中','原生移动中','原生删除中'].includes(label)) row.append(element('span','ufs-batch-meta',
         copyJobMeta(job)+(Number.isFinite(job.percent)?' · '+Math.floor(job.percent)+'%':'')));
       if((label==='待核实'||label==='需要检查') && job.status!=='running') {
         const skip=element('button','ufs-task-center-remove','已人工核实，跳过此项');
@@ -2839,7 +2839,7 @@
       confirm.addEventListener('click',()=>void confirmRecoveredCopyQueue());
       panel.append(confirm);
       panel.setAttribute('role','group');
-      panel.setAttribute('aria-label','复制队列手动恢复');
+      panel.setAttribute('aria-label','文件队列手动恢复');
       panel.dataset.pending=String(waiting);
       panel.dataset.uncertain=String(uncertain);
       panel.classList.add('ufs-task-recovery-actions');
@@ -2921,14 +2921,14 @@
     const waitingRestore=copyJobs.filter(job=>job.recovered&&job.status==='queued').length;
     const needsCheck=copyJobs.filter(job=>job.recovered&&job.status==='uncertain').length;
     const text=copyRecoveryLocked?
-      (active?.recoveryMonitoring?'原生复制中 · 队列暂停':
+      (active?.recoveryMonitoring?'原生文件操作中 · 队列暂停':
         needsCheck?'有 '+needsCheck+' 项任务待核实':'有 '+waitingRestore+' 项任务待恢复'):
       copyQueuePaused&&queued?'文件任务已暂停':
       active?copyJobPhaseLabel(active):
       queued?'等待中':complete?(copyJobs.some(job=>job.record?.operation==='delete')?'文件任务完成 ':'复制完成 ')+copyJobs.length+' 项':
       problems?(copyJobs.some(job=>job.status==='uncertain'||job.status==='stopped'||
-        (job.status==='failed'&&!job.preflightRejected))?'复制待核实':
-        '预检未通过'):'复制任务 '+copyJobs.length+' 项';
+        (job.status==='failed'&&!job.preflightRejected))?'文件任务待核实':
+        '预检未通过'):(copyJobs.some(job=>['move','delete'].includes(job.record?.operation))?'文件任务 ':'复制任务 ')+copyJobs.length+' 项';
     const signature=phase+'|'+Boolean(queued)+'|'+Boolean(active)+'|'+Boolean(needsCheck);
     // Keep the spinner node alive between rsync events and one-second TTL checks.
     if(button.dataset.renderKey!==signature) {
@@ -2972,7 +2972,7 @@
     const count=button.querySelector('.ufs-task-badge-wait span');
     if(count) count.textContent=String(queued);
     button.dataset.phase=phase;
-    button.title=(copyRecoveryLocked?'复制队列待手动恢复：':'复制任务：')+
+    button.title=(copyRecoveryLocked?'文件队列待手动恢复：':'文件任务：')+
       (active?'1 项运行中'+
       (currentCopySpeed(active)?'，速度 '+currentCopySpeed(active):'')+'，':'')+
       queued+' 项等待，'+copyJobs.length+' 项总计；点击查看';
@@ -5628,7 +5628,7 @@
     };
     const close=()=>{
       if(enqueuePending)return;
-      if(job && ['queued','running'].includes(job.status)){
+      if(job && ['queued','running'].includes(job.status) && !['success','stopped'].includes(job.phase)){
         overlay.remove();restore();return;
       }
       closed=true;overlay.remove();
