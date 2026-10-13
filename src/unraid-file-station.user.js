@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.11.2
+// @version      0.2.11.3
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -1552,7 +1552,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.11.2';
+  const DIAGNOSTIC_VERSION='0.2.11.3';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -3740,12 +3740,12 @@
       safeWritePath(destination+'/'+item.name));
   }
   function dragMoveHover(path) {
-    for(const node of $('[data-ufs-drop-path]',app))
+    for(const node of $$('[data-ufs-drop-path]',app))
       node.classList.remove('ufs-drop-valid','ufs-drop-invalid');
     const session=dragMoveSession;
     if(!session?.active || !path)return;
     const valid=canDropMoveAt(path,session);
-    for(const node of $('[data-ufs-drop-path]',app))
+    for(const node of $$('[data-ufs-drop-path]',app))
       if(node.dataset.ufsDropPath===path)
         node.classList.add(valid?'ufs-drop-valid':'ufs-drop-invalid');
   }
@@ -3756,7 +3756,7 @@
     dragMoveSession=null;
     session.ghost?.remove();
     app?.classList.remove('ufs-drag-active');
-    for(const node of $('[data-ufs-drop-path],.ufs-drag-source',app))
+    for(const node of $$('[data-ufs-drop-path],.ufs-drag-source',app))
       node.classList.remove('ufs-drop-valid','ufs-drop-invalid','ufs-drag-source');
     try { if(app.hasPointerCapture(session.pointerId))app.releasePointerCapture(session.pointerId); }
     catch (_) { /* Pointer may already have been released by the browser. */ }

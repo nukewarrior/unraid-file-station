@@ -2168,7 +2168,7 @@ test('v0.2.7.1 刷新后仅重新观察严格匹配的原生任务，无法确�
 test('v0.2.7.2 Tampermonkey 自动更新元数据与脚本版本保持一致',()=>{
   const header=script.split('// ==/UserScript==',1)[0];
   const updateUrl='https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js';
-  assert.match(header,/^\/\/ @version\s+0\.2\.11\.2$/m);
+  assert.match(header,/^\/\/ @version\s+0\.2\.11\.3$/m);
   assert.ok(header.split('\n').includes('// @updateURL    '+updateUrl));
   assert.ok(header.split('\n').includes('// @downloadURL  '+updateUrl));
   assert.equal(header.match(/^\/\/ @version\s+/gm)?.length,1);
@@ -2343,6 +2343,8 @@ test('v0.2.11 Pointer 拖动冻结多选，不在松手时直接执行原生写�
   assert.match(script,/function showCopyDialog\(entryOrEntries,operation='copy',options=\{\}\)/);
   assert.match(script,/await loadChildren\(PREFIX\);\s*for\(const child of parents\)/);
   assert.match(script,/\$\$\('\.ufs-tree-row\[data-ufs-drop-path\]',app\)\.some/);
+  assert.equal((script.match(/for\(const node of \$\$\('\[data-ufs-drop-path\]',app\)\)/g)||[]).length,2);
+  assert.match(script,/for\(const node of \$\$\('\[data-ufs-drop-path\],\.ufs-drag-source',app\)\)/);
   assert.match(script,/pointercancel',dragMoveReset/);
   assert.match(script,/suppressDragMoveClick=true/);
   assert.match(script,/row\.dataset\.ufsDropPath=path/);
