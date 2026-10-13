@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.11.5
+// @version      0.2.11.6
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -892,6 +892,7 @@
          plan.target!==plan.destinationDir+'/'+fileName(plan.source) ||
          typeof plan.folder!=='boolean')throw new Error('不安全的移动计划');
       if(isDemo && window.__UFS_TEST_MODE__!==true)throw new Error('演示模式不能移动真实文件');
+      const startedAt=Date.now();
       progress('正在核对移动源与目标…','checking');
       const [sources,destinations]=await Promise.all([
         listDirectory(parentPath(plan.source)),listDirectory(plan.destinationDir)
@@ -914,28 +915,40 @@
       });
       try {
         submitted=true;
+        const requestStartedAt=Date.now();
         const response=await postNativeControl({mode:'file',
           action:plan.folder?'4':'9',title:encodeURIComponent('移动'),
           source:encodeURIComponent(plan.source),target:encodeURIComponent(plan.destinationDir+'/'),
           hdlink:'',sparse:'',exist:'',zfs:''});
+        const requestMs=Date.now()-requestStartedAt;
         if(response.trim())throw new Error('原生接口返回非预期内容');
         progress('Unraid 正在移动文件…','copying');
-        let idle=0;const limit=Date.now()+6*60*60*1000;
+        let idle=0,polls=0;
+        const monitorStartedAt=Date.now();
+        const limit=monitorStartedAt+6*60*60*1000;
+        // Short native moves complete in under a second. Poll quickly for the
+        // first 3s, then revert to the original 700ms cadence for long jobs.
+        // Keep TWO consecutive idle reads and positive own-task/done evidence.
+        // Startup timeout is elapsed-time based, not five faster poll attempts.
         while(Date.now()<limit){
-          await waitNative(700);
+          await waitNative(Date.now()-monitorStartedAt<3000?200:700);
           if(remoteError)throw new Error('Unraid 报告移动错误：'+remoteError);
           const current=await readNativeActive();
+          polls++;
           if(current){
             if(!matchesMoveTask(current,plan))throw new Error('无法确认当前原生任务归属');
             seen=true;control.observedOwnTask=true;idle=0;
           }else{
             idle++;
             if(idle>=2 && (seen||done))break;
-            if(idle>=5&&!seen&&!done)throw new Error('未观察到原生移动任务');
+            if(!seen && !done && Date.now()-monitorStartedAt>=3500)
+              throw new Error('未观察到原生移动任务');
           }
         }
         if(idle<2 || !(seen||done) || remoteError)throw new Error('无法确认移动已结束');
+        const monitorMs=Date.now()-monitorStartedAt;
         progress('正在核对移动结果…','verifying');
+        const verificationStartedAt=Date.now();
         const [afterSource,afterDestination]=await Promise.all([
           listDirectory(parentPath(plan.source)),listDirectory(plan.destinationDir)
         ]);
@@ -945,7 +958,9 @@
           throw new Error('源仍存在或目标未核实，移动可能不完整');
         if(!plan.folder && Number.isFinite(origin.size)&&Number.isFinite(target.size)&&
            origin.size!==target.size)throw new Error('移动前后文件大小不同');
-        diagnosticLog('INFO','move.verified',{source:plan.source,target:plan.target});
+        diagnosticLog('INFO','move.verified',{source:plan.source,target:plan.target,
+          requestMs,monitorMs,verifyMs:Date.now()-verificationStartedAt,
+          totalMs:Date.now()-startedAt,polls,observedOwnTask:seen,observedDone:done});
         return {...target,moveOutcome:'moved'};
       }catch(error){
         diagnosticLog('ERROR','move.failed',{submitted,message:error?.message});
@@ -1552,7 +1567,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.11.5';
+  const DIAGNOSTIC_VERSION='0.2.11.6';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
