@@ -3274,7 +3274,10 @@ test('v0.2.11 拖动多个选中项目到左侧 Share：仅预选目标，不直
   while(moved.length<2 && Date.now()<timeout)
     await new Promise(resolve=>setTimeout(resolve,150));
   assert.equal(moved.length,2);
-  assert.equal(nativePosts.filter(item=>item.mode==='file'&&['4','9'].includes(item.action)).length,2);
+  const nativeMovePosts=nativePosts.filter(item=>item.mode==='file'&&['4','9'].includes(item.action));
+  assert.equal(nativeMovePosts.length,1,'一个文件夹加一个文件应合并为一次原生 Move');
+  assert.equal(nativeMovePosts[0].action,'9');
+  assert.equal(decodeURIComponent(nativeMovePosts[0].source).split('\r').length,2);
   assert.equal(errors.length,0,errors.join('\n'));
 });
 
