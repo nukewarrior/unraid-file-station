@@ -198,7 +198,7 @@ async function pageFor(t, options = {}) {
     if (mode==='read') {
       const busy=options.nativeBusy ?
         JSON.stringify({action:'6',source:'/mnt/user/TimeMachine/backup',target:''}) :
-        latestMutation && ++mutationReads<=1 ? JSON.stringify(latestMutation):
+        latestMutation && ++mutationReads<=(options.nativeMutationHoldReads??1) ? JSON.stringify(latestMutation):
         latestCopy && (options.longCopy ? !copyStopped :
           ++copyActiveReads <= (options.firstCopyHoldReads && copied.length===1 ? options.firstCopyHoldReads : 1)) ? JSON.stringify({
           action:latestCopy.folder?'3':'8',source:latestCopy.source,
@@ -240,9 +240,14 @@ async function pageFor(t, options = {}) {
       const source=decodeURIComponent(body.get('source')||'');
       const destinationDir=decodeURIComponent(body.get('target')||'').replace(/\/$/,'');
       const folder=action==='4'||action==='1';
-      if(action==='4'||action==='9')
-        moved.push({source,destinationDir,folder,name:source.split('/').pop()});
-      else deleted.push({source,folder});
+      if(action==='4'||action==='9') {
+        // Browse.page separates multi-selection with a literal CR. These are
+        // still ONE native action and ONE mode=read task ownership signature.
+        for(const path of source.split('\r')) {
+          if(options.partialNativeMove && path.split('/').pop()==='another.mkv')continue;
+          moved.push({source:path,destinationDir,folder,name:path.split('/').pop()});
+        }
+      } else deleted.push({source,folder});
       latestMutation={action,source,target:action==='4'||action==='9'?destinationDir+'/':''};
       mutationReads=0;
       await route.fulfill({status:200,body:''});
@@ -3563,7 +3568,7 @@ test('v0.2.11.6 移动完成诊断提供可归因的分段耗时，不重复提�
   await center.getByRole('button',{name:'导出 JSON'}).click();
   const file=await pending;
   const report=JSON.parse(readFileSync(await file.path(),'utf8'));
-  assert.equal(report.version,'0.2.11.6');
+  assert.equal(report.version,'0.2.11.7');
   const moves=report.events.filter(e=>e.code==='move.verified');
   assert.equal(moves.length,1);
   const details=moves[0].details;
@@ -3574,5 +3579,81 @@ test('v0.2.11.6 移动完成诊断提供可归因的分段耗时，不重复提�
   assert.equal(typeof details.observedDone,'boolean');
   assert.equal(moved.length,1);
   assert.equal(nativePosts.filter(x=>x.mode==='file'&&x.action==='9').length,1);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+
+test('v0.2.11.7 同目录两普通文件一次原生批量 Move，所有项目成功且导出诊断',async t=>{
+  const {page,errors,nativePosts,moved}=await pageFor(t,{
+    extraEntries:{'/mnt/user/TimeMachine':[['another.mkv',false]]}
+  });
+  await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).first().waitFor();
+  await page.locator('.ufs-entry[data-ufs-file="/mnt/user/TimeMachine/notes.txt"]').click();
+  await page.locator('.ufs-entry[data-ufs-file="/mnt/user/TimeMachine/another.mkv"]')
+    .click({modifiers:['Control']});
+  await page.locator('.ufs-operations').click();
+  await page.getByRole('menuitem',{name:'移动到…'}).click();
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit',{hasText:'开始移动'}).click();
+  await page.locator('.ufs-copy-submit',{hasText:'完成'}).waitFor({timeout:25000});
+  const writes=nativePosts.filter(x=>x.mode==='file');
+  assert.equal(writes.length,1,'多个文件应只有一次 POST');
+  assert.equal(writes[0].action,'9');
+  assert.equal(writes[0].exist,'');
+  assert.equal(decodeURIComponent(writes[0].source).split('\r').length,2);
+  assert.equal(moved.length,2);
+  assert.equal(await page.locator('.ufs-batch-percent').innerText(),'100%');
+  await page.locator('.ufs-batch-open-list').last().click();
+  assert.equal(await page.locator('.ufs-batch-list-row[data-status="success"]').count(),2);
+  await page.locator('.ufs-batch-list-back').click();
+  await page.locator('.ufs-copy-submit',{hasText:'完成'}).click();
+  await page.locator('.ufs-diagnostic-button').click();
+  const pending=page.waitForEvent('download');
+  await page.getByRole('dialog',{name:'File Station 诊断中心'})
+    .getByRole('button',{name:'导出 JSON'}).click();
+  const dl=await pending,diagnostic=JSON.parse(readFileSync(await dl.path(),'utf8'));
+  const audit=diagnostic.events.filter(e=>e.code==='move.batch_verified');
+  assert.equal(audit.length,1);
+  assert.equal(audit[0].details.count,2);
+  assert.equal(audit[0].details.strategy,'native-cr-source');
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.11.7 文件夹+文件混合选择回退为两次串行原生移动',async t=>{
+  const {page,nativePosts,moved,errors}=await pageFor(t);
+  await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).first().waitFor();
+  await page.locator('.ufs-entry[data-ufs-file="/mnt/user/TimeMachine/notes.txt"]').click();
+  await page.locator('.ufs-entry[data-ufs-file="/mnt/user/TimeMachine/Photos"]')
+    .click({modifiers:['Control']});
+  await page.locator('.ufs-operations').click();
+  await page.getByRole('menuitem',{name:'移动到…'}).click();
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit',{hasText:'开始移动'}).click();
+  await page.locator('.ufs-copy-submit',{hasText:'完成'}).waitFor({timeout:25000});
+  const native=nativePosts.filter(x=>x.mode==='file');
+  assert.equal(native.length,2);
+  assert.deepEqual(native.map(x=>x.action).sort(),['4','9']);
+  assert.equal(moved.length,2);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.11.7 原生批量移动目标少文件，整批待核实且不能串行重发',async t=>{
+  const {page,nativePosts,errors}=await pageFor(t,{
+    extraEntries:{'/mnt/user/TimeMachine':[['another.mkv',false]]},
+    partialNativeMove:true
+  });
+  await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).first().click();
+  await page.locator('.ufs-entry[data-ufs-file="/mnt/user/TimeMachine/another.mkv"]')
+    .click({modifiers:['Control']});
+  await page.locator('.ufs-operations').click();
+  await page.getByRole('menuitem',{name:'移动到…'}).click();
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit',{hasText:'开始移动'}).click();
+  await page.locator('.ufs-copy-submit',{hasText:'完成'}).waitFor({timeout:25000});
+  const native=nativePosts.filter(x=>x.mode==='file');
+  assert.equal(native.length,1);
+  assert.equal(native[0].action,'9');
+  await page.locator('.ufs-batch-open-list').last().click();
+  assert.equal(await page.locator('.ufs-batch-list-row[data-status="uncertain"]').count(),2);
   assert.equal(errors.length,0,errors.join('\n'));
 });
