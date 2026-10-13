@@ -15,7 +15,8 @@ function createCopyCleanupHarness(statuses, overrides = {}) {
     initializeCopyPersistence:async()=>{},ensureCopyOwnership:async()=>{},
     persistentCopyStore:{read:async()=>({tasks:[]})},
     persistCopyQueue:async()=>{writes.push(jobs.map(job=>job.id));},
-    updateCopyTaskButton:()=>{},notify:message=>messages.push(message),
+    updateCopyTaskButton:()=>{},releaseIdleCopyOwnership:async()=>false,
+    notify:message=>messages.push(message),
     ...overrides
   };
   const begin = script.indexOf('  async function clearCompletedCopyJobs(');
@@ -2168,7 +2169,7 @@ test('v0.2.7.1 刷新后仅重新观察严格匹配的原生任务，无法确�
 test('v0.2.7.2 Tampermonkey 自动更新元数据与脚本版本保持一致',()=>{
   const header=script.split('// ==/UserScript==',1)[0];
   const updateUrl='https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js';
-  assert.match(header,/^\/\/ @version\s+0\.2\.11\.4$/m);
+  assert.match(header,/^\/\/ @version\s+0\.2\.11\.5$/m);
   assert.ok(header.split('\n').includes('// @updateURL    '+updateUrl));
   assert.ok(header.split('\n').includes('// @downloadURL  '+updateUrl));
   assert.equal(header.match(/^\/\/ @version\s+/gm)?.length,1);
@@ -2372,4 +2373,76 @@ test('v0.2.11.4 拖放目标异步预选失败不可启用提交按钮',()=>{
   assert.match(script,/diagnosticLog\('WARN','dialog\.move_target_failed'/);
   assert.match(script,/logMoveDialog\('dialog\.move_submit_blocked'/);
   assert.match(script,/logMoveDialog\('dialog\.move_target_manual'/);
+});
+
+
+test('v0.2.11.5 安全空闲才可释放队列租约，运行和待核实状态不可释放',async()=>{
+  const begin=script.indexOf('  function copyQueueNeedsOwnership()');
+  const end=script.indexOf('  function copyPersistenceFailure(',begin);
+  assert.ok(begin>=0 && end>begin);
+  const jobs=[{status:'success',record:{items:[{status:'success',submission:'confirmed'}]}}];
+  const releases=[];
+  const ctx={
+    copyQueueRunning:false,copyCleanupPending:false,copyOwnerReservations:0,
+    copyQueuePaused:false,copyRecoveryLocked:false,copyJobs:jobs,destroyed:false,
+    copyOwnerHeld:true,persistentCopyStore:{
+      release:async()=>{releases.push(1);return true;},
+      claim:async()=>true,inspect:async()=>null
+    },
+    copyLeaseTimer:null,copyLeaseRefreshPending:null,copyLeaseReleasePending:null,
+    copyPersistTail:Promise.resolve(),copyOwnerId:'ufs_test_lease_owner',
+    COPY_LEASE_TTL:30000,persistenceError:'',
+    diagnosticPathId:x=>'redacted_'+x.length,
+    diagnosticLog:()=>{},updateCopyTaskButton:()=>{},
+    setInterval:()=>1,clearInterval:()=>{},Date,Math,Promise,setTimeout
+  };
+  vm.runInNewContext(script.slice(begin,end),ctx);
+  assert.equal(ctx.copyQueueNeedsOwnership(),false);
+  ctx.copyOwnerReservations=1;
+  await ctx.releaseIdleCopyOwnership('pending');
+  assert.equal(releases.length,0);
+  ctx.copyOwnerReservations=0;
+  jobs.push({status:'uncertain',record:{items:[{status:'uncertain',submission:'intent-saved'}]}});
+  await ctx.releaseIdleCopyOwnership('uncertain');
+  assert.equal(releases.length,0);
+  jobs.pop();
+  assert.equal(await ctx.releaseIdleCopyOwnership('idle'),true);
+  assert.equal(releases.length,1);
+  assert.equal(ctx.copyOwnerHeld,false);
+});
+test('v0.2.11.5 AI Agent 摘要保留证据并区分观察与推断',()=>{
+  const begin=script.indexOf('  function diagnosticTriage(');
+  const end=script.indexOf('  function diagnosticMarkIssue()',begin);
+  assert.ok(begin>=0 && end>begin);
+  const ctx={Date};
+  vm.runInNewContext(script.slice(begin,end),ctx);
+  const now=Date.now();
+  const summary=ctx.diagnosticTriage([
+    {time:now-1000,eventId:'evt-1',code:'queue.lease_denied',
+      level:'WARN',details:{remainingMs:26000,holder:'hashed-holder'}},
+    {time:now-500,eventId:'evt-2',code:'dialog.move_enqueue_failed',
+      level:'WARN',details:{stage:'lease'}},
+    {time:now-100,eventId:'evt-3',code:'queue.lease_acquired',level:'INFO',details:{}}
+  ],{queue:{ownerHeld:true}},{state:'active',remainingMs:29000,ownerTag:'hashed'});
+  assert.equal(summary.schemaVersion,1);
+  assert.equal(summary.primaryIssue.code,'QUEUE_LEASE_DENIED');
+  assert.equal(summary.primaryIssue.outcome,'later_acquired');
+  assert.equal(summary.issues.length,2);
+  assert.equal(summary.timeline.length,3);
+  assert.match(summary.primaryIssue.observation,/不证明/);
+  assert.equal(summary.lease.ownerTag,'hashed');
+  assert.equal(summary.agentInstructions.verifyAgainst.includes('events'),true);
+});
+test('v0.2.11.5 先确认租约再切换等待界面，拒绝过期快照覆盖',()=>{
+  const begin=script.indexOf('    async function submitCopyJob()');
+  const end=script.indexOf("    form.addEventListener('submit',event=>{",begin);
+  const snippet=script.slice(begin,end);
+  assert.ok(snippet.indexOf("submit.textContent='正在检查队列…'")<
+    snippet.indexOf("heading.textContent=(isMove?'等待移动':'等待复制')"));
+  assert.match(snippet,/await ensureCopyOwnership\(\)/);
+  assert.match(snippet,/JSON\.stringify\(fresh\?\.tasks\|\|\[\]\)!==lastPersistedTasks/);
+  assert.match(snippet,/copyOwnerReservations--/);
+  assert.match(script,/queue\.snapshot_conflict/);
+  assert.match(script,/queue\.lease_denied/);
+  assert.match(script,/queue\.lease_released/);
 });

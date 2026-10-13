@@ -1,10 +1,10 @@
 # Unraid File Station
 
-> **当前开发版本：v0.2.11.4（移动与原生永久删除开发预览）**。移动/删除属于高风险写入操作，尚待 Unraid 7.2.2 实机专项验收。首次仅在可丢弃的测试共享执行，重要资料请勿试用。
+> **当前开发版本：v0.2.11.5（移动与原生永久删除开发预览）**。移动/删除属于高风险写入操作，尚待 Unraid 7.2.2 实机专项验收。首次仅在可丢弃的测试共享执行，重要资料请勿试用。
 
 在 **Unraid WebGUI** 内提供接近 Synology DSM File Station 的文件管理体验，同时保留 Unraid 的顶部导航、Shares 设置页以及原生文件管理器。
 
-> **开发状态：v0.2.11.4**。v0.2.9 增加安全移动，v0.2.10 增加原生永久删除及任务恢复；新写入操作待真实 NAS 验收。
+> **开发状态：v0.2.11.5**。v0.2.9 增加安全移动，v0.2.10 增加原生永久删除及任务恢复；新写入操作待真实 NAS 验收。
 >
 > 项目与 Unraid、Synology 均无官方关联。设计灵感来自 Synology DSM File Station。
 
@@ -14,7 +14,17 @@
 - 原生 rsync 移动（action 4/9），目标存在同名项目直接拒绝；暂不启用快速 mv、同名覆盖或文件夹合并。
 - 已提交的移动任务刷新后只读重连；结果不确定时不重发，后续队列必须人工恢复。
 
-## v0.2.11.4 — 拖拽移动弹窗可靠性
+## v0.2.11.5 — 安全释放队列租约与 AI Agent 诊断摘要
+
+- **空闲锁主动释放**：所有任务安全终结、队列快照完成持久化且无待恢复、待核实、排队及写入请求时，释放 IndexedDB `dispatcher` 租约并停止续期。活跃写入、等待确认和不确定状态绝不抢占或提前释放。
+- **先检查锁、再更新界面**：先验证独占租约和 IndexedDB 最新队列快照，再显示「已加入队列」。旧页面未过期租约会提示预计剩余时间；不会把其他标签页当作唯一原因。
+- **快照一致性**：新取得租约后也要比较 IndexedDB 与当前页面快照；不一致时拒绝覆盖并要求核实恢复任务。
+- **Agent 优先日志**：诊断 JSON 保持 `schemaVersion: 1` 向后兼容，新增顶层 `triage`：问题摘要、等级、发生次数、证据事件 ID、关键时间线、队列状态、租约剩余时间和排查建议。机器生成的诊断线索并非已确认根因，原始 `events` 仍保留。
+- 记录 `queue.lease_acquired`、`queue.lease_denied`、`queue.lease_released`、`queue.snapshot_conflict` 等事件；持有者仅输出本地盐匿名标识。
+
+**AI Agent 分析顺序**：优先 `triage.primaryIssue`、`triage.issues`，使用 `evidenceEventIds` 到 `events` 定位原始证据，再参考 `triage.timeline` 和 `triage.lease`。不得根据租约冲突直接认定用户开了多个标签页，也不要建议清空 IndexedDB 或强制解锁正在运行的任务。
+
+## v0.2.11.5 — 拖拽移动弹窗可靠性
 
 - 在拖拽引发的浏览器合成点击事件结束后打开现有移动窗口，消除可能造成的闪窗；遮罩只有真实按下和松开操作才能关闭弹窗。
 - 拖放目标会逐级读取并核实；期间显示「正在确认目标…」并禁用提交，成功后恢复「开始移动」，失败则保留弹窗、提示手动选目标。
@@ -556,7 +566,7 @@
 
 1. 在浏览器中安装 Tampermonkey 或其他兼容的用户脚本管理器。
 2. 打开 [Unraid File Station UserScript（开发分支 Raw）](https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js) 安装脚本。已有安装若无法自动更新，可重新打开这个链接并在 Tampermonkey 中选择更新已有脚本。
-   当前 `@version` 为 `0.2.11.4`，版本检查和下载均指向上述地址。
+   当前 `@version` 为 `0.2.11.5`，版本检查和下载均指向上述地址。
 3. **建议在用户脚本管理器中将匹配地址收窄为自己的 NAS 主机名或 IP。** 默认规则匹配任何主机上的 `/Shares*` 路径，仅为兼容不同 Unraid 主机名。
 4. 打开 Unraid 7.2.2 的 **SHARES** 页，点击共享名称左边的蓝色浏览图标；或者点击 Shares 下方新出现的 **FILE STATION** 按钮。
 5. File Station 右上角的 **返回原生** 可以恢复原生文件管理页面；原生页面上会有 **打开 File Station** 按钮用于切回。

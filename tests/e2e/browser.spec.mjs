@@ -3382,3 +3382,114 @@ test('v0.2.11.4 目标读取较慢时显示确认中并拦截过早提交',async
   await modal.getByRole('button',{name:'取消'}).click();
   assert.equal(errors.length,0,errors.join('\n'));
 });
+
+
+test('v0.2.11.5 租约冲突时移动弹窗稳定，导出 AI 诊断证据，解锁后可提交',async t=>{
+  const {page,errors,nativePosts,moved}=await pageFor(t);
+  await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).first().waitFor();
+  await page.evaluate(async()=>{
+    const db=await new Promise((resolve,reject)=>{
+      const r=indexedDB.open('ufs-copy-queue-v1',1);
+      r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);
+    });
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction('leases','readwrite');
+      tx.objectStore('leases').put({
+        key:'dispatcher',owner:'ufs_expired_tab_simulation',expiresAt:Date.now()+25000
+      });
+      tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error);
+    });
+    db.close();
+  });
+  await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).first().click();
+  await page.locator('.ufs-operations').click();
+  await page.getByRole('menuitem',{name:'移动到…'}).click();
+  const dialog=page.getByRole('dialog',{name:'移动到'});
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await dialog.locator('.ufs-copy-submit',{hasText:'开始移动'}).click();
+  await dialog.locator('.ufs-create-feedback',{hasText:'租约占用'}).waitFor({timeout:8000});
+  assert.equal(await dialog.isVisible(),true);
+  assert.equal(await dialog.locator('.ufs-copy-submit').isVisible(),true);
+  assert.equal(await dialog.locator('.ufs-batch-panel').count(),0);
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,0);
+  await page.locator('.ufs-diagnostic-button').click();
+  const diag=page.getByRole('dialog',{name:'File Station 诊断中心'});
+  const pending=page.waitForEvent('download');
+  await diag.getByRole('button',{name:'导出 JSON'}).click();
+  const file=await pending;
+  const report=JSON.parse(readFileSync(await file.path(),'utf8'));
+  assert.equal(report.triage.schemaVersion,1);
+  assert.equal(report.triage.issues.some(i=>i.code==='QUEUE_LEASE_DENIED'),true);
+  assert.equal(report.triage.timeline.some(i=>i.code==='queue.lease_denied'),true);
+  assert.equal(JSON.stringify(report).includes('ufs_expired_tab_simulation'),false);
+  await diag.getByRole('button',{name:'关闭',exact:true}).click().catch(async()=>{
+    await diag.locator('.ufs-diagnostic-head button').click();
+  });
+  await page.evaluate(async()=>{
+    const db=await new Promise((resolve,reject)=>{
+      const r=indexedDB.open('ufs-copy-queue-v1',1);
+      r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);
+    });
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction('leases','readwrite');
+      tx.objectStore('leases').delete('dispatcher');
+      tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error);
+    });
+    db.close();
+  });
+  await dialog.locator('.ufs-copy-submit',{hasText:'开始移动'}).click();
+  await dialog.locator('.ufs-copy-progress-panel[data-phase="success"]').waitFor({timeout:25000});
+  assert.equal(moved.length,1);
+  // Completed writes must relinquish their lease, rather than renewing forever.
+  await page.waitForFunction(async()=>{
+    const db=await new Promise((resolve,reject)=>{
+      const r=indexedDB.open('ufs-copy-queue-v1',1);
+      r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);
+    });
+    const lease=await new Promise((resolve,reject)=>{
+      const r=db.transaction('leases','readonly').objectStore('leases').get('dispatcher');
+      r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);
+    });
+    db.close();return !lease;
+  },null,{timeout:12000});
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.11.5 快照变化时拒绝覆盖，保留原记录且不向 NAS 发请求',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t);
+  await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).first().waitFor();
+  await page.evaluate(async()=>{
+    const db=await new Promise((resolve,reject)=>{
+      const r=indexedDB.open('ufs-copy-queue-v1',1);
+      r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);
+    });
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction('snapshots','readwrite');
+      const now=Date.now();
+      tx.objectStore('snapshots').put({key:'active',snapshot:{
+        schema:1,savedAt:now,tasks:[{
+          taskId:'copy_external_terminal',name:'外部历史任务',
+          destination:'/mnt/user/downloads',conflictPolicy:'skip',status:'success',
+          createdAt:now,updatedAt:now,
+          items:[{source:'/mnt/user/TimeMachine/notes.txt',folder:false,size:2048,
+            status:'success',submission:'confirmed',updatedAt:now}]
+        }]
+      }});
+      tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error);
+    });
+    db.close();
+  });
+  await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).first().click();
+  await page.locator('.ufs-operations').click();
+  await page.getByRole('menuitem',{name:'移动到…'}).click();
+  const dialog=page.getByRole('dialog',{name:'移动到'});
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await dialog.locator('.ufs-copy-submit',{hasText:'开始移动'}).click();
+  await dialog.locator('.ufs-create-feedback',{hasText:'队列记录已变更'}).waitFor({timeout:8000});
+  const snapshot=await readCopyTaskCenterSnapshot(page);
+  assert.equal(snapshot.tasks.length,1);
+  assert.equal(snapshot.tasks[0].taskId,'copy_external_terminal');
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,0);
+  assert.equal(await dialog.isVisible(),true);
+  assert.equal(errors.length,0,errors.join('\n'));
+});

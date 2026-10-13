@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.11.4
+// @version      0.2.11.5
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -1552,7 +1552,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.11.4';
+  const DIAGNOSTIC_VERSION='0.2.11.5';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -1749,19 +1749,138 @@
       }))
     };
   }
+
+  // Machine-first diagnosis: compact, evidence-linked and clearly separates
+  // observed failures from hypotheses. Source events remain available below.
+  function diagnosticTriage(events,snapshot,lease=null) {
+    const catalogue={
+      'queue.lease_denied':{
+        issue:'QUEUE_LEASE_DENIED',severity:'warning',
+        meaning:'队列租约申请被拒绝；不证明用户打开了多个 File Station 标签页',
+        checks:'检查 lease.remainingMs、页面刷新时间和空闲持锁；确认无运行及待核实任务后等待释放'
+      },
+      'queue.lease_lost':{
+        issue:'QUEUE_LEASE_LOST',severity:'critical',
+        meaning:'当前队列控制权丢失，后续任务暂停',
+        checks:'检查是否有其他页面写入；先核实原生任务和保存状态，不要强制抢锁'
+      },
+      'queue.snapshot_conflict':{
+        issue:'QUEUE_SNAPSHOT_CHANGED',severity:'critical',
+        meaning:'本地任务快照与 IndexedDB 最新记录不同，已阻止覆盖',
+        checks:'刷新并核实恢复队列；不要删除数据库或自动重试已提交操作'
+      },
+      'queue.persistence_failed':{
+        issue:'QUEUE_PERSISTENCE_FAILURE',severity:'critical',
+        meaning:'任务持久化失败，操作状态可能待核实',
+        checks:'先核对 IndexedDB 与 Unraid 原生任务结果，再决定是否恢复'
+      },
+      'queue.restore_failed':{
+        issue:'QUEUE_RESTORE_FAILURE',severity:'critical',
+        meaning:'已保存的队列无法读取',
+        checks:'检查 IndexedDB 可用性和 schema，不要直接清空数据'
+      },
+      'dialog.move_enqueue_failed':{
+        issue:'MOVE_SUBMISSION_REJECTED',severity:'warning',
+        meaning:'移动弹窗提交时没有成功入队',
+        checks:'查看同一 session 的 queue.lease_denied、queue.snapshot_conflict 和 details.stage'
+      },
+      'dialog.move_target_failed':{
+        issue:'MOVE_TARGET_INVALID',severity:'warning',
+        meaning:'拖放目标在异步读取或验证时失败',
+        checks:'检查文件夹存在性及目标验证过程；未入队就不应执行原生写入'
+      },
+      'javascript.error':{
+        issue:'JAVASCRIPT_ERROR',severity:'critical',
+        meaning:'脚本运行期间发生 JavaScript 错误',
+        checks:'查看 details.message 和堆栈，按 eventId 关联前后事件'
+      },
+      'javascript.unhandled_rejection':{
+        issue:'UNHANDLED_REJECTION',severity:'critical',
+        meaning:'发生未处理的异步异常',
+        checks:'检查异常信息和最近一次用户交互事件'
+      }
+    };
+    const focusMarker=[...events].reverse().find(e=>e.code==='user.issue_marker');
+    const end=focusMarker?.time??events.at(-1)?.time??Date.now();
+    const beginning=end-(focusMarker?3:15)*60*1000;
+    const relevant=events.filter(e=>e.time>=beginning && e.time<=end+15000);
+    const groups=new Map();
+    for(const event of relevant) {
+      const spec=catalogue[event.code];
+      if(!spec)continue;
+      const item=groups.get(spec.issue)||{
+        code:spec.issue,severity:spec.severity,observation:spec.meaning,
+        suggestedCheck:spec.checks,occurrences:0,firstSeen:null,lastSeen:null,
+        evidenceEventIds:[],latestDetails:null
+      };
+      item.occurrences++;
+      item.firstSeen||=new Date(event.time).toISOString();
+      item.lastSeen=new Date(event.time).toISOString();
+      item.latestDetails=event.details||{};
+      if(item.evidenceEventIds.length<8)item.evidenceEventIds.push(event.eventId);
+      groups.set(spec.issue,item);
+    }
+    const issues=[...groups.values()].sort((a,b)=>{
+      const weight=s=>s==='critical'?2:1;
+      return weight(b.severity)-weight(a.severity) ||
+        Date.parse(b.lastSeen)-Date.parse(a.lastSeen);
+    });
+    for(const issue of issues) {
+      const last=Date.parse(issue.lastSeen);
+      // A later successful acquisition resolves that particular denied lease;
+      // it does NOT explain whether it belonged to an old or live page.
+      issue.outcome=issue.code==='QUEUE_LEASE_DENIED' &&
+        relevant.some(e=>e.time>last && e.code==='queue.lease_acquired')
+        ?'later_acquired':'not_confirmed';
+    }
+    const significant=new Set([
+      ...Object.keys(catalogue),
+      'queue.lease_acquired','queue.lease_released','queue.lease_release_failed',
+      'queue.enqueued','queue.finished','drag.move_target',
+      'dialog.move_open','dialog.move_closed','dialog.move_submit',
+      'dialog.move_target_ready','dialog.move_submit_blocked','user.issue_marker'
+    ]);
+    const timeline=relevant.filter(e=>significant.has(e.code)).slice(-35)
+      .map(e=>({at:new Date(e.time).toISOString(),eventId:e.eventId,
+        code:e.code,level:e.level,details:e.details}));
+    return {
+      schemaVersion:1,scope:{
+        from:new Date(beginning).toISOString(),
+        to:new Date(end+15000).toISOString(),
+        anchor:focusMarker?'latest_user_issue_marker':'latest_events',
+        inspectedEvents:relevant.length,totalEvents:events.length
+      },
+      status:issues.length?'issues_observed':'no_recognized_failure_in_scope',
+      primaryIssue:issues[0]||null,issues,
+      queueState:snapshot?.queue||null,lease:lease||null,
+      timeline,
+      agentInstructions:{
+        readFirst:'triage.primaryIssue / triage.issues / triage.timeline',
+        verifyAgainst:'events（以 eventId 关联原始证据）',
+        confidence:'issues 表示日志中确实观察到的异常事件；observation 不等于已证明根本原因',
+        privacy:'路径、文件名、ownerTag 均为本地盐生成的标识；切勿将标识还原为真实路径'
+      }
+    };
+  }
+
   function diagnosticMarkIssue() {
     diagnosticLog('WARN','user.issue_marker',{snapshot:diagnosticSnapshot()});
   }
   async function diagnosticExport() {
     const events=await diagnosticReadAll();
+    let lease=null;
+    try {lease=await copyLeaseObservation();}
+    catch(error) {diagnosticLog('WARN','queue.lease_inspection_failed',{message:error?.message});}
+    const snapshot=diagnosticSanitize(diagnosticSnapshot());
     const report={
       schemaVersion:1,app:'Unraid File Station',version:DIAGNOSTIC_VERSION,
       exportedAt:new Date().toISOString(),
       retentionHours:24,
       privacy:'敏感字段已隐藏；路径与文件名使用本地盐生成的非加密标识；导出前仍建议检查文件内容。',
+      triage:diagnosticTriage(events,snapshot,lease),
       environment:{route:location.pathname,userAgent:typeof navigator==='undefined'?'unknown':navigator.userAgent},
       storageError:diagnosticStorageError||null,
-      snapshot:diagnosticSanitize(diagnosticSnapshot()),events
+      snapshot,events
     };
     const blob=new Blob([JSON.stringify(report,null,2)],{type:'application/json;charset=utf-8'});
     const url=URL.createObjectURL(blob);
@@ -1818,7 +1937,11 @@
     const preview=element('pre','ufs-diagnostic-events','');
     const reload=async()=>{
       const events=await diagnosticReadAll();
-      status.textContent='已记录 '+events.length+' 条事件'+
+      const triage=diagnosticTriage(events,diagnosticSanitize(diagnosticSnapshot()));
+      status.textContent=(triage.primaryIssue?
+        'AI 诊断线索：'+triage.primaryIssue.code+' · '+triage.primaryIssue.occurrences+' 次 · ':
+        'AI 诊断：近期未识别到异常 · ')+
+        '已记录 '+events.length+' 条事件'+
         (diagnosticStorageError?' · 持久化不可用：'+diagnosticStorageError:'')+
         (diagnosticIsVerbose()?' · 增强诊断中':'');
       preview.textContent=events.slice(-100).map(event=>
@@ -2057,11 +2180,17 @@
     const release=owner=>transaction('leases','readwrite',(table,result)=>{
       const request=table.get('dispatcher');
       request.onsuccess=()=>{
-        if(request.result?.owner===owner) table.delete('dispatcher');
-        result(true);
+        const held=request.result?.owner===owner;
+        if(held) table.delete('dispatcher');
+        result(held);
       };
     });
-    return {open,read,write,writeOwned,claim,release};
+    // Inspection never changes the lease and is safe even if another tab is active.
+    const inspect=()=>transaction('leases','readonly',(table,result)=>{
+      const request=table.get('dispatcher');
+      request.onsuccess=()=>result(request.result||null);
+    });
+    return {open,read,write,writeOwned,claim,release,inspect};
   }
 
   let activeCopySession = null;
@@ -2082,6 +2211,9 @@
   let lastPersistedTasks=null;
   let copyOwnerHeld=false;
   let copyLeaseTimer=null;
+  let copyLeaseRefreshPending=null;
+  let copyLeaseReleasePending=null;
+  let copyOwnerReservations=0;
   const copyOwnerId='ufs_'+Date.now().toString(36)+'_'+
     Math.random().toString(36).slice(2,16);
   const COPY_LEASE_TTL=30000;
@@ -2089,26 +2221,96 @@
     return validateCopyQueueSnapshot({schema:COPY_QUEUE_SCHEMA,savedAt:Date.now(),
       tasks:copyJobs.filter(job=>job.record).map(job=>job.record)});
   }
+  // Lease may be surrendered only after the final durable checkpoint.
+  // Queued/recovered/uncertain jobs must never lose their exclusive writer.
+  function copyQueueNeedsOwnership() {
+    return copyQueueRunning || copyCleanupPending || copyOwnerReservations>0 ||
+      copyQueuePaused || copyRecoveryLocked ||
+      copyJobs.some(job=>
+        !['success','failed'].includes(job.status) ||
+        job.record?.items?.some(item=>
+          ['intent-saved','unknown'].includes(item.submission) &&
+          !['success','skipped','excluded'].includes(item.status)));
+  }
+  function stopCopyLeaseTimer() {
+    if(copyLeaseTimer!==null){clearInterval(copyLeaseTimer);copyLeaseTimer=null;}
+  }
+  async function releaseIdleCopyOwnership(reason='idle') {
+    if(copyLeaseReleasePending) return copyLeaseReleasePending;
+    if(!copyOwnerHeld || !persistentCopyStore || copyQueueNeedsOwnership() || destroyed)
+      return false;
+    const task=(async()=>{
+      // Do not release while the final queue snapshot (or a renewal) is in flight.
+      await copyPersistTail;
+      if(copyLeaseRefreshPending)await copyLeaseRefreshPending;
+      if(!copyOwnerHeld || copyQueueNeedsOwnership() || destroyed)return false;
+      const released=await persistentCopyStore.release(copyOwnerId);
+      copyOwnerHeld=false;
+      stopCopyLeaseTimer();
+      diagnosticLog(released?'INFO':'WARN','queue.lease_released',{
+        reason,released,ownerTag:diagnosticPathId(copyOwnerId)});
+      return released;
+    })().catch(error=>{
+      diagnosticLog('WARN','queue.lease_release_failed',{reason,message:String(error?.message||error)});
+      return false;
+    });
+    copyLeaseReleasePending=task;
+    try{return await task;}finally{if(copyLeaseReleasePending===task)copyLeaseReleasePending=null;}
+  }
+  async function copyLeaseObservation() {
+    if(!persistentCopyStore?.inspect)return null;
+    const lease=await persistentCopyStore.inspect();
+    const now=Date.now();
+    return lease?{
+      state:lease.expiresAt>now?'active':'expired',
+      remainingMs:Math.max(0,lease.expiresAt-now),
+      ownerTag:diagnosticPathId(lease.owner),
+      isCurrentOwner:lease.owner===copyOwnerId,
+      observedAt:now
+    }:{state:'none',remainingMs:0,ownerTag:null,isCurrentOwner:false,observedAt:now};
+  }
   async function ensureCopyOwnership() {
     if(persistenceError) throw new Error(persistenceError);
-    if(!persistentCopyStore) throw new Error('持久化尚未初始化，不能提交复制任务');
+    if(!persistentCopyStore) throw new Error('持久化尚未初始化，不能提交文件任务');
+    if(copyLeaseReleasePending)await copyLeaseReleasePending;
     const won=await persistentCopyStore.claim(copyOwnerId,Date.now(),COPY_LEASE_TTL);
     if(!won) {
       copyOwnerHeld=false;
-      throw new Error('已有其他标签页管理 NAS 复制队列，当前页面禁止写入');
+      let observation=null;
+      try{observation=await copyLeaseObservation();}
+      catch(error){diagnosticLog('WARN','queue.lease_inspection_failed',{message:error?.message});}
+      diagnosticLog('WARN','queue.lease_denied',{
+        remainingMs:observation?.remainingMs??null,
+        holder:observation?.ownerTag??null,
+        leaseState:observation?.state??'unknown'
+      });
+      const remaining=observation?.remainingMs>0 ?
+        '（约 '+Math.ceil(observation.remainingMs/1000)+' 秒后过期）':'';
+      throw new Error('文件操作队列被其他页面实例或尚未过期的旧租约占用'+remaining+'，请稍后重试');
     }
     copyOwnerHeld=true;
+    diagnosticLog('INFO','queue.lease_acquired',{ownerTag:diagnosticPathId(copyOwnerId)});
     if(!copyLeaseTimer) {
       copyLeaseTimer=setInterval(()=>{
-        if(!copyOwnerHeld || destroyed) return;
-        void persistentCopyStore.claim(copyOwnerId,Date.now(),COPY_LEASE_TTL)
+        if(!copyOwnerHeld || destroyed || copyLeaseReleasePending)return;
+        if(!copyQueueNeedsOwnership()){
+          void releaseIdleCopyOwnership('idle-heartbeat');
+          return;
+        }
+        if(copyLeaseRefreshPending)return;
+        const renewal=persistentCopyStore.claim(copyOwnerId,Date.now(),COPY_LEASE_TTL)
           .then(ok=>{
             if(!ok) {
               copyOwnerHeld=false;
               copyQueuePaused=true;
+              diagnosticLog('ERROR','queue.lease_lost',{});
               updateCopyTaskButton();
             }
           }).catch(error=>copyPersistenceFailure(error));
+        copyLeaseRefreshPending=renewal;
+        void renewal.finally(()=>{
+          if(copyLeaseRefreshPending===renewal)copyLeaseRefreshPending=null;
+        }).catch(()=>{});
       },10000);
     }
   }
@@ -2601,6 +2803,14 @@
     if(persistenceError || copyRecoveryLocked)
       throw new Error(persistenceError||'请先处理之前恢复的复制队列，再创建新任务');
     await ensureCopyOwnership();
+    // A newly claimed lease does not grant permission to overwrite a
+    // snapshot created by a different, now-gone browser instance.
+    await copyPersistTail;
+    const fresh=await persistentCopyStore.read();
+    if(JSON.stringify(fresh?.tasks||[])!==lastPersistedTasks) {
+      diagnosticLog('WARN','queue.snapshot_conflict',{operation:job.record?.operation||'copy'});
+      throw new Error('队列记录已由其他页面实例更新，请刷新页面并核实任务，禁止覆盖旧记录');
+    }
     job.id=++copyJobCounter;
     job.status='queued';
     job.phase='queued';
@@ -2684,6 +2894,7 @@
     } finally {
       copyQueueRunning=false;
       updateCopyTaskButton();
+      void releaseIdleCopyOwnership('queue-drained');
     }
   }
   function resumeCopyQueue() {
@@ -2729,6 +2940,7 @@
     } finally {
       copyCleanupPending=false;
       if(!destroyed) updateCopyTaskButton();
+      void releaseIdleCopyOwnership('records-cleared');
     }
   }
   function closeCopyTaskCenter(restoreFocus=false) {
@@ -3211,7 +3423,9 @@
   }
   window.addEventListener('pagehide', (event) => { if (!event.persisted) cleanupApp(); });
   onCleanup(()=>{
-    if(copyLeaseTimer)clearInterval(copyLeaseTimer);
+    stopCopyLeaseTimer();
+    // Best-effort only: pagehide must not be relied upon to release an
+    // asynchronously persisted lease while the browser is unloading.
     if(copyOwnerHeld && persistentCopyStore)
       void persistentCopyStore.release(copyOwnerId).catch(()=>{});
   });
@@ -5736,6 +5950,33 @@
         logMoveDialog('dialog.move_submit_rejected',{reason:String(error?.message||error)});
         setFeedback(String(error?.message||error),true);return;
       }
+      // Obtain the durable queue lease BEFORE replacing the picker with an
+      // "已加入队列" screen. A denied claim must leave the modal unchanged.
+      copyOwnerReservations++;
+      try {
+        enqueuePending=true;
+        submit.disabled=true;
+        submit.textContent='正在检查队列…';
+        try {
+          await initializeCopyPersistence();
+          if(persistenceError || copyRecoveryLocked)
+            throw new Error(persistenceError||'请先处理恢复的队列任务');
+          await ensureCopyOwnership();
+          await copyPersistTail;
+          const fresh=await persistentCopyStore.read();
+          if(JSON.stringify(fresh?.tasks||[])!==lastPersistedTasks)
+            throw new Error('队列记录已变更，请刷新页面核实，禁止覆盖');
+        } catch(error) {
+          logMoveDialog('dialog.move_enqueue_failed',{reason:String(error?.message||error),stage:'lease'});
+          setFeedback('未开始移动：'+String(error?.message||error),true);
+          return;
+        } finally {
+          enqueuePending=false;
+          if(!closed && dialog.isConnected && finalPhase==='picker') {
+            submit.disabled=!selected;
+            submit.textContent=isMove?'开始移动':'开始复制';
+          }
+        }
       logMoveDialog('dialog.move_submit',{target:selected});
       const name=multi?entries[0].name+' 等 '+entries.length+' 项':entry.name;
       const record=newCopyRecord(entries,selected,conflictPolicy,name,operation);
@@ -5790,6 +6031,10 @@
         cancel.disabled=false;
         dismiss.disabled=false;
         background.disabled=false;
+      }
+      } finally {
+        copyOwnerReservations--;
+        void releaseIdleCopyOwnership('submission-settled');
       }
     }
     form.addEventListener('submit',event=>{
