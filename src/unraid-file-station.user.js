@@ -3444,8 +3444,10 @@
     stopCopyLeaseTimer();
     // Best-effort only: pagehide must not be relied upon to release an
     // asynchronously persisted lease while the browser is unloading.
-    if(copyOwnerHeld && persistentCopyStore)
-      void persistentCopyStore.release(copyOwnerId).catch(()=>{});
+    // Unloading an active task must never release the writer lease early.
+    // This callback cannot assume IndexedDB completes before page teardown.
+    if(copyOwnerHeld && persistentCopyStore && !copyQueueNeedsOwnership())
+      void copyPersistTail.then(()=>persistentCopyStore.release(copyOwnerId)).catch(()=>{});
   });
   // Until v0.2.7 persists the queue, a true reload may discard browser jobs.
   window.addEventListener('beforeunload', event=>{
