@@ -3231,3 +3231,88 @@ test('v0.2.10 删除文件夹必须勾选明确的不可恢复确认后方可提
   assert.equal(deleted[0].folder,true);
   assert.equal(errors.length,0,errors.join('\n'));
 });
+
+
+async function dragRowsTo(page, source, target, hover=0){
+  const from=await source.boundingBox(),to=await target.boundingBox();
+  assert.ok(from && to,'拖放源与目标应当可见');
+  await page.mouse.move(from.x+Math.min(45,from.width/2),from.y+from.height/2);
+  await page.mouse.down();
+  await page.mouse.move(from.x+75,from.y+from.height/2,{steps:4});
+  await page.mouse.move(to.x+Math.min(55,to.width/2),to.y+to.height/2,{steps:12});
+  if(hover)await page.waitForTimeout(hover);
+  await page.mouse.up();
+}
+
+test('v0.2.11 拖动多个选中项目到左侧 Share：仅预选目标，不直接提交写入',async t=>{
+  const {page,errors,nativePosts,moved}=await pageFor(t);
+  await page.locator('.ufs-entry[data-ufs-file="/mnt/user/TimeMachine/notes.txt"]').waitFor();
+  await page.locator('.ufs-entry[data-ufs-file="/mnt/user/TimeMachine/notes.txt"]').click();
+  await page.locator('.ufs-entry[data-ufs-file="/mnt/user/TimeMachine/Photos"]').click({modifiers:['Control']});
+  assert.equal(await page.locator('.ufs-entry.ufs-selected').count(),2);
+  const from=page.locator('.ufs-entry[data-ufs-file="/mnt/user/TimeMachine/notes.txt"]');
+  const target=page.locator('.ufs-tree-row[data-ufs-drop-path="/mnt/user/downloads"]');
+  await dragRowsTo(page,from,target);
+  const dialog=page.getByRole('dialog',{name:'移动到'});
+  await dialog.waitFor();
+  await page.getByRole('button',{name:'选择 downloads'}).waitFor();
+  await page.locator('.ufs-copy-tree-row.ufs-copy-selected').filter({hasText:'downloads'}).waitFor();
+  assert.equal(await page.locator('.ufs-copy-destination').innerText(),'目标：/mnt/user/downloads');
+  assert.match(await dialog.innerText(),/已选择 2 项/);
+  assert.equal(nativePosts.filter(item=>item.mode==='file').length,0);
+  await dialog.locator('.ufs-copy-submit',{hasText:'开始移动'}).click();
+  const timeout=Date.now()+30000;
+  while(moved.length<2 && Date.now()<timeout)
+    await new Promise(resolve=>setTimeout(resolve,150));
+  assert.equal(moved.length,2);
+  assert.equal(nativePosts.filter(item=>item.mode==='file'&&['4','9'].includes(item.action)).length,2);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.11 拖到右侧文件夹后预选目标；取消不产生移动请求',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t);
+  const from=page.locator('.ufs-entry[data-ufs-file="/mnt/user/TimeMachine/notes.txt"]');
+  const target=page.locator('.ufs-entry[data-ufs-drop-path="/mnt/user/TimeMachine/Photos"]');
+  await from.waitFor();await target.waitFor();
+  await dragRowsTo(page,from,target);
+  const dialog=page.getByRole('dialog',{name:'移动到'});
+  await dialog.waitFor();
+  await page.locator('.ufs-copy-destination',{hasText:'/mnt/user/TimeMachine/Photos'}).waitFor();
+  assert.equal(nativePosts.filter(item=>item.mode==='file').length,0);
+  await dialog.getByRole('button',{name:'取消'}).click();
+  assert.equal(await dialog.count(),0);
+  assert.equal(nativePosts.filter(item=>item.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.11 文件夹拖到自身或共享根目录时禁止移动，普通点击和多选仍正常',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t);
+  const photo=page.locator('.ufs-entry[data-ufs-file="/mnt/user/TimeMachine/Photos"]');
+  await photo.waitFor();
+  await dragRowsTo(page,photo,page.locator('.ufs-tree-row[data-ufs-drop-path="/mnt/user"]'));
+  assert.equal(await page.locator('.ufs-copy-dialog').count(),0);
+  await dragRowsTo(page,photo,photo);
+  assert.equal(await page.locator('.ufs-copy-dialog').count(),0);
+  await page.locator('.ufs-entry[data-ufs-file="/mnt/user/TimeMachine/notes.txt"]').click();
+  await photo.click({modifiers:['Control']});
+  assert.equal(await page.locator('.ufs-entry.ufs-selected').count(),2);
+  assert.equal(nativePosts.filter(item=>item.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.11 拖动悬停 700ms 自动展开左侧目录树',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t);
+  const from=page.locator('.ufs-entry[data-ufs-file="/mnt/user/TimeMachine/notes.txt"]');
+  const dest=page.locator('.ufs-tree-row[data-ufs-drop-path="/mnt/user/downloads"]');
+  await from.waitFor();await dest.waitFor();
+  const a=await from.boundingBox(),b=await dest.boundingBox();
+  await page.mouse.move(a.x+45,a.y+a.height/2);await page.mouse.down();
+  await page.mouse.move(a.x+85,a.y+a.height/2,{steps:4});
+  await page.mouse.move(b.x+50,b.y+b.height/2,{steps:10});
+  await page.locator('.ufs-tree-row.ufs-drop-valid[data-ufs-drop-path="/mnt/user/downloads"]').waitFor();
+  await page.locator('.ufs-tree-row[data-ufs-drop-path="/mnt/user/downloads/completed"]').waitFor({timeout:5000});
+  await page.mouse.up();
+  await page.getByRole('dialog',{name:'移动到'}).waitFor();
+  assert.equal(nativePosts.filter(item=>item.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});

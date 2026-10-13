@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.10.3
+// @version      0.2.11.0
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -1140,6 +1140,10 @@
     // Prevent Chromium scroll anchoring from changing scrollTop while virtual
     // spacers and mounted rows are replaced. The native wheel/scrollbar remains in control.
     '#ufs-app .ufs-list.ufs-virtualized{overflow-anchor:none}',
+    // Pointer-based drag state: never replace the dragged virtual row or alter native files on drop.
+    '#ufs-app .ufs-entry.ufs-drag-source,#ufs-app .ufs-entry.ufs-drag-source *{cursor:grabbing!important}#ufs-app .ufs-entry.ufs-drag-ready,#ufs-app .ufs-entry.ufs-drag-ready *{cursor:grab!important}',
+    '#ufs-app .ufs-tree-row.ufs-drop-valid,#ufs-app .ufs-entry.ufs-drop-valid{background:rgba(65,148,220,.14)!important;outline:2px dashed #338bce;outline-offset:-2px;border-radius:4px}#ufs-app .ufs-tree-row.ufs-drop-invalid,#ufs-app .ufs-entry.ufs-drop-invalid{background:rgba(215,74,65,.09)!important;outline:2px dashed #c64b40;outline-offset:-2px;border-radius:4px}',
+    '#ufs-app .ufs-drag-ghost{position:absolute;z-index:2147483630;pointer-events:none;display:flex;align-items:center;gap:8px;padding:8px 11px;border-radius:6px;background:#293a4cee;color:#fff;box-shadow:0 5px 18px #0003;font-size:12px;white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis}#ufs-app.ufs-drag-active .ufs-entry{user-select:none;cursor:grabbing!important}',
     '#ufs-app .ufs-virtual-spacer{height:0;min-width:var(--ufs-table-min-width);pointer-events:none}#ufs-app .ufs-virtual-body{min-width:var(--ufs-table-min-width)}#ufs-app .ufs-grid.ufs-virtualized{display:block;padding:14px}#ufs-app .ufs-grid.ufs-virtualized .ufs-virtual-spacer,#ufs-app .ufs-grid.ufs-virtualized .ufs-virtual-body{min-width:0;width:100%}#ufs-app .ufs-virtual-grid{display:grid;grid-template-columns:repeat(var(--ufs-grid-cols,4),minmax(0,1fr));gap:10px;grid-auto-rows:122px;padding-bottom:10px}#ufs-app .ufs-grid .ufs-virtual-grid .ufs-entry{height:122px;min-height:0;box-sizing:border-box;overflow:hidden}',
     '#ufs-app .ufs-grid .ufs-file-name{flex-direction:column;max-width:100%;gap:7px}#ufs-app .ufs-grid .ufs-file-name .ufs-svg{width:34px;height:34px}#ufs-app .ufs-grid .ufs-extra{display:none}',
     '#ufs-app .ufs-inspector{width:285px;flex:0 0 285px;min-width:220px;max-width:38%;border-left:1px solid var(--ufs-border);background:var(--ufs-panel);padding:14px;overflow:auto}#ufs-app .ufs-inspector[hidden]{display:none}#ufs-app .ufs-inspector h3{margin:0 0 12px;font-size:14px}#ufs-app .ufs-prop{display:flex;justify-content:space-between;gap:15px;margin:10px 0;word-break:break-word}#ufs-app .ufs-prop span:first-child{color:var(--ufs-muted);flex-shrink:0}',
@@ -1548,7 +1552,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.10.3';
+  const DIAGNOSTIC_VERSION='0.2.11.0';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -3540,10 +3544,13 @@
       if (path === PREFIX) row.lastChild.replaceWith(icon('drive', 'ufs-file-icon'));
       row.append(element('span', 'ufs-tree-name', path === PREFIX ? '所有共享文件夹' : path.split('/').pop()));
       row.title = path;
+      row.dataset.ufsDropPath=path;
       if (path !== PREFIX) row.addEventListener('click', (event) => {
         if (event.target.closest('.ufs-tree-toggle')) return;
         navigate(path);
       });
+      if(dragMoveSession?.active && dragMoveSession.target===path)
+        row.classList.add(canDropMoveAt(path,dragMoveSession)?'ufs-drop-valid':'ufs-drop-invalid');
       wrapper.append(row);
       target.append(wrapper);
       if (state.expanded.has(path)) {
@@ -3716,10 +3723,173 @@
       box.append(row);
     });
   }
+
+  // v0.2.11: one transient pointer session; native writes always begin in the
+  // existing "移动到" modal after explicit confirmation, never on pointerup.
+  let dragMoveSession=null;
+  let suppressDragMoveClick=false;
+  let dragMoveClickTimer=null;
+  function canDropMoveAt(destination,session) {
+    if(!session || !Array.isArray(session.items) || !session.items.length ||
+       !safeWritePath(destination,true) || !state.tree.has(PREFIX) ||
+       destination===session.sourceDir || destroyed || !MOVE_ENABLED)return false;
+    return session.items.every(item=>
+      item.copyPathVerified!==false && safeWritePath(item.path) &&
+      parentPath(item.path)===session.sourceDir &&
+      copyDestinationAllowed({source:item.path,folder:item.folder},destination) &&
+      safeWritePath(destination+'/'+item.name));
+  }
+  function dragMoveHover(path) {
+    for(const node of $('[data-ufs-drop-path]',app))
+      node.classList.remove('ufs-drop-valid','ufs-drop-invalid');
+    const session=dragMoveSession;
+    if(!session?.active || !path)return;
+    const valid=canDropMoveAt(path,session);
+    for(const node of $('[data-ufs-drop-path]',app))
+      if(node.dataset.ufsDropPath===path)
+        node.classList.add(valid?'ufs-drop-valid':'ufs-drop-invalid');
+  }
+  function dragMoveReset() {
+    const session=dragMoveSession;
+    if(!session)return;
+    clearTimeout(session.expandTimer);
+    dragMoveSession=null;
+    session.ghost?.remove();
+    app?.classList.remove('ufs-drag-active');
+    for(const node of $('[data-ufs-drop-path],.ufs-drag-source',app))
+      node.classList.remove('ufs-drop-valid','ufs-drop-invalid','ufs-drag-source');
+    try { if(app.hasPointerCapture(session.pointerId))app.releasePointerCapture(session.pointerId); }
+    catch (_) { /* Pointer may already have been released by the browser. */ }
+  }
+  function dragMoveTargetAt(clientX,clientY) {
+    const hit=document.elementFromPoint(clientX,clientY);
+    if(!hit || !app.contains(hit))return null;
+    return hit.closest('.ufs-tree-row[data-ufs-drop-path],.ufs-entry[data-ufs-drop-path]')?.dataset.ufsDropPath||null;
+  }
+  function dragMoveBeginPointer(event) {
+    if(event.button!==0 || (event.pointerType!=='mouse' && event.pointerType!=='pen') ||
+       event.shiftKey || event.metaKey || event.ctrlKey || event.altKey ||
+       dragMoveSession || destroyed || !MOVE_ENABLED || state.busy ||
+       state.initializing || $('.ufs-dialog-overlay',app) || !activeTab())return;
+    const row=event.target.closest('.ufs-entry[data-ufs-file]');
+    if(!row || !$('.ufs-list',app)?.contains(row))return;
+    const entry=state.entries.find(item=>item.path===row.dataset.ufsFile);
+    if(!entry)return;
+    const selected=state.selection.has(entry.path)?selectedEntries():[entry];
+    const items=selected.filter(Boolean).map(item=>({...item}));
+    if(!items.length || items.some(item=>!safeWritePath(item.path) || item.copyPathVerified===false))
+      return; // Invalid source is not a drag handle; normal click still works.
+    const sourceDir=currentPath();
+    dragMoveSession={
+      pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,
+      sourceDir,items,sourcePath:entry.path,active:false,target:null,
+      expandTimer:null,ghost:null
+    };
+    // Do not capture at pointerdown: that would redirect ordinary click/dblclick
+    // away from the row and break selection and folder navigation.
+  }
+  function dragMovePointer(event) {
+    const session=dragMoveSession;
+    if(!session || session.pointerId!==event.pointerId)return;
+    if(destroyed || !app.isConnected || currentPath()!==session.sourceDir || state.busy) {
+      dragMoveReset();return;
+    }
+    if(!session.active && Math.hypot(event.clientX-session.startX,event.clientY-session.startY)<7)
+      return;
+    if(!session.active) {
+      session.active=true;
+      try {app.setPointerCapture(event.pointerId);}
+      catch (_) {dragMoveReset();return;}
+      app.classList.add('ufs-drag-active');
+      // Preserve multi-selection and the original DOM row during the entire drag.
+      // For an unselected row, update only CSS selection classes (no renderFiles()).
+      if(!state.selection.has(session.sourcePath)) {
+        state.selection.clear();state.selection.add(session.sourcePath);
+        renderSelection();
+      }
+      const ghost=element('div','ufs-drag-ghost');
+      ghost.append(icon('copy'),element('span','','移动 '+session.items.length+' 项'));
+      app.append(ghost);
+      session.ghost=ghost;
+      diagnosticLog('INFO','drag.move_started',{count:session.items.length});
+    }
+    event.preventDefault();
+    const bounds=app.getBoundingClientRect();
+    session.ghost.style.left=Math.max(4,Math.min(bounds.width-145,event.clientX-bounds.left+12))+'px';
+    session.ghost.style.top=Math.max(4,Math.min(bounds.height-42,event.clientY-bounds.top+12))+'px';
+    const target=dragMoveTargetAt(event.clientX,event.clientY);
+    if(target!==session.target) {
+      clearTimeout(session.expandTimer);
+      session.target=target;
+      dragMoveHover(target);
+      if(target && canDropMoveAt(target,session) &&
+         !state.expanded.has(target) &&
+         [...$('.ufs-tree-row[data-ufs-drop-path]',app)].some(node=>node.dataset.ufsDropPath===target)){
+        session.expandTimer=setTimeout(()=>{
+          if(dragMoveSession!==session || !session.active || session.target!==target)return;
+          state.expanded.add(target);
+          renderTree();
+          void loadTree(target); // Lazy-load children; keep session across DOM replacement.
+        },700);
+      }
+    }
+    const sidebar=$('.ufs-sidebar',app);
+    if(sidebar?.contains(document.elementFromPoint(event.clientX,event.clientY))) {
+      const r=sidebar.getBoundingClientRect();
+      if(event.clientY<r.top+28)sidebar.scrollTop-=10;
+      else if(event.clientY>r.bottom-28)sidebar.scrollTop+=10;
+    }
+  }
+  function dragMovePointerUp(event) {
+    const session=dragMoveSession;
+    if(!session || session.pointerId!==event.pointerId)return;
+    const active=session.active;
+    const destination=dragMoveTargetAt(event.clientX,event.clientY);
+    const sourceDir=session.sourceDir,items=session.items;
+    const valid=active && destination && canDropMoveAt(destination,session);
+    dragMoveReset();
+    if(!active)return; // Existing click/Ctrl/Shift selection behavior is preserved.
+    // Pointer capture may synthesize a click after pointerup. Suppress that
+    // single click so it cannot navigate or collapse the multi-selection.
+    suppressDragMoveClick=true;
+    clearTimeout(dragMoveClickTimer);
+    dragMoveClickTimer=setTimeout(()=>{suppressDragMoveClick=false;dragMoveClickTimer=null;},0);
+    if(currentPath()!==sourceDir)return;
+    if(valid) {
+      diagnosticLog('INFO','drag.move_target',{target:destination,count:items.length});
+      showCopyDialog(items,'move',{initialDestination:destination});
+    } else if(destination) {
+      notify('不能移动到此文件夹：源位置、文件夹自身或内部目录不可作为目标');
+    }
+  }
+  function installDragMove() {
+    app.addEventListener('pointerdown',dragMoveBeginPointer);
+    window.addEventListener('pointermove',dragMovePointer,{signal:lifecycle.signal});
+    window.addEventListener('pointerup',dragMovePointerUp,{signal:lifecycle.signal});
+    window.addEventListener('pointercancel',dragMoveReset,{signal:lifecycle.signal});
+    app.addEventListener('lostpointercapture',()=>{
+      if(dragMoveSession?.active)dragMoveReset();
+      else dragMoveSession=null;
+    });
+    app.addEventListener('click',event=>{
+      if(!suppressDragMoveClick)return;
+      suppressDragMoveClick=false;
+      clearTimeout(dragMoveClickTimer);
+      dragMoveClickTimer=null;
+      event.preventDefault();event.stopImmediatePropagation();
+    },true);
+    onCleanup(()=>{
+      dragMoveReset();
+      clearTimeout(dragMoveClickTimer);
+    });
+  }
+
   function createFileRow(entry, index, entries) {
     const row = element('div', 'ufs-entry');
     row.dataset.ufsFile = entry.path;
     row.dataset.ufsIndex = String(index);
+    row.classList.add('ufs-drag-ready');
+    if(entry.folder)row.dataset.ufsDropPath=entry.path;
     row.classList.toggle('ufs-selected', state.selection.has(entry.path));
     row.tabIndex = 0;
     row.title = entry.path;
@@ -4226,8 +4396,9 @@
   }
 
 
-  function showCopyDialog(entryOrEntries,operation='copy') {
+  function showCopyDialog(entryOrEntries,operation='copy',options={}) {
     const isMove=operation==='move';
+    const requestedDestination=isMove && typeof options?.initialDestination==='string' ? options.initialDestination : null;
     if(!['copy','move'].includes(operation))return;
     // Snapshot the selection: navigation or re-selection must not alter this batch.
     const entries=Array.isArray(entryOrEntries)?entryOrEntries.slice():[entryOrEntries];
@@ -5571,7 +5742,38 @@
           finalPhase==='cancelled')) {close();return;}
       void submitCopyJob();
     });
-    void loadChildren(PREFIX);
+    if(requestedDestination && copyDestinationAllowedForAll(requestedDestination) &&
+       safeWritePath(requestedDestination,true)) {
+      // Resolve each ancestor through the existing lazy picker loader. Never
+      // infer that a path is valid just because the sidebar showed it earlier.
+      void (async()=>{
+        const parents=[];
+        let at=requestedDestination;
+        while(at!==PREFIX && at.startsWith(PREFIX+'/')){
+          parents.unshift(at);at=parentPath(at);
+        }
+        await loadChildren(PREFIX);
+        for(const child of parents){
+          if(closed || destroyed)return;
+          const upstream=nodes.get(parentPath(child));
+          if(!upstream?.some(item=>item.path===child && item.folder &&
+              item.copyPathVerified!==false)){
+            setFeedback('拖放目标已发生变化，请手动重新选择文件夹。',true);
+            return;
+          }
+          opened.add(child);
+          await loadChildren(child);
+        }
+        if(closed || destroyed)return;
+        selected=requestedDestination;
+        destinationText.textContent='目标：'+selected;
+        destinationText.title=selected;
+        submit.disabled=false;
+        renderPicker();
+        const chosen=picker.querySelector('.ufs-copy-tree-row.ufs-copy-selected');
+        chosen?.scrollIntoView({block:'nearest'});
+      })().catch(error=>setFeedback('无法读取拖放目标：'+String(error?.message||error),true));
+    } else void loadChildren(PREFIX);
   }
 
 
@@ -5941,6 +6143,7 @@
       showCreateFolderDialog();
     });
     setupSidebarResizer();
+    installDragMove();
     onCleanup(setupListScrollbars($('.ufs-list', app)));
     onCleanup(()=>closeCopyTaskCenter());
     $('.ufs-list', app).addEventListener('scroll', scheduleVirtualWindow, {passive:true});
