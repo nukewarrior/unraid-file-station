@@ -2446,3 +2446,21 @@ test('v0.2.11.5 先确认租约再切换等待界面，拒绝过期快照覆盖'
   assert.match(script,/queue\.lease_denied/);
   assert.match(script,/queue\.lease_released/);
 });
+
+
+test('v0.2.11.5 完成窗口清理必须持久化，删除提交前先申请独占租约',()=>{
+  const removeStart=script.indexOf('  function removeCopyJob(job) {');
+  const removeEnd=script.indexOf('  async function runCopyQueue(',removeStart);
+  const removed=script.slice(removeStart,removeEnd);
+  assert.match(removed,/job\?\.status==='success' && job\.record/);
+  assert.match(removed,/void clearCompletedCopyJobs\(job\)/);
+  assert.match(removed,/queue\.record_removal_blocked/);
+  const delStart=script.indexOf('  function showDeleteDialog(');
+  const delEnd=script.indexOf('  function showOperationsMenu(',delStart);
+  const snippet=script.slice(delStart,delEnd);
+  const beforeWait=snippet.indexOf("await ensureCopyOwnership()");
+  assert.ok(beforeWait>=0);
+  assert.ok(beforeWait<snippet.indexOf("renderProgress('已加入删除队列"));
+  assert.match(snippet,/JSON\.stringify\(freshSnapshot\?\.tasks\|\|\[\]\)!==lastPersistedTasks/);
+  assert.match(snippet,/copyOwnerReservations--/);
+});

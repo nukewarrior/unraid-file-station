@@ -2834,6 +2834,16 @@
     void runCopyQueue();
   }
   function removeCopyJob(job) {
+    // Finishing/closing the modal is not permission to silently erase a
+    // persisted record after the dispatcher lease was released.
+    if(job?.status==='success' && job.record) {
+      void clearCompletedCopyJobs(job);
+      return;
+    }
+    if(job?.record && !copyOwnerHeld) {
+      diagnosticLog('WARN','queue.record_removal_blocked',{reason:'not-owner',status:job.status});
+      return; // Keep the durable record for explicit later verification.
+    }
     const index=copyJobs.indexOf(job);
     if(index>=0 && job.status!=='running') copyJobs.splice(index,1);
     if(activeCopySession===job && job.status!=='running') activeCopySession=null;
@@ -5976,7 +5986,8 @@
             throw new Error('队列记录已变更，请刷新页面核实，禁止覆盖');
         } catch(error) {
           logMoveDialog('dialog.move_enqueue_failed',{reason:String(error?.message||error),stage:'lease'});
-          setFeedback('未开始移动：'+String(error?.message||error),true);
+          setFeedback((isMove?'未开始移动：':'未开始复制：')+
+            String(error?.message||error),true);
           return;
         } finally {
           enqueuePending=false;
@@ -6262,6 +6273,17 @@
           }
           if(await readNativeActive())
             throw new Error('Unraid 正在执行其他原生文件任务');
+          copyOwnerReservations++;
+          try {
+            // A denied or stale lease must not switch delete to "已加入队列".
+            await initializeCopyPersistence();
+            if(persistenceError || copyRecoveryLocked)
+              throw new Error(persistenceError||'请先处理恢复的队列任务');
+            await ensureCopyOwnership();
+            await copyPersistTail;
+            const freshSnapshot=await persistentCopyStore.read();
+            if(JSON.stringify(freshSnapshot?.tasks||[])!==lastPersistedTasks)
+              throw new Error('队列记录已变更，请刷新页面核实，禁止覆盖');
           const name=entries.length===1?entries[0].name:
             entries[0].name+' 等 '+entries.length+' 项';
           const record=newCopyRecord(entries,parent,'fail',name,'delete');
@@ -6278,6 +6300,10 @@
           renderProgress('已加入删除队列，等待前面的文件任务执行完毕。','queued');
           cancel.textContent='取消排队';
           await registerCopyJob(job);
+          } finally {
+            copyOwnerReservations--;
+            void releaseIdleCopyOwnership('delete-submission-settled');
+          }
         }catch(error){
           if(job&&!copyJobs.includes(job))job=null;
           renderProgress('未提交删除：'+String(error?.message||error),'failed');
