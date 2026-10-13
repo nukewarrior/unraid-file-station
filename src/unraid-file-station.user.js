@@ -5895,6 +5895,14 @@
         dismiss.disabled=false;
       }
       if(destroyed || closed) return;
+      // Unraid itself supports CR-joined sources. Only the narrow, verified
+      // all-regular-file shape opts in; all other jobs keep the serial path.
+      const groupedMove=isMove && nativeMoveBatchEligible(plans);
+      batch.nativeGroup=groupedMove;
+      if(isMove)diagnosticLog('INFO','move.batch_strategy',{
+        taskId:copyJob.taskId,count:plans.length,
+        strategy:groupedMove?'native-cr-source':'serial',
+        reason:groupedMove?'eligible':'not-eligible'});
       batch.started=true;
       batch.phase='copying';
       busy=true;
@@ -5909,6 +5917,11 @@
       submit.disabled=true;
       cancel.textContent='停止队列…';
       cancel.disabled=false;
+      if(groupedMove) {
+        // A single native request cannot safely stop between individual files.
+        cancel.hidden=true;
+        batchNote.textContent='整批文件由 Unraid 一次处理；无法逐文件停止。异常时请在 NAS 核实整批结果，不要重试。';
+      }
       background.hidden=false;
       dismiss.title='后台运行';
       batchTargetPath.textContent=selected;
@@ -5921,6 +5934,32 @@
       try {
         if(batch.stopAfterCurrent) {
           batch.phase='stopped';
+        } else if(groupedMove) {
+          batch.currentIndex=0;
+          batch.currentPercent=null;
+          batch.rows.forEach(row=>{row.status='copying';});
+          batchCurrentFile.textContent='正在批量移动 '+plans.length+' 个文件';
+          batchCurrentMetrics.hidden=false;
+          batchEtaRow.hidden=true;
+          renderBatchRows();
+          renderBatchProgress();
+          // The marker and ALL not-submitted statuses are recorded in ONE
+          // snapshot. No native write occurs before the second durable write
+          // changes every entry to submission-intent / intent-saved.
+          copyJob.record.batchMode='native-move-files';
+          await copyBatchCheckpoint(copyJob,'checking','not-submitted');
+          const results=await moveNativeBatch(plans,(message,phase,info)=>{
+            copyJobSignal(copyJob,phase,info);
+            if(phase==='checking')batchCurrentInfo.textContent='正在核对整批源文件与目标目录…';
+            if(phase==='verifying')batchCurrentInfo.textContent='正在核对全部 '+plans.length+' 个文件…';
+            if(info?.filename)batchCurrentFile.textContent='当前文件：'+shortenCopyName(info.filename,90);
+            renderBatchProgress();
+          },control,async()=>copyBatchCheckpoint(copyJob,'submission-intent','intent-saved'));
+          if(results.length!==plans.length)throw new Error('原生批量移动核验数量不一致');
+          await copyBatchCheckpoint(copyJob,'success','confirmed');
+          batch.rows.forEach(row=>{row.status='success';});
+          renderBatchRows();
+          renderBatchProgress();
         } else {
           for(let i=0;i<plans.length;i++) {
             if(batch.stopAfterCurrent) {batch.phase='stopped';break;}
@@ -5973,8 +6012,28 @@
       } catch(error) {
         batch.error=String(error?.message||error);
         const uncertain=control.cancelRequested ||
-          batch.error.includes('结果不确定') || batch.error.includes('已请求取消');
-        if(batch.currentIndex>=0 && batch.rows[batch.currentIndex].status==='copying') {
+          batch.error.includes('结果不确定') || batch.error.includes('待核实') ||
+          batch.error.includes('已请求取消');
+        if(batch.nativeGroup) {
+          const submitted=copyJob.record?.items.some(item=>item.submission!=='not-submitted');
+          for(const row of batch.rows) {
+            row.status=submitted?'uncertain':'failed';
+            row.error=batch.error;
+          }
+          if(copyJob.record?.items) {
+            for(const item of copyJob.record.items) {
+              item.status=submitted?'uncertain':'failed';
+              if(submitted)item.submission='unknown';
+              item.updatedAt=Date.now();
+            }
+            copyJob.record.updatedAt=Date.now();
+            await persistCopyQueue().catch(()=>{});
+          }
+          diagnosticLog('WARN','move.batch_reconcile',{
+            taskId:copyJob.taskId,count:plans.length,
+            status:submitted?'uncertain':'failed',submitted});
+          renderBatchRows();
+        } else if(batch.currentIndex>=0 && batch.rows[batch.currentIndex].status==='copying') {
           const row=batch.rows[batch.currentIndex];
           const record=copyJob.record?.items[batch.currentIndex];
           if(record) {
@@ -5988,7 +6047,8 @@
           row.error=batch.error;
           renderBatchRows();
         }
-        batch.phase=uncertain?'uncertain':'failed';
+        batch.phase=(uncertain || (batch.nativeGroup &&
+          copyJob.record?.items.some(item=>item.submission!=='not-submitted')))?'uncertain':'failed';
         // A preflight error may have started no native task; it still cannot
         // automatically retry the batch or silently skip failed entries.
       } finally {
