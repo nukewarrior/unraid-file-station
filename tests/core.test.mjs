@@ -285,7 +285,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.9\b/);
+  assert.match(script, /@version\s+0\.2\.10\b/);
 });
 
 
@@ -627,7 +627,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.9\b/);
+  assert.match(script, /@version\s+0\.2\.10\b/);
 });
 
 
@@ -2168,7 +2168,7 @@ test('v0.2.7.1 刷新后仅重新观察严格匹配的原生任务，无法确�
 test('v0.2.7.2 Tampermonkey 自动更新元数据与脚本版本保持一致',()=>{
   const header=script.split('// ==/UserScript==',1)[0];
   const updateUrl='https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js';
-  assert.match(header,/^\/\/ @version\s+0\.2\.9\.1$/m);
+  assert.match(header,/^\/\/ @version\s+0\.2\.10\.0$/m);
   assert.ok(header.split('\n').includes('// @updateURL    '+updateUrl));
   assert.ok(header.split('\n').includes('// @downloadURL  '+updateUrl));
   assert.equal(header.match(/^\/\/ @version\s+/gm)?.length,1);
@@ -2274,4 +2274,39 @@ test('v0.2.9 移动使用原生 action 4/9，禁覆盖，并与现有任务队�
  assert.match(script,/task\.operation\|\|'copy'/);
  assert.match(script,/showCopyDialog\(chosen,'move'\)/);
  assert.match(api.renderHeaderMarkup(),/ufs-refresh/);
+});
+
+test('v0.2.10 永久删除必须校验源路径、明确确认并保存提交意图',()=>{
+  const {api}=createAPI();
+  const file='/mnt/user/TimeMachine/notes.txt';
+  const plan=api.planFileOperation({type:'delete',source:file,folder:false});
+  assert.equal(plan.type,'delete');
+  assert.equal(plan.target,'');
+  assert.throws(()=>api.planFileOperation({type:'delete',source:'/mnt/user/TimeMachine',folder:true}),/只能操作/);
+  assert.throws(()=>api.planFileOperation({type:'delete',source:'/mnt/user/TimeMachine/a%20b',folder:false}),/只能操作/);
+  assert.equal(api.matchesDeleteTask({action:6,source:file,target:''},{folder:false,source:file}),true);
+  assert.equal(api.matchesDeleteTask({action:1,source:file,target:''},{folder:false,source:file}),false);
+  assert.match(script,/async function deleteNativeEntry\(/);
+  assert.match(script,/action:plan\.folder\?'1':'6'/);
+  assert.match(script,/if\(beforeSubmit\)await beforeSubmit\(\)/);
+  assert.match(script,/if\(needConfirm&&!check\.checked\)return/);
+  assert.match(script,/showDeleteDialog\(chosen\)/);
+  assert.match(script,/copyItemCheckpoint\(job,i,'submission-intent','intent-saved'\)/);
+  assert.match(script,/删除请求可能已发送；结果不确定/);
+});
+test('v0.2.10 删除记录可恢复并且不会将源缺失直接当作成功',()=>{
+  const {api}=createAPI();
+  const source='/mnt/user/TimeMachine/notes.txt';
+  const record={
+    taskId:'delete_task_000001',name:'notes.txt',destination:'/mnt/user/TimeMachine',
+    conflictPolicy:'fail',operation:'delete',status:'running',createdAt:100,updatedAt:101,
+    items:[{source,folder:false,status:'submission-intent',submission:'intent-saved',updatedAt:101}]
+  };
+  const snapshot=api.validateCopyQueueSnapshot({schema:1,savedAt:101,tasks:[record]});
+  assert.equal(snapshot.tasks[0].operation,'delete');
+  const assessed=api.copyRecoveryAssessment(snapshot);
+  assert.equal(assessed.requiresConfirmation,true);
+  assert.equal(assessed.tasks[0].restoreStatus,'needs-verification');
+  assert.match(script,/if\(job\.record\.operation==='delete'\) \{\s*const current=await listDirectory/);
+  assert.match(script,/if\(finishedEvent && sameTaskObserved\)/);
 });

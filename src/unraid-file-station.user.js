@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.9.1
+// @version      0.2.10.0
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
@@ -955,6 +955,73 @@
     });
   }
 
+
+  function matchesDeleteTask(active,plan) {
+    return active && Number(active.action)===(plan.folder?1:6) &&
+      active.source===plan.source && active.target==='';
+  }
+  async function deleteNativeEntry(plan,progress=()=>{},control={},beforeSubmit=null) {
+    return withNativeWriteLock(async()=>{
+      if(!DELETE_ENABLED || !plan || plan.type!=='delete' || plan.conflictPolicy!=='fail' ||
+         !safeWritePath(plan.source) || typeof plan.folder!=='boolean' || plan.target!=='')
+        throw new Error('不安全的永久删除计划');
+      if(isDemo && window.__UFS_TEST_MODE__!==true)
+        throw new Error('演示模式禁止永久删除');
+      progress('正在核实原项目…','checking');
+      const parent=parentPath(plan.source);
+      const before=await listDirectory(parent);
+      const origin=before.find(x=>x.path===plan.source);
+      if(!origin || origin.folder!==plan.folder || origin.copyPathVerified===false)
+        throw new Error('删除项目已变化或路径不可信，拒绝提交');
+      if(await readNativeActive())throw new Error('Unraid 原生文件任务正在运行');
+      nativeCsrfToken();
+      if(beforeSubmit)await beforeSubmit();
+      diagnosticLog('WARN','delete.intent',{source:plan.source,folder:plan.folder});
+      let submitted=false,seen=false,done=false,remoteError='';
+      const unwatch=observeNativeProgress(data=>{
+        if(data.error)remoteError=stripNativeStatusHtml(data.error).slice(0,200);
+        if(data.done===1)done=true;
+      });
+      try{
+        submitted=true;
+        const result=await postNativeControl({mode:'file',
+          action:plan.folder?'1':'6',title:encodeURIComponent('删除'),
+          source:encodeURIComponent(plan.source),target:'',
+          hdlink:'',sparse:'',exist:'',zfs:''});
+        if(result.trim())throw new Error('原生删除接口返回非预期内容');
+        progress('正在永久删除…','copying');
+        let idle=0;const deadline=Date.now()+6*60*60*1000;
+        while(Date.now()<deadline){
+          await waitNative(700);
+          if(remoteError)throw new Error('原生删除错误：'+remoteError);
+          const current=await readNativeActive();
+          if(current){
+            if(!matchesDeleteTask(current,plan))
+              throw new Error('原生任务归属不一致，结果待核实');
+            seen=true;control.observedOwnTask=true;idle=0;
+          }else{
+            idle++;
+            if(idle>=2 && (seen||done))break;
+            if(idle>=5&&!seen&&!done)
+              throw new Error('无法确认原生删除任务启动及结束');
+          }
+        }
+        if(idle<2||!(seen||done)||remoteError)
+          throw new Error('原生删除未确认完成');
+        progress('正在核对删除结果…','verifying');
+        const after=await listDirectory(parent);
+        if(after.some(x=>x.path===plan.source))
+          throw new Error('项目仍存在，可能未删除完毕');
+        diagnosticLog('INFO','delete.verified',{source:plan.source});
+        return {deleted:true,source:plan.source};
+      }catch(error){
+        diagnosticLog('ERROR','delete.failed',{submitted,message:error?.message});
+        if(submitted)throw new Error('永久删除请求可能已发送；结果不确定，部分内容可能已删除。请人工核实，切勿直接重试。详情：'+String(error?.message||error));
+        throw error;
+      }finally{unwatch();}
+    });
+  }
+
   async function requestCancelNativeCopy(plan, control={}) {
     if (!nativeWriteBusy || !plan || !control || control.cancelRequested ||
         !control.observedOwnTask) {
@@ -1275,6 +1342,7 @@
     '#ufs-app .ufs-location-col{display:flex;align-items:center;min-width:0;overflow:hidden;white-space:nowrap}#ufs-app .ufs-entry .ufs-location-trigger{display:inline-flex;align-items:center;gap:4px;width:100%;min-width:0;max-width:100%;height:30px;min-height:0;overflow:hidden;padding:0;border:0;background:transparent;border-radius:0;text-align:left;color:var(--ufs-text);font-size:12px;font-weight:400;line-height:1.4;cursor:pointer!important}#ufs-app .ufs-entry .ufs-location-trigger:hover{color:var(--ufs-accent);background:transparent}#ufs-app .ufs-location-text{white-space:nowrap;overflow:hidden;text-overflow:clip;flex:0 1 auto;min-width:0}#ufs-app .ufs-location-ellipsis{white-space:nowrap;flex-shrink:0;color:var(--ufs-muted)}#ufs-app .ufs-location-more-link{color:var(--ufs-accent);font-size:11px;flex:0 0 auto;white-space:nowrap;text-decoration:underline;text-underline-offset:2px}#ufs-app .ufs-location-popover{width:min(440px,calc(100vw - 20px));max-width:none;padding:0;overflow:hidden}#ufs-app .ufs-location-popover-header{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--ufs-border);font-weight:600}#ufs-app .ufs-menu .ufs-location-popover-close{display:inline-flex;align-items:center;justify-content:center;flex:0 0 28px;width:28px;height:28px;min-width:28px;padding:0;border:0;background:transparent;color:var(--ufs-muted);text-align:center}#ufs-app .ufs-location-popover-items{display:grid;grid-template-columns:repeat(auto-fill,minmax(85px,1fr));gap:6px;padding:12px;max-height:min(300px,50vh);overflow-y:auto;overscroll-behavior:contain}#ufs-app .ufs-location-device{padding:6px 8px;border-radius:4px;background:var(--ufs-panel);font-size:12px;overflow-wrap:anywhere}#ufs-app .ufs-owner{min-width:0;overflow:hidden;text-overflow:ellipsis}',
     '@media(max-width:720px){#ufs-app .ufs-sidebar{width:42px;flex-basis:42px;padding:4px}#ufs-app .ufs-resizer{display:none}#ufs-app .ufs-sidebar .ufs-tree-name,#ufs-app .ufs-tree-label,#ufs-app .ufs-tree-toggle,#ufs-app .ufs-sidebar .ufs-tree-spacer{display:none}#ufs-app .ufs-search{width:90px}}',
     '#ufs-app .ufs-top{height:46px;gap:9px;padding:0 12px}#ufs-app .ufs-brand{display:flex;align-items:center;gap:7px;flex-shrink:0;white-space:nowrap}#ufs-app .ufs-heading{font-size:15px}#ufs-app .ufs-brand-divider{height:19px;width:1px;background:var(--ufs-border);flex-shrink:0}#ufs-app .ufs-preview-chip{font-size:11px;color:var(--ufs-muted);white-space:nowrap}#ufs-app .ufs-app-actions{display:flex;align-items:center;gap:3px;flex-shrink:0}',
+    '#ufs-app .ufs-delete-list{max-height:230px;overflow:auto;min-height:0;border:1px solid var(--ufs-border);border-radius:5px;padding:6px}#ufs-app .ufs-delete-warning{display:flex;align-items:flex-start;gap:8px;color:#b53c34;line-height:1.5}#ufs-app .ufs-delete-acknowledge{display:flex;align-items:center;gap:8px;cursor:pointer}#ufs-app .ufs-delete-acknowledge input{width:16px;height:16px;accent-color:#c73f37}#ufs-app .ufs-delete-submit:not(:disabled){background:#c73f37;border-color:#c73f37;color:#fff}#ufs-app .ufs-delete-submit:hover:not(:disabled){background:#b4332c}',
     '#ufs-app .ufs-app-actions>.ufs-ico{flex:0 0 32px;width:32px;min-width:32px;height:32px;min-height:32px;max-height:32px;margin:0;padding:0;border-radius:6px}#ufs-app .ufs-app-actions>.ufs-ico>.ufs-svg{width:20px;height:20px;min-width:20px;stroke-width:1.8}',
     '@keyframes ufs-refresh-spin{to{transform:rotate(360deg)}}#ufs-app .ufs-app-actions>.ufs-refresh.ufs-spinning{opacity:1}#ufs-app .ufs-app-actions>.ufs-refresh.ufs-spinning>.ufs-svg{animation:ufs-refresh-spin 1s linear infinite;transform-origin:center}',
     '@media(prefers-reduced-motion:reduce){#ufs-app .ufs-app-actions>.ufs-refresh.ufs-spinning>.ufs-svg{animation:none}}',
@@ -1822,6 +1890,7 @@
   // native writes, starts the scheduler or silently confirms copied files.
   const COPY_QUEUE_SCHEMA=1;
   const MOVE_ENABLED=true;
+  const DELETE_ENABLED=true;
   const COPY_QUEUE_DATABASE='ufs-copy-queue-v1';
   const COPY_QUEUE_STATES=new Set([
     'queued','checking','submission-intent','copying','verifying',
@@ -1853,20 +1922,20 @@
       throw new Error('持久化复制任务格式错误或路径不安全');
     }
     const operation=task.operation||'copy';
-    if(!['copy','move'].includes(operation) ||
-       (operation==='move' && (task.conflictPolicy!=='fail' || !safeWritePath(task.destination,true))))
+    if(!['copy','move','delete'].includes(operation) ||
+       (operation!=='copy' && (task.conflictPolicy!=='fail' || !safeWritePath(task.destination,true))))
       throw new Error('持久化移动任务格式错误');
     const items=task.items.map(normalizeSavedCopyItem);
-    if(operation==='move' && items.some(item=>!safeWritePath(item.source)))
+    if(operation!=='copy' && items.some(item=>!safeWritePath(item.source)))
       throw new Error('不安全的移动源路径');
-    if(items.some(item=>!copyDestinationAllowed(
+    if(operation!=='delete' && items.some(item=>!copyDestinationAllowed(
       {source:item.source,folder:item.folder},task.destination))) {
       throw new Error('恢复任务包含不安全或自包含的目标目录');
     }
     return {
       taskId:task.taskId,name:task.name,destination:task.destination,
       conflictPolicy:task.conflictPolicy,status:task.status,
-      ...(operation==='move'?{operation}:{}),
+      ...(operation==='copy'?{}:{operation}),
       createdAt:Number.isFinite(task.createdAt)?task.createdAt:0,
       updatedAt:Number.isFinite(task.updatedAt)?task.updatedAt:0,
       items
@@ -2080,7 +2149,7 @@
     return normalizeSavedCopyTask({
       taskId:'copy_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,16),
       name,destination,conflictPolicy,status:'queued',
-      ...(operation==='move'?{operation}:{}),
+      ...(operation==='copy'?{}:{operation}),
       createdAt:Date.now(),updatedAt:Date.now(),
       items:entries.map(entry=>({
         source:entry.path,folder:entry.folder,size:entry.size,
@@ -2166,7 +2235,8 @@
         const signature={
           folder:item.folder,source:item.source,destinationDir:job.destination
         };
-        if(job.record.operation==='move'?matchesMoveTask(active,signature):matchesCopyTask(active,signature))matches.push({job,index:i,signature});
+        if((job.record.operation==='delete'?matchesDeleteTask(active,signature):
+          job.record.operation==='move'?matchesMoveTask(active,signature):matchesCopyTask(active,signature)))matches.push({job,index:i,signature});
       }
     }
     if(matches.length!==1) {
@@ -2216,7 +2286,8 @@
         catch(_) {break;}
         if(destroyed)return;
         if(current) {
-          if(!(job.record.operation==='move'?matchesMoveTask(current,signature):matchesCopyTask(current,signature)))break;
+          if(!(job.record.operation==='delete'?matchesDeleteTask(current,signature):
+            job.record.operation==='move'?matchesMoveTask(current,signature):matchesCopyTask(current,signature)))break;
           sameTaskObserved=true;
           idle=0;
         } else if(++idle>=2) {
@@ -2252,6 +2323,11 @@
   async function verifyRecoveredNativeCopy(job,index) {
     const item=job.record.items[index];
     if(!item || destroyed)throw new Error('原生监控结果已失效');
+    if(job.record.operation==='delete') {
+      const current=await listDirectory(parentPath(item.source));
+      if(current.some(entry=>entry.path===item.source))
+        throw new Error('原生删除后源项目仍存在，结果待核实');
+    } else {
     const target=job.destination+'/'+fileName(item.source);
     // As in the ordinary copy flow, verify the original and destination.
     // Existence/size alone are insufficient; we require matching native
@@ -2268,6 +2344,7 @@
     if(job.record.operation!=='move' && !item.folder && Number.isFinite(origin?.size) &&
         Number.isFinite(dest.size) && origin.size!==dest.size)
       throw new Error('原生任务结束后文件大小不一致');
+    }
     // Release of the old browser tab's lease may lag behind reload. If the
     // snapshot is no longer ours to update, keep it unverified instead.
     await ensureCopyOwnership();
@@ -2334,7 +2411,8 @@
         conflictPolicy:job.conflictPolicy});
       try {
         await copyItemCheckpoint(job,i,'checking','not-submitted');
-        const result=await (job.record.operation==='move'?moveNativeEntry:copyNativeEntry)(plan,(_,phase,info)=>{
+        const result=await (job.record.operation==='delete'?deleteNativeEntry:
+          job.record.operation==='move'?moveNativeEntry:copyNativeEntry)(plan,(_,phase,info)=>{
           copyJobSignal(job,phase,info);
         },{},async()=>copyItemCheckpoint(job,i,'submission-intent','intent-saved'));
         await copyItemCheckpoint(job,i,result.copyOutcome==='skipped'?'skipped':'success',
@@ -2394,7 +2472,7 @@
     close.type='button';close.addEventListener('click',()=>overlay.remove());
     h.append(close);
     const body=element('div','ufs-create-fields');
-    body.append(element('div','ufs-batch-meta','目标：'+job.destination),
+    body.append(element('div','ufs-batch-meta',job.record.operation==='delete'?'来源：'+job.destination:'目标：'+job.destination),
       element('div','ufs-batch-meta','同名处理：'+
         (job.conflictPolicy==='overwrite'?'覆盖':'忽略')));
     for(let i=0;i<job.record.items.length;i++){
@@ -2457,7 +2535,7 @@
   function copyJobPhaseLabel(job) {
     if(job.phase==='checking') return '正在检查';
     if(job.phase==='verifying') return '正在核验';
-    return job.record?.operation==='move'?'移动中':'复制中';
+    return job.record?.operation==='delete'?'删除中':job.record?.operation==='move'?'移动中':'复制中';
   }
   function copyJobStatusLabel(job) {
     return job.status==='running'?copyJobPhaseLabel(job)+
@@ -2467,8 +2545,9 @@
       job.status==='uncertain'?'待核实':'已停止';
   }
   function copyJobMeta(job) {
-    if(job.phase==='checking') return '正在验证源文件和目标目录';
-    if(job.phase==='verifying') return job.record?.operation==='move'?'正在核对移动结果':'正在核对复制结果';
+    if(job.phase==='checking') return job.record?.operation==='delete'?'正在检查待删除项目':'正在验证源文件和目标目录';
+    if(job.record?.operation==='delete')return '永久删除中 · 无可靠百分比';
+    if(job.phase==='verifying') return job.record?.operation==='delete'?'正在核对删除结果':job.record?.operation==='move'?'正在核对移动结果':'正在核对复制结果';
     const speed=currentCopySpeed(job);
     return speed?'速度 '+speed+(job.recoveryMonitoring && job.eta?' · 剩余 '+job.eta:''):
       (job.speedUpdatedAt?'速度暂无数据':'速度获取中…');
@@ -2648,9 +2727,9 @@
         document.querySelector('.ufs-diagnostic-overlay')) return;
     const panel=element('div','ufs-copy-task-center');
     panel.setAttribute('role','dialog');
-    panel.setAttribute('aria-label',copyJobs.some(j=>j.record?.operation==='move')?'文件任务中心':'复制任务中心');
+    panel.setAttribute('aria-label',copyJobs.some(j=>['move','delete'].includes(j.record?.operation))?'文件任务中心':'复制任务中心');
     const head=element('div','ufs-task-center-head');
-    head.append(element('strong','',(copyJobs.some(j=>j.record?.operation==='move')?'文件任务':'复制任务')+' · '+copyJobs.length+' 项'));
+    head.append(element('strong','',(copyJobs.some(j=>['move','delete'].includes(j.record?.operation))?'文件任务':'复制任务')+' · '+copyJobs.length+' 项'));
     const actions=element('div','ufs-task-center-actions');
     const clear=element('button','ufs-task-center-icon ufs-task-center-clear');
     clear.type='button';
@@ -3852,6 +3931,10 @@
           chosen.some(item=>!safeWritePath(item.path)||item.copyPathVerified===false)?
             '当前选择包含不安全的移动路径':
             chosen.some(item=>parentPath(item.path)!==currentPath())?'只能移动当前目录下的项目':'']);
+        actions.push(['删除',()=>showDeleteDialog(chosen),
+          chosen.some(item=>!safeWritePath(item.path)||item.copyPathVerified===false)?
+            '当前选择包含不安全的删除路径':
+            chosen.some(item=>parentPath(item.path)!==currentPath())?'只能删除当前目录下的项目':'']);
       }
       actions.push(['复制路径（' + chosen.length + ' 项）', copySelectedPaths]);
       if (chosen.length === 1 && !chosen[0].folder)
@@ -5476,6 +5559,191 @@
     void loadChildren(PREFIX);
   }
 
+
+  // Permanent deletion intentionally has a separate confirmation from the copy/move picker.
+  function showDeleteDialog(input) {
+    const entries=(Array.isArray(input)?input:[input]).filter(Boolean).map(item=>({...item}));
+    if(!DELETE_ENABLED || !entries.length || destroyed || state.busy ||
+       $('.ufs-dialog-overlay',app) || document.querySelector('.ufs-diagnostic-overlay') ||
+       entries.some(item=>!safeWritePath(item.path)||item.copyPathVerified===false||
+         parentPath(item.path)!==currentPath()))return;
+    const parent=currentPath(),opener=document.activeElement;
+    const overlay=element('div','ufs-dialog-overlay');
+    const dialog=element('div','ufs-create-dialog ufs-delete-dialog');
+    dialog.tabIndex=-1;
+    dialog.setAttribute('role','dialog');
+    dialog.setAttribute('aria-modal','true');
+    dialog.setAttribute('aria-label','永久删除所选项目');
+    const header=element('div','ufs-create-head');
+    header.append(element('h3','','永久删除所选项目'));
+    const dismiss=element('button','ufs-create-dismiss');
+    dismiss.type='button';dismiss.setAttribute('aria-label','关闭删除窗口');
+    dismiss.append(icon('close'));header.append(dismiss);
+    const form=element('form','ufs-create-form');
+    const body=element('div','ufs-create-fields');
+    body.append(element('strong','','将永久删除 '+entries.length+' 个项目'));
+    const list=element('div','ufs-delete-list');
+    for(const item of entries){
+      const row=element('div','ufs-batch-preview-row');
+      row.append(icon(item.folder?'folder':'file'),element('span','',item.name));
+      list.append(row);
+    }
+    body.append(list);
+    const warning=element('div','ufs-delete-warning');
+    warning.append(icon('alert-circle'),element('span','',
+      '原生永久删除不会进入回收站。文件夹及其中所有内容将被直接删除，无法通过 File Station 撤销。'));
+    body.append(warning);
+    const needConfirm=entries.length>1||entries.some(item=>item.folder);
+    const acknowledge=element('label','ufs-delete-acknowledge');
+    const check=element('input');check.type='checkbox';check.checked=false;
+    if(needConfirm){
+      acknowledge.append(check,element('span','','我已了解永久删除的后果'));
+      body.append(acknowledge);
+    }
+    const feedback=element('div','ufs-create-feedback');
+    feedback.setAttribute('role','status');body.append(feedback);
+    const footer=element('div','ufs-create-buttons');
+    const cancel=element('button','ufs-create-cancel','取消');
+    cancel.type='button';
+    const submit=element('button','ufs-create-submit ufs-delete-submit','永久删除');
+    submit.type='submit';submit.disabled=needConfirm;
+    footer.append(cancel,submit);
+    form.append(body,footer);dialog.append(header,form);
+    overlay.append(dialog);app.append(overlay);
+    setupListScrollbars(body);setupListScrollbars(list);
+    dialog.focus({preventScroll:true});
+    let job=null,closed=false,enqueuePending=false,stopAfterCurrent=false;
+    const restore=()=>{
+      const target=opener?.isConnected&&app.contains(opener)?opener:$('.ufs-list',app);
+      target?.focus({preventScroll:true});
+    };
+    const close=()=>{
+      if(enqueuePending)return;
+      if(job && ['queued','running'].includes(job.status)){
+        overlay.remove();restore();return;
+      }
+      closed=true;overlay.remove();
+      if(job?.status==='success')removeCopyJob(job);
+      restore();
+    };
+    dismiss.addEventListener('click',close);
+    cancel.addEventListener('click',()=>{
+      if(job?.status==='queued'){
+        job.status='removed';removeCopyJob(job);
+        closed=true;overlay.remove();restore();return;
+      }
+      if(job?.status==='running'){
+        stopAfterCurrent=true;
+        cancel.disabled=true;
+        feedback.textContent='当前项目完成后停止后续队列，已经永久删除的内容无法撤销。';
+        return;
+      }
+      close();
+    });
+    overlay.addEventListener('click',event=>{if(event.target===overlay)close();});
+    dialog.addEventListener('keydown',event=>{
+      if(event.key==='Escape'){event.preventDefault();event.stopPropagation();close();}
+    });
+    check.addEventListener('change',()=>{if(!job)submit.disabled=!check.checked;});
+    const renderProgress=(message,phase='')=>{
+      if(closed||destroyed)return;
+      feedback.textContent=message;
+      if(phase)dialog.dataset.phase=phase;
+    };
+    async function executeDeleteJob(){
+      let completed=0;
+      submit.hidden=true;cancel.textContent='当前项完成后停止';cancel.disabled=false;
+      for(let i=0;i<entries.length;i++){
+        if(stopAfterCurrent){job.phase='stopped';break;}
+        const item=entries[i],saved=job.record.items[i];
+        const plan=planFileOperation({type:'delete',source:item.path,folder:item.folder});
+        try{
+          await copyItemCheckpoint(job,i,'checking','not-submitted');
+          renderProgress('正在删除第 '+(i+1)+' / '+entries.length+' 项：'+item.name,'checking');
+          await deleteNativeEntry(plan,(message,phase)=>{
+            copyJobSignal(job,phase);
+            renderProgress(message||'删除中…',phase);
+          },{},async()=>copyItemCheckpoint(job,i,'submission-intent','intent-saved'));
+          await copyItemCheckpoint(job,i,'success','confirmed');
+          completed++;
+          renderProgress('已永久删除 '+completed+' / '+entries.length+' 项','copying');
+          state.tree.delete(parent);
+          if(currentPath()===parent)await refreshDirectory().catch(()=>{});
+        }catch(error){
+          const sent=saved.submission!=='not-submitted';
+          saved.status=sent?'uncertain':'failed';
+          if(sent)saved.submission='unknown';
+          saved.updatedAt=Date.now();
+          await persistCopyQueue().catch(()=>{});
+          job.phase=sent?'uncertain':'failed';
+          job.error=String(error?.message||error);
+          renderProgress((sent?'删除结果待核实：':'未开始删除：')+job.error,job.phase);
+          cancel.textContent='关闭窗口';
+          submit.hidden=true;
+          throw error;
+        }
+      }
+      if(job.phase!=='stopped')job.phase='success';
+      if(!closed){
+        renderProgress(job.phase==='stopped'?
+          '已停止后续任务，已永久删除 '+completed+' 项。':
+          '永久删除完成，共 '+completed+' 项。',job.phase);
+        submit.hidden=false;submit.textContent='完成';submit.disabled=false;
+        cancel.textContent='关闭';cancel.disabled=false;
+      }
+    }
+    const reopen=()=>{
+      if(!closed&&!destroyed&&!$('.ufs-dialog-overlay',app)&&
+         !document.querySelector('.ufs-diagnostic-overlay')){
+        app.append(overlay);dialog.focus({preventScroll:true});
+      }
+    };
+    form.addEventListener('submit',event=>{
+      event.preventDefault();
+      if(closed||enqueuePending)return;
+      if(job?.status==='success'||job?.status==='stopped'){close();return;}
+      if(job)return;
+      if(needConfirm&&!check.checked)return;
+      void (async()=>{
+        enqueuePending=true;submit.disabled=true;cancel.disabled=true;dismiss.disabled=true;
+        try{
+          // A fresh entire-batch preflight is read-only; item execution repeats its own checks.
+          const fresh=await listDirectory(parent);
+          for(const item of entries){
+            const found=fresh.find(x=>x.path===item.path);
+            if(!found || found.folder!==item.folder || found.copyPathVerified===false)
+              throw new Error('待删除项目已变化，请刷新后重新选择：'+item.name);
+          }
+          if(await readNativeActive())
+            throw new Error('Unraid 正在执行其他原生文件任务');
+          const name=entries.length===1?entries[0].name:
+            entries[0].name+' 等 '+entries.length+' 项';
+          const record=newCopyRecord(entries,parent,'fail',name,'delete');
+          job={
+            record,taskId:record.taskId,name,destination:parent,
+            conflictPolicy:'fail',count:entries.length,percent:null,
+            reopen,execute:executeDeleteJob,prepare:()=>{},
+            cancelQueued:()=>{
+              if(job?.status!=='queued')return;
+              job.status='removed';removeCopyJob(job);
+              closed=true;overlay.remove();restore();
+            }
+          };
+          renderProgress('已加入删除队列，等待前面的文件任务执行完毕。','queued');
+          cancel.textContent='取消排队';
+          await registerCopyJob(job);
+        }catch(error){
+          if(job&&!copyJobs.includes(job))job=null;
+          renderProgress('未提交删除：'+String(error?.message||error),'failed');
+        }finally{
+          enqueuePending=false;
+          dismiss.disabled=false;cancel.disabled=false;
+          if(!job)submit.disabled=needConfirm&&!check.checked;
+        }
+      })();
+    });
+  }
+
   function showOperationsMenu() {
     const trigger = $('.ufs-operations', app);
     if (currentMenu && trigger.getAttribute('aria-expanded') === 'true') {
@@ -5617,7 +5885,7 @@
       renderHeaderMarkup(),
       renderWorkspaceMarkup(),
       '<div class="ufs-status"><span class="ufs-count">准备就绪</span>',
-      '<span class="ufs-status-hint">支持新建文件夹、重命名、复制 · 其他写入请使用原生文件管理器</span>',
+      '<span class="ufs-status-hint">支持新建、重命名、复制、移动与删除</span>',
       '<button type="button" class="ufs-copy-task-trigger" title="查看复制任务" hidden>复制任务进行中</button></div>'
     ].join('');
     $$('[data-ufs-icon]', app).forEach((placeholder) => {
@@ -6061,7 +6329,7 @@
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
     window.__UFS_TEST_API__ = { diagnosticSanitize, diagnosticScrub, diagnosticLog,
     diagnosticReadAll, diagnosticSnapshot, diagnosticMarkIssue, diagnosticSetVerbose,
-    diagnosticIsVerbose, normalizeSavedCopyItem, normalizeSavedCopyTask, validateCopyQueueSnapshot, copyRecoveryAssessment, createCopyQueueStore, currentCopySpeed, copyJobPhaseLabel, copyJobStatusLabel, copyJobMeta, findBatchCopyConflicts, findBatchCopyTypeConflicts, batchCopyOverallProgress, safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, COPY_ENABLED, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, nativeCopyTarget, matchesCopyTask, copyDestinationAllowed, copyNativeEntry, decodeRsyncFilename, parseRsyncProgress, shortenCopyName, requestCancelNativeCopy, takeOverNativeFileMonitor, availableHeight, visibleEntries, sortedCopyFolders, safeCopyName, safeCopyPath, copyBlockedReason, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
+    diagnosticIsVerbose, normalizeSavedCopyItem, normalizeSavedCopyTask, validateCopyQueueSnapshot, copyRecoveryAssessment, createCopyQueueStore, currentCopySpeed, copyJobPhaseLabel, copyJobStatusLabel, copyJobMeta, findBatchCopyConflicts, findBatchCopyTypeConflicts, batchCopyOverallProgress, safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, COPY_ENABLED, MOVE_ENABLED, DELETE_ENABLED, matchesMoveTask, matchesDeleteTask, deleteNativeEntry, moveNativeEntry, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, nativeCopyTarget, matchesCopyTask, copyDestinationAllowed, copyNativeEntry, decodeRsyncFilename, parseRsyncProgress, shortenCopyName, requestCancelNativeCopy, takeOverNativeFileMonitor, availableHeight, visibleEntries, sortedCopyFolders, safeCopyName, safeCopyPath, copyBlockedReason, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();
