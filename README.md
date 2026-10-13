@@ -1,12 +1,20 @@
 # Unraid File Station
 
-> **当前开发版本：v0.2.11.7（移动与原生永久删除开发预览）**。移动/删除属于高风险写入操作，尚待 Unraid 7.2.2 实机专项验收。首次仅在可丢弃的测试共享执行，重要资料请勿试用。
+> **当前开发版本：v0.2.11.8（移动与原生永久删除开发预览）**。移动/删除属于高风险写入操作，尚待 Unraid 7.2.2 实机专项验收。首次仅在可丢弃的测试共享执行，重要资料请勿试用。
 
 在 **Unraid WebGUI** 内提供接近 Synology DSM File Station 的文件管理体验，同时保留 Unraid 的顶部导航、Shares 设置页以及原生文件管理器。
 
-> **开发状态：v0.2.11.7**。v0.2.9 增加安全移动，v0.2.10 增加原生永久删除及任务恢复；新写入操作待真实 NAS 验收。
+> **开发状态：v0.2.11.8**。v0.2.9 增加安全移动，v0.2.10 增加原生永久删除及任务恢复；新写入操作待真实 NAS 验收。
 >
 > 项目与 Unraid、Synology 均无官方关联。设计灵感来自 Synology DSM File Station。
+
+## v0.2.11.8 — 一个文件夹 + 普通文件原生混合批量 Move（待实机验收）
+
+- **原生接口依据**：Unraid `file_manager` 的 `action=4`、`action=9` 共用移动处理分支，`source` 支持 CR 分隔多项，并逐项识别文件 / 目录。符合条件时一次 `action=9` 提交一个文件夹和若干普通文件，采用 `batchMode=native-move-mixed`。
+- **启用范围**：2–256 项、同父目录、同目标目录、恰好 **1 个文件夹** 和 **至少 1 个普通文件**、无同名目标、路径已核验。多个文件夹、不同父目录、危险路径及同名冲突均不启用；保留 v0.2.11.7 普通文件批量路径。
+- **安全边界**：原生后台可能采用 rsync 复制后删除而不一定是同文件系统 rename；仅核对目录顶层的源消失 / 目标存在与类型，**不验证文件夹的全部递归内容或哈希**。重要资料不应在当前实验版执行混合 Move，须先用测试数据验收。
+- **异常与 F5**：原生批量任务以完整源串、目标和 action 9 归属校验，提交前所有项目意图一次落盘；异常时整批待核实，不能自动重发；已提交的批次不会因刷新而拆散恢复。
+- **Agent 诊断**：`move.batch_strategy` 增加明确的 `batchMode`、`folderCount`、`reason`（例如 `multiple-directories`）；成功日志记录 `folderVerification=top-level-only`，避免把目录存在误判成递归完整性。
 
 ## v0.2.11.7 — 同目录普通文件原生批量 Move（等待 Unraid 实机验收）
 
@@ -584,7 +592,7 @@
 
 1. 在浏览器中安装 Tampermonkey 或其他兼容的用户脚本管理器。
 2. 打开 [Unraid File Station UserScript（开发分支 Raw）](https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js) 安装脚本。已有安装若无法自动更新，可重新打开这个链接并在 Tampermonkey 中选择更新已有脚本。
-   当前 `@version` 为 `0.2.11.7`，版本检查和下载均指向上述地址。
+   当前 `@version` 为 `0.2.11.8`，版本检查和下载均指向上述地址。
 3. **建议在用户脚本管理器中将匹配地址收窄为自己的 NAS 主机名或 IP。** 默认规则匹配任何主机上的 `/Shares*` 路径，仅为兼容不同 Unraid 主机名。
 4. 打开 Unraid 7.2.2 的 **SHARES** 页，点击共享名称左边的蓝色浏览图标；或者点击 Shares 下方新出现的 **FILE STATION** 按钮。
 5. File Station 右上角的 **返回原生** 可以恢复原生文件管理页面；原生页面上会有 **打开 File Station** 按钮用于切回。
