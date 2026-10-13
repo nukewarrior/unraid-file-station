@@ -2168,7 +2168,7 @@ test('v0.2.7.1 刷新后仅重新观察严格匹配的原生任务，无法确�
 test('v0.2.7.2 Tampermonkey 自动更新元数据与脚本版本保持一致',()=>{
   const header=script.split('// ==/UserScript==',1)[0];
   const updateUrl='https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js';
-  assert.match(header,/^\/\/ @version\s+0\.2\.11\.3$/m);
+  assert.match(header,/^\/\/ @version\s+0\.2\.11\.4$/m);
   assert.ok(header.split('\n').includes('// @updateURL    '+updateUrl));
   assert.ok(header.split('\n').includes('// @downloadURL  '+updateUrl));
   assert.equal(header.match(/^\/\/ @version\s+/gm)?.length,1);
@@ -2349,4 +2349,27 @@ test('v0.2.11 Pointer 拖动冻结多选，不在松手时直接执行原生写�
   assert.match(script,/suppressDragMoveClick=true/);
   assert.match(script,/row\.dataset\.ufsDropPath=path/);
   assert.match(script,/if\(entry\.folder\)row\.dataset\.ufsDropPath=entry\.path/);
+});
+
+
+test('v0.2.11.4 拖放点击穿透保护与弹窗生命周期诊断',()=>{
+  assert.match(script,/let pendingDragMoveDialogTimer=null/);
+  assert.match(script,/pendingDragMoveDialogTimer=setTimeout\(\(\)=>\{/);
+  assert.match(script,/dragMoveClickTimer=setTimeout\(\(\)=>\{suppressDragMoveClick=false/);
+  assert.match(script,/clearTimeout\(pendingDragMoveDialogTimer\)/);
+  assert.match(script,/const intentional=event\.target===overlay && event\.pointerId===backdropPointerId/);
+  assert.match(script,/logMoveDialog\('dialog\.move_open'/);
+  assert.match(script,/logMoveDialog\('dialog\.move_closed'/);
+  assert.match(script,/close\('escape'\)/);
+  assert.match(script,/close\('backdrop'\)/);
+});
+test('v0.2.11.4 拖放目标异步预选失败不可启用提交按钮',()=>{
+  assert.match(script,/submit\.textContent='正在确认目标…'/);
+  assert.match(script,/logMoveDialog\('dialog\.move_target_loading'/);
+  assert.match(script,/if\(!nodes\.has\(requestedDestination\)\)/);
+  assert.match(script,/throw new Error\(prefillLoadError\|\|'目标文件夹尚未成功读取'\)/);
+  assert.match(script,/logMoveDialog\('dialog\.move_target_ready'/);
+  assert.match(script,/diagnosticLog\('WARN','dialog\.move_target_failed'/);
+  assert.match(script,/logMoveDialog\('dialog\.move_submit_blocked'/);
+  assert.match(script,/logMoveDialog\('dialog\.move_target_manual'/);
 });

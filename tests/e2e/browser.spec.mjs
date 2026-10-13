@@ -3316,3 +3316,69 @@ test('v0.2.11 拖动悬停 700ms 自动展开左侧目录树',async t=>{
   assert.equal(nativePosts.filter(item=>item.mode==='file').length,0);
   assert.equal(errors.length,0,errors.join('\n'));
 });
+
+
+test('v0.2.11.4 连续拖放到目录树不会产生闪退或自动写入',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t);
+  const source=page.locator('.ufs-entry[data-ufs-file="/mnt/user/TimeMachine/notes.txt"]');
+  const target=page.locator('.ufs-tree-row[data-ufs-drop-path="/mnt/user/downloads"]');
+  await source.waitFor();await target.waitFor();
+  for(let i=0;i<3;i++){
+    await dragRowsTo(page,source,target);
+    const modal=page.getByRole('dialog',{name:'移动到'});
+    await modal.waitFor();
+    await page.waitForTimeout(200);
+    assert.equal(await modal.isVisible(),true,'拖拽后弹窗不得闪退');
+    await page.locator('.ufs-copy-destination',{hasText:'/mnt/user/downloads'}).waitFor();
+    assert.equal(nativePosts.filter(post=>post.mode==='file').length,0);
+    await modal.getByRole('button',{name:'取消'}).click();
+    await modal.waitFor({state:'detached'});
+  }
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.11.4 拖放后合成 click 无法关闭弹窗，仅真实遮罩指针操作可以关闭',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t);
+  const source=page.locator('.ufs-entry[data-ufs-file="/mnt/user/TimeMachine/notes.txt"]');
+  const target=page.locator('.ufs-tree-row[data-ufs-drop-path="/mnt/user/downloads"]');
+  await source.waitFor();await target.waitFor();
+  await dragRowsTo(page,source,target);
+  const modal=page.getByRole('dialog',{name:'移动到'});
+  await modal.waitFor();
+  await page.locator('.ufs-dialog-overlay').evaluate(el=>el.dispatchEvent(
+    new MouseEvent('click',{bubbles:true,cancelable:true})));
+  assert.equal(await modal.isVisible(),true,'点击事件不应被当作完整遮罩指针动作');
+  const backdrop=await page.locator('.ufs-dialog-overlay').boundingBox();
+  assert.ok(backdrop);
+  await page.mouse.click(backdrop.x+5,backdrop.y+5);
+  await modal.waitFor({state:'detached'});
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.11.4 目标读取较慢时显示确认中并拦截过早提交',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t,{delayDownloads:1000});
+  const source=page.locator('.ufs-entry[data-ufs-file="/mnt/user/TimeMachine/notes.txt"]');
+  const target=page.locator('.ufs-tree-row[data-ufs-drop-path="/mnt/user/downloads"]');
+  await source.waitFor();await target.waitFor();
+  await dragRowsTo(page,source,target);
+  const modal=page.getByRole('dialog',{name:'移动到'});
+  await modal.waitFor();
+  const submit=modal.locator('.ufs-copy-submit');
+  assert.equal(await submit.isDisabled(),true);
+  assert.match(await submit.innerText(),/正在确认目标/);
+  assert.match(await modal.innerText(),/正在确认拖放目标/);
+  // Simulate a keyboard-originated submit while the button is unavailable.
+  await modal.locator('form').evaluate(form=>form.dispatchEvent(
+    new Event('submit',{bubbles:true,cancelable:true})));
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,0);
+  await page.locator('.ufs-copy-destination',{hasText:'/mnt/user/downloads'}).waitFor();
+  await page.waitForFunction(()=>{
+    const button=document.querySelector('.ufs-copy-dialog .ufs-copy-submit');
+    return button && !button.disabled && button.textContent.includes('开始移动');
+  },{timeout:10000});
+  assert.equal(await modal.isVisible(),true);
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,0);
+  await modal.getByRole('button',{name:'取消'}).click();
+  assert.equal(errors.length,0,errors.join('\n'));
+});

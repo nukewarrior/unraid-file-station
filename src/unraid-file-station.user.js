@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.11.3
+// @version      0.2.11.4
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -1552,7 +1552,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.11.3';
+  const DIAGNOSTIC_VERSION='0.2.11.4';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -3729,6 +3729,7 @@
   let dragMoveSession=null;
   let suppressDragMoveClick=false;
   let dragMoveClickTimer=null;
+  let pendingDragMoveDialogTimer=null;
   function canDropMoveAt(destination,session) {
     if(!session || !Array.isArray(session.items) || !session.items.length ||
        !safeWritePath(destination,true) || !state.tree.has(PREFIX) ||
@@ -3853,11 +3854,18 @@
     // single click so it cannot navigate or collapse the multi-selection.
     suppressDragMoveClick=true;
     clearTimeout(dragMoveClickTimer);
-    dragMoveClickTimer=setTimeout(()=>{suppressDragMoveClick=false;dragMoveClickTimer=null;},0);
+    // A synthesized click may follow pointerup; keep the guard briefly.
+    dragMoveClickTimer=setTimeout(()=>{suppressDragMoveClick=false;dragMoveClickTimer=null;},250);
     if(currentPath()!==sourceDir)return;
     if(valid) {
       diagnosticLog('INFO','drag.move_target',{target:destination,count:items.length});
-      showCopyDialog(items,'move',{initialDestination:destination});
+      // Do not attach a modal backdrop before the pointerup-generated click.
+      clearTimeout(pendingDragMoveDialogTimer);
+      pendingDragMoveDialogTimer=setTimeout(()=>{
+        pendingDragMoveDialogTimer=null;
+        if(destroyed || !app.isConnected || currentPath()!==sourceDir || state.busy)return;
+        showCopyDialog(items,'move',{initialDestination:destination});
+      },0);
     } else if(destination) {
       notify('不能移动到此文件夹：源位置、文件夹自身或内部目录不可作为目标');
     }
@@ -3872,7 +3880,7 @@
       else dragMoveSession=null;
     });
     app.addEventListener('click',event=>{
-      if(!suppressDragMoveClick)return;
+      if(!suppressDragMoveClick || event.target.closest('.ufs-dialog-overlay'))return;
       suppressDragMoveClick=false;
       clearTimeout(dragMoveClickTimer);
       dragMoveClickTimer=null;
@@ -3881,6 +3889,8 @@
     onCleanup(()=>{
       dragMoveReset();
       clearTimeout(dragMoveClickTimer);
+      clearTimeout(pendingDragMoveDialogTimer);
+      pendingDragMoveDialogTimer=null;
     });
   }
 
@@ -4414,6 +4424,9 @@
     // The menu action may remove the opener before this dialog is constructed.
     // Fall back to the file list when returning focus to a detached opener.
     const opener = document.activeElement;
+    const logMoveDialog=(code,details={})=>{
+      if(isMove)diagnosticLog('INFO',code,{count:entries.length,...details});
+    };
     const overlay = element('div','ufs-dialog-overlay');
     const dialog = element('div','ufs-create-dialog ufs-copy-dialog');
     dialog.tabIndex = -1;
@@ -4725,6 +4738,7 @@
     dialog.append(header,form);
     overlay.append(dialog);
     app.append(overlay);
+    logMoveDialog('dialog.move_open',{prefilled:!!requestedDestination});
     setupListScrollbars(fields);
     setupListScrollbars(picker);
     const focusDialog = () => {
@@ -4739,6 +4753,8 @@
     // Unlike create/rename there is no text input to focus automatically.
     focusDialog();
     let busy=false, closed=false, selected=null, requestVersion=0;
+    let prefillPending=!!requestedDestination, prefillOverridden=false;
+    let prefillLoadError='';
     let finalPhase='picker', cancelSubmitting=false;
     let control={cancelRequested:false,observedOwnTask:false};
     const nodes=new Map();
@@ -4752,9 +4768,10 @@
       currentIndex:-1,currentPercent:null,percent:0,mode:'items',
       started:false,preflighting:false,finished:false,stopAfterCurrent:false,view:'main',phase:'picker',error:''
     }:null;
-    const close=()=>{
+    const close=(reason='button')=>{
       if(inlineDraft?.busy || (multi && batch.preflighting)) return;
       if(busy || copyJob?.status==='queued') {minimize();return;}
+      logMoveDialog('dialog.move_closed',{reason,phase:finalPhase,prefillPending});
       closed=true; ++requestVersion;
       overlay.remove();
       if(copyJob) removeCopyJob(copyJob);
@@ -4773,7 +4790,7 @@
       updateCopyTaskButton();
       focusDialog();
     };
-    dismiss.addEventListener('click',close);
+    dismiss.addEventListener('click',()=>close('dismiss'));
     background.addEventListener('click',minimize);
     cancel.addEventListener('click',()=>{
       if(copyJob?.status==='queued') {
@@ -4789,12 +4806,12 @@
       }
       if(multi) {
         if(batch.view==='list') {showBatchMain();return;}
-        if(batch.finished || !batch.started) {close();return;}
+        if(batch.finished || !batch.started) {close('cancel');return;}
         batchStopChoices.hidden=!batchStopChoices.hidden;
         return;
       }
       if(!busy || finalPhase==='success' || finalPhase==='uncertain' ||
-          finalPhase==='cancelled') {close();return;}
+          finalPhase==='cancelled') {close('cancel');return;}
       if(finalPhase==='cancelling') {minimize();return;}
       if(finalPhase!=='copying' || cancelSubmitting || control.cancelRequested) return;
       if(isMove){progressNote.textContent='移动任务不可安全立即停止，请等待完成并核实。';return;}
@@ -4825,7 +4842,19 @@
         if(!closed) {cancel.disabled=false;cancel.textContent='后台运行';}
       });
     });
-    overlay.addEventListener('click',event=>{if(event.target===overlay) close();});
+    // A backdrop click is intentional only when the user presses AND releases
+    // on the backdrop. The synthetic click after a drag cannot close it.
+    let backdropPointerId=null;
+    overlay.addEventListener('pointerdown',event=>{
+      backdropPointerId=event.target===overlay && event.isPrimary && event.button===0 ?
+        event.pointerId:null;
+    });
+    overlay.addEventListener('pointerup',event=>{
+      const intentional=event.target===overlay && event.pointerId===backdropPointerId;
+      backdropPointerId=null;
+      if(intentional)close('backdrop');
+    });
+    overlay.addEventListener('pointercancel',()=>{backdropPointerId=null;});
     dialog.addEventListener('keydown',event=>{
       if(event.key!=='Escape') return;
       event.preventDefault();
@@ -4834,7 +4863,7 @@
       // editor, while the next Esc dismisses the copy picker.
       if(inlineDraft && !inlineDraft.busy) {cancelInlineCreate();return;}
       if(multi && batch.view==='list') {showBatchMain();return;}
-      close(); // During an active copy this minimizes; it never sends action=99.
+      close('escape'); // During an active copy this minimizes; it never sends action=99.
     });
     const setFeedback=(message,isError=false)=>{
       if(closed || !dialog.isConnected) return;
@@ -4892,6 +4921,13 @@
           choose.addEventListener('click',()=>{
             if(busy || inlineDraft || mkdirUncertain || !permitted) return;
             if(selected!==path) clearPreflightError();
+            if(prefillPending){
+              prefillOverridden=true;
+              prefillPending=false;
+              prefillLoadError='';
+              submit.textContent=(isMove?'开始移动':'开始复制');
+              logMoveDialog('dialog.move_target_manual',{target:path});
+            }
             selected=path;
             destinationText.textContent='目标：'+path;
             destinationText.title=path;
@@ -4942,10 +4978,12 @@
           const entries=await listDirectory(path);
           if(closed || request!==requestVersion) return;
           nodes.set(path, sortedCopyFolders(path, entries));
-          setFeedback((isMove?'不允许将文件夹移动到自身内部。':'不允许将文件夹复制到自身内部。'));
+          if(!prefillPending)
+            setFeedback((isMove?'不允许将文件夹移动到自身内部。':'不允许将文件夹复制到自身内部。'));
         } catch(error) {
           if(closed || request!==requestVersion) return;
           opened.delete(path);
+          if(prefillPending)prefillLoadError=String(error?.message||error);
           setFeedback('无法读取目标文件夹：'+String(error?.message||error),true);
         } finally {
           if(pending.get(path)===task) pending.delete(path);
@@ -5670,9 +5708,23 @@
     }
     let enqueuePending=false;
     async function submitCopyJob() {
-      if(closed || destroyed || busy || enqueuePending || batch?.preflighting || inlineDraft ||
-          mkdirUncertain || submit.disabled || !selected) return;
-      if(copyJob && copyJob.status!=='failed') return;
+      const blocked=closed?'closed':destroyed?'destroyed':busy?'busy':
+        enqueuePending?'enqueue-pending':batch?.preflighting?'preflight':
+        inlineDraft?'inline-mkdir':mkdirUncertain?'mkdir-uncertain':
+        prefillPending?'target-loading':!selected?'no-destination':
+        submit.disabled?'submit-disabled':null;
+      if(blocked){
+        logMoveDialog('dialog.move_submit_blocked',{reason:blocked});
+        if(isMove && !closed && !destroyed && dialog.isConnected)
+          setFeedback(blocked==='target-loading'?'正在确认拖放目标，请稍候…':
+            blocked==='no-destination'?'请先选择目标文件夹。':
+            '暂时无法提交移动任务，请稍后重试（'+blocked+'）。',true);
+        return;
+      }
+      if(copyJob && copyJob.status!=='failed') {
+        logMoveDialog('dialog.move_submit_blocked',{reason:'existing-job'});
+        return;
+      }
       if(copyJob && copyJob.status==='failed') removeCopyJob(copyJob);
       try {
         const plans=entries.map(item=>planFileOperation({type:operation,
@@ -5680,7 +5732,11 @@
         if(!copyDestinationAllowedForAll(selected) ||
           new Set(plans.map(plan=>plan.target)).size!==plans.length)
           throw new Error('目标位置无效或存在重复目标名称');
-      } catch(error) {setFeedback(String(error?.message||error),true);return;}
+      } catch(error) {
+        logMoveDialog('dialog.move_submit_rejected',{reason:String(error?.message||error)});
+        setFeedback(String(error?.message||error),true);return;
+      }
+      logMoveDialog('dialog.move_submit',{target:selected});
       const name=multi?entries[0].name+' 等 '+entries.length+' 项':entry.name;
       const record=newCopyRecord(entries,selected,conflictPolicy,name,operation);
       copyJob={
@@ -5718,6 +5774,7 @@
       try {
         await registerCopyJob(copyJob);
       } catch(error) {
+        logMoveDialog('dialog.move_enqueue_failed',{reason:String(error?.message||error)});
         if(copyJob && copyJobs.includes(copyJob)) copyJobs.splice(copyJobs.indexOf(copyJob),1);
         copyJob=null;
         fields.replaceChildren(summary,location);
@@ -5737,42 +5794,61 @@
     }
     form.addEventListener('submit',event=>{
       event.preventDefault();
-      if(multi && batch?.finished) {close();return;}
+      if(multi && batch?.finished) {close('completed');return;}
       if(!multi && (finalPhase==='success'||finalPhase==='uncertain'||
-          finalPhase==='cancelled')) {close();return;}
+          finalPhase==='cancelled')) {close('completed');return;}
       void submitCopyJob();
     });
-    if(requestedDestination && copyDestinationAllowedForAll(requestedDestination) &&
-       safeWritePath(requestedDestination,true)) {
-      // Resolve each ancestor through the existing lazy picker loader. Never
-      // infer that a path is valid just because the sidebar showed it earlier.
+    if(requestedDestination) {
+      submit.disabled=true;
+      submit.textContent='正在确认目标…';
+      setFeedback('正在确认拖放目标，请稍候…');
+      logMoveDialog('dialog.move_target_loading',{target:requestedDestination});
+      // Verify ancestors and the destination before enabling submission.
+      // A manual picker choice takes precedence over this async preselection.
       void (async()=>{
-        const parents=[];
-        let at=requestedDestination;
-        while(at!==PREFIX && at.startsWith(PREFIX+'/')){
-          parents.unshift(at);at=parentPath(at);
-        }
-        await loadChildren(PREFIX);
-        for(const child of parents){
-          if(closed || destroyed)return;
-          const upstream=nodes.get(parentPath(child));
-          if(!upstream?.some(item=>item.path===child && item.folder &&
-              item.copyPathVerified!==false)){
-            setFeedback('拖放目标已发生变化，请手动重新选择文件夹。',true);
-            return;
+        try{
+          if(!copyDestinationAllowedForAll(requestedDestination) ||
+             !safeWritePath(requestedDestination,true))
+            throw new Error('拖放目标不安全');
+          const parents=[];
+          let at=requestedDestination;
+          while(at!==PREFIX && at.startsWith(PREFIX+'/')){
+            parents.unshift(at);at=parentPath(at);
           }
-          opened.add(child);
-          await loadChildren(child);
+          await loadChildren(PREFIX);
+          for(const child of parents){
+            if(closed || destroyed || prefillOverridden)return;
+            const upstream=nodes.get(parentPath(child));
+            if(!upstream?.some(item=>item.path===child && item.folder &&
+                item.copyPathVerified!==false))
+              throw new Error(prefillLoadError||'拖放目标已发生变化');
+            opened.add(child);
+            await loadChildren(child);
+          }
+          if(closed || destroyed || prefillOverridden)return;
+          if(!nodes.has(requestedDestination))
+            throw new Error(prefillLoadError||'目标文件夹尚未成功读取');
+          selected=requestedDestination;
+          destinationText.textContent='目标：'+selected;
+          destinationText.title=selected;
+          prefillPending=false;
+          submit.textContent='开始移动';
+          submit.disabled=false;
+          setFeedback('目标已确认，可以开始移动。');
+          logMoveDialog('dialog.move_target_ready',{target:selected});
+          renderPicker();
+          picker.querySelector('.ufs-copy-tree-row.ufs-copy-selected')?.scrollIntoView({block:'nearest'});
+        }catch(error){
+          if(closed || destroyed || prefillOverridden)return;
+          prefillPending=false;
+          submit.disabled=true;
+          submit.textContent='开始移动';
+          setFeedback('无法确认拖放目标，请手动重新选择文件夹：'+String(error?.message||error),true);
+          diagnosticLog('WARN','dialog.move_target_failed',{reason:String(error?.message||error)});
+          renderPicker();
         }
-        if(closed || destroyed)return;
-        selected=requestedDestination;
-        destinationText.textContent='目标：'+selected;
-        destinationText.title=selected;
-        submit.disabled=false;
-        renderPicker();
-        const chosen=picker.querySelector('.ufs-copy-tree-row.ufs-copy-selected');
-        chosen?.scrollIntoView({block:'nearest'});
-      })().catch(error=>setFeedback('无法读取拖放目标：'+String(error?.message||error),true));
+      })();
     } else void loadChildren(PREFIX);
   }
 
