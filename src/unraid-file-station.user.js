@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.11.6
+// @version      0.2.11.7
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -884,6 +884,145 @@
     return active && Number(active.action)===(plan.folder?4:9) &&
       active.source===plan.source && active.target===plan.destinationDir+'/';
   }
+  // Unraid Browse.page submits multi-selection sources joined by CR. The
+  // upstream Control.php decodes this field once more; file_manager splits CR.
+  // This is an eligibility gate, NOT a guarantee against a concurrent writer
+  // creating a target between our preflight and the daemon's rename(2).
+  function nativeMoveBatchEligible(plans) {
+    if(!Array.isArray(plans) || plans.length<2 || plans.length>256)return false;
+    const first=plans[0],parent=parentPath(first.source);
+    if(!safeWritePath(parent,true) || !safeWritePath(first.destinationDir,true) ||
+       parent===first.destinationDir)return false;
+    const seen=new Set();
+    for(const plan of plans) {
+      if(!plan || plan.type!=='move' || plan.folder!==false ||
+         plan.conflictPolicy!=='fail' || plan.destinationDir!==first.destinationDir ||
+         parentPath(plan.source)!==parent || !safeWritePath(plan.source) ||
+         plan.target!==plan.destinationDir+'/'+fileName(plan.source) ||
+         !copyDestinationAllowed(plan,first.destinationDir) || seen.has(plan.source))
+        return false;
+      seen.add(plan.source);
+    }
+    return plans.map(plan=>plan.source).join('\r').length<=16000;
+  }
+  function matchesMoveBatchTask(active,plans) {
+    return nativeMoveBatchEligible(plans) && active &&
+      Number(active.action)===9 &&
+      active.source===plans.map(plan=>plan.source).join('\r') &&
+      active.target===plans[0].destinationDir+'/';
+  }
+  function savedMoveBatchPlans(record) {
+    if(record?.operation!=='move' || record.batchMode!=='native-move-files')return null;
+    const plans=record.items.map(item=>({
+      type:'move',source:item.source,folder:item.folder,
+      destinationDir:record.destination,
+      target:record.destination+'/'+fileName(item.source),conflictPolicy:'fail'
+    }));
+    return nativeMoveBatchEligible(plans)?plans:null;
+  }
+  async function moveNativeBatch(plans,progress=()=>{},control={},beforeSubmit=null) {
+    return withNativeWriteLock(async()=>{
+      if(!MOVE_ENABLED || !nativeMoveBatchEligible(plans))
+        throw new Error('不符合原生批量移动条件');
+      if(isDemo && window.__UFS_TEST_MODE__!==true)
+        throw new Error('演示模式不能执行真实批量移动');
+      const startedAt=Date.now(),sourceDir=parentPath(plans[0].source);
+      progress('正在核实整批源文件和目标目录…','checking');
+      // One fresh read per directory, not one read per item. Verify exact
+      // source/type and every target's absence immediately before intent.
+      const [sources,destinations]=await Promise.all([
+        listDirectory(sourceDir),listDirectory(plans[0].destinationDir)
+      ]);
+      const originals=new Map(sources.map(entry=>[entry.path,entry]));
+      const targets=new Set(destinations.map(entry=>entry.name));
+      for(const plan of plans) {
+        const origin=originals.get(plan.source);
+        if(!origin || origin.folder || origin.copyPathVerified===false)
+          throw new Error('批量移动源文件不可信或已经变化');
+        if(targets.has(fileName(plan.source)) ||
+           destinations.some(entry=>entry.path===plan.target))
+          throw new Error('目标存在同名项目，批量移动已拒绝');
+      }
+      if(await readNativeActive())throw new Error('Unraid 原生任务正在运行');
+      nativeCsrfToken();
+      if(beforeSubmit)await beforeSubmit(); // One durable transaction for ALL intents.
+      const rawSources=plans.map(plan=>plan.source).join('\r');
+      diagnosticLog('INFO','move.batch_intent',{taskId:activeCopySession?.taskId,
+        count:plans.length,sourceDir,destination:plans[0].destinationDir,
+        strategy:'native-cr-source',overwriteGuard:'preflight-only'});
+      let submitted=false,seen=false,done=false,remoteError='';
+      const stop=observeNativeProgress(data=>{
+        const payload=nativeCopyProgressPayload(data);
+        if(payload) {
+          const info=parseRsyncProgress(payload);
+          if(info.text)progress(info.text,null,info);
+        }
+        if(data.error)remoteError=stripNativeStatusHtml(data.error).slice(0,200);
+        if(data.done===1)done=true;
+      });
+      try {
+        submitted=true;
+        const requestAt=Date.now();
+        const reply=await postNativeControl({mode:'file',action:'9',
+          title:encodeURIComponent('批量移动'),
+          source:encodeURIComponent(rawSources),
+          target:encodeURIComponent(plans[0].destinationDir+'/'),
+          hdlink:'',sparse:'',exist:'',zfs:''});
+        const requestMs=Date.now()-requestAt;
+        if(reply.trim())throw new Error('原生批量移动接口返回非预期内容');
+        progress('Unraid 正在批量移动文件…','copying');
+        const monitorAt=Date.now(),limit=monitorAt+6*60*60*1000;
+        let idle=0,polls=0;
+        while(Date.now()<limit){
+          await waitNative(Date.now()-monitorAt<3000?200:700);
+          if(remoteError)throw new Error('Unraid 报告批量移动错误：'+remoteError);
+          const current=await readNativeActive();
+          polls++;
+          if(current) {
+            if(!matchesMoveBatchTask(current,plans))
+              throw new Error('原生任务不是本次批量移动，拒绝确认归属');
+            seen=true;control.observedOwnTask=true;idle=0;
+          } else {
+            idle++;
+            if(idle>=2 && (seen||done))break;
+            if(!seen && !done && Date.now()-monitorAt>=3500)
+              throw new Error('未观察到原生批量移动任务或完成事件');
+          }
+        }
+        if(idle<2 || !(seen||done) || remoteError)
+          throw new Error('无法确认原生批量移动已结束');
+        const monitorMs=Date.now()-monitorAt,verifyAt=Date.now();
+        progress('正在逐项核对批量移动结果…','verifying');
+        const [afterSources,afterTargets]=await Promise.all([
+          listDirectory(sourceDir),listDirectory(plans[0].destinationDir)
+        ]);
+        const afterSourceNames=new Set(afterSources.map(item=>item.path));
+        const resultTargets=new Map(afterTargets.map(item=>[item.path,item]));
+        const results=[];
+        for(const plan of plans) {
+          const item=resultTargets.get(plan.target),old=originals.get(plan.source);
+          if(afterSourceNames.has(plan.source) || !item || item.folder ||
+             item.copyPathVerified===false ||
+             (Number.isFinite(old.size)&&Number.isFinite(item.size)&&old.size!==item.size))
+            throw new Error('批量移动存在未核实项目：'+fileName(plan.source));
+          results.push({...item,moveOutcome:'moved'});
+        }
+        diagnosticLog('INFO','move.batch_verified',{
+          taskId:activeCopySession?.taskId,count:plans.length,requestMs,monitorMs,
+          verifyMs:Date.now()-verifyAt,totalMs:Date.now()-startedAt,
+          polls,observedOwnTask:seen,observedDone:done,
+          strategy:'native-cr-source'});
+        return results;
+      }catch(error) {
+        diagnosticLog('ERROR','move.batch_failed',{
+          taskId:activeCopySession?.taskId,count:plans.length,submitted,
+          message:error?.message,verification:'all-items-uncertain-after-submit'});
+        if(submitted)throw new Error('原生批量移动可能已提交，整批结果待核实；禁止自动重试或转为串行。详情：'+String(error?.message||error));
+        throw error;
+      }finally{stop();}
+    });
+  }
+
   async function moveNativeEntry(plan,progress=()=>{},control={},beforeSubmit=null) {
     return withNativeWriteLock(async()=>{
       if(!MOVE_ENABLED || !plan || plan.type!=='move' || plan.conflictPolicy!=='fail' ||
@@ -1567,7 +1706,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.11.6';
+  const DIAGNOSTIC_VERSION='0.2.11.7';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -2082,10 +2221,20 @@
       {source:item.source,folder:item.folder},task.destination))) {
       throw new Error('恢复任务包含不安全或自包含的目标目录');
     }
+    if(task.batchMode!==undefined && task.batchMode!=='native-move-files')
+      throw new Error('未知的原生批量移动模式');
+    if(task.batchMode==='native-move-files') {
+      const plans=items.map(item=>({type:'move',source:item.source,folder:item.folder,
+        destinationDir:task.destination,
+        target:task.destination+'/'+fileName(item.source),conflictPolicy:task.conflictPolicy}));
+      if(operation!=='move' || !nativeMoveBatchEligible(plans))
+        throw new Error('持久化批量移动签名不匹配');
+    }
     return {
       taskId:task.taskId,name:task.name,destination:task.destination,
       conflictPolicy:task.conflictPolicy,status:task.status,
       ...(operation==='copy'?{}:{operation}),
+      ...(task.batchMode?{batchMode:task.batchMode}:{}),
       createdAt:Number.isFinite(task.createdAt)?task.createdAt:0,
       updatedAt:Number.isFinite(task.updatedAt)?task.updatedAt:0,
       items
@@ -2373,6 +2522,23 @@
     diagnosticLog('INFO','queue.checkpoint',{taskId:job.taskId,itemIndex:index,status,submission:item.submission});
     if(destroyed || !copyOwnerHeld || (copyQueuePaused && status!=='excluded'))
       throw new Error('持久化状态不可信或队列已暂停，拒绝继续复制');
+  }
+  async function copyBatchCheckpoint(job,status,submission) {
+    const record=job?.record,plans=savedMoveBatchPlans(record);
+    if(!plans || record.items.length!==plans.length)
+      throw new Error('批量移动持久化记录不完整，拒绝提交');
+    const time=Date.now();
+    for(const item of record.items) {
+      item.status=status;
+      item.submission=submission;
+      item.updatedAt=time;
+    }
+    record.updatedAt=time;
+    await persistCopyQueue();
+    diagnosticLog('INFO','queue.batch_checkpoint',{taskId:job.taskId,
+      count:record.items.length,status,submission});
+    if(destroyed || !copyOwnerHeld || copyQueuePaused)
+      throw new Error('已失去队列持久化权限，拒绝提交原生批量移动');
   }
   function newCopyRecord(entries,destination,conflictPolicy,name,operation='copy') {
     return normalizeSavedCopyTask({
