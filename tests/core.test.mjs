@@ -2169,7 +2169,9 @@ test('v0.2.7.1 刷新后仅重新观察严格匹配的原生任务，无法确�
 test('v0.2.7.2 Tampermonkey 自动更新元数据与脚本版本保持一致',()=>{
   const header=script.split('// ==/UserScript==',1)[0];
   const updateUrl='https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js';
-  assert.match(header,/^\/\/ @version\s+0\.2\.11\.5$/m);
+  const version=header.match(/^\/\/ @version\s+(\d+(?:\.\d+){2,3})$/m)?.[1];
+  assert.ok(version,'脚本应声明合法版本');
+  assert.ok(script.includes("const DIAGNOSTIC_VERSION='"+version+"'"));
   assert.ok(header.split('\n').includes('// @updateURL    '+updateUrl));
   assert.ok(header.split('\n').includes('// @downloadURL  '+updateUrl));
   assert.equal(header.match(/^\/\/ @version\s+/gm)?.length,1);
