@@ -3773,3 +3773,67 @@ test('v0.2.11.8 混合原生移动完成事件与逐项校验不重复提交',as
   assert.equal(event?.details.folderVerification,'top-level-only');
   assert.equal(errors.length,0,errors.join('\n'));
 });
+
+
+test('v0.2.11.8 F5 处理中断的混合批量只读恢复，不自动重复 POST',async t=>{
+  const {page,nativePosts,errors}=await pageFor(t,{
+    nativeMutationHoldReads:14
+  });
+  await page.locator('.ufs-entry[data-ufs-file="/mnt/user/TimeMachine/Photos"]').waitFor();
+  for(const [i,name] of ['Photos','notes.txt'].entries()) {
+    await page.locator('.ufs-entry[data-ufs-file="/mnt/user/TimeMachine/'+name+'"]')
+      .click(i?{modifiers:['ControlOrMeta']}:{});
+  }
+  await page.locator('.ufs-operations').click();
+  await page.getByRole('menuitem',{name:'移动到…'}).click();
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit',{hasText:'开始移动'}).click();
+  await page.waitForFunction(async()=>{
+    const db=await new Promise((resolve,reject)=>{
+      const r=indexedDB.open('ufs-copy-queue-v1',1);
+      r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);
+    });
+    const tx=db.transaction('snapshots','readonly');
+    const snap=await new Promise((resolve,reject)=>{
+      const r=tx.objectStore('snapshots').get('active');
+      r.onsuccess=()=>resolve(r.result?.snapshot);r.onerror=()=>reject(r.error);
+    });
+    db.close();
+    return snap?.tasks?.[0]?.batchMode==='native-move-mixed' &&
+      snap.tasks[0].items.length===2 &&
+      snap.tasks[0].items.some(item=>item.folder) &&
+      snap.tasks[0].items.every(item=>item.submission==='intent-saved');
+  },null,{timeout:10000});
+  for(let i=0;i<110 && !nativePosts.some(x=>x.mode==='file'&&x.action==='9');i++)
+    await page.waitForTimeout(30);
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,1);
+  await page.reload();
+  await page.locator('.ufs-copy-task-trigger').first().waitFor({timeout:10000});
+  await page.waitForTimeout(2300);
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,1,
+    'F5 后只能监控原生混合任务，不得再次 POST');
+  await page.locator('.ufs-copy-task-trigger').first().click();
+  assert.ok(await page.locator('.ufs-task-recovery').count()>=1);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.11.8 空文件夹与普通文件混合完成时仅声明顶层核验',async t=>{
+  const {page,nativePosts,moved,errors}=await pageFor(t,{
+    extraEntries:{'/mnt/user/TimeMachine':[['EmptyFolder',true]]}
+  });
+  await page.locator('.ufs-entry[data-ufs-file="/mnt/user/TimeMachine/EmptyFolder"]').waitFor();
+  for(const [i,name] of ['EmptyFolder','notes.txt'].entries()){
+    await page.locator('.ufs-entry[data-ufs-file="/mnt/user/TimeMachine/'+name+'"]')
+      .click(i?{modifiers:['ControlOrMeta']}:{});
+  }
+  await page.locator('.ufs-operations').click();
+  await page.getByRole('menuitem',{name:'移动到…'}).click();
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit',{hasText:'开始移动'}).click();
+  await page.locator('.ufs-copy-submit',{hasText:'完成'}).waitFor({timeout:30000});
+  assert.equal(nativePosts.filter(x=>x.mode==='file').length,1);
+  assert.equal(moved.length,2);
+  assert.equal(moved.find(x=>x.name==='EmptyFolder')?.folder,true);
+  assert.match(await page.locator('.ufs-batch-warning').last().innerText(),/文件夹内部内容并未递归校验/);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
