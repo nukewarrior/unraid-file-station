@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.11.1
+// @version      0.2.11.2
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -1552,7 +1552,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.11.1';
+  const DIAGNOSTIC_VERSION='0.2.11.2';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -3824,7 +3824,7 @@
       dragMoveHover(target);
       if(target && canDropMoveAt(target,session) &&
          !state.expanded.has(target) &&
-         $('.ufs-tree-row[data-ufs-drop-path]',app).some(node=>node.dataset.ufsDropPath===target)){
+         $$('.ufs-tree-row[data-ufs-drop-path]',app).some(node=>node.dataset.ufsDropPath===target)){
         session.expandTimer=setTimeout(()=>{
           if(dragMoveSession!==session || !session.active || session.target!==target)return;
           state.expanded.add(target);
