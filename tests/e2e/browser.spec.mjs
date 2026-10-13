@@ -2924,3 +2924,237 @@ test('v0.2.8 诊断日志支持标记问题、脱敏导出和跨页面刷新',as
   assert.match(await restored.locator('.ufs-diagnostic-events').innerText(),/user\.issue_marker/);
   assert.equal(errors.length,0,errors.join('\n'));
 });
+
+async function seedCopyTaskCenter(page,statuses=['success','success']) {
+  await page.locator('.ufs-entry').first().waitFor();
+  await page.evaluate(async statuses=>{
+    const db=await new Promise((resolve,reject)=>{
+      const request=indexedDB.open('ufs-copy-queue-v1',1);
+      request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);
+    });
+    const tasks=statuses.map((status,index)=>({
+      taskId:'copy_cleanup_saved_'+index,name:'4415616 ('+(index+1)+').mp4 等 3 项',
+      destination:'/mnt/user/downloads',conflictPolicy:'skip',status,
+      createdAt:Date.now(),updatedAt:Date.now(),
+      items:[{source:'/mnt/user/TimeMachine/notes.txt',folder:false,size:2048,
+        status:status==='running'?'copying':status,
+        submission:status==='success'?'confirmed':status==='queued'?'not-submitted':status==='running'?'intent-saved':'unknown'}]
+    }));
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction('snapshots','readwrite');
+      tx.objectStore('snapshots').put({key:'active',snapshot:{schema:1,savedAt:Date.now(),tasks}});
+      tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error);
+    });
+    db.close();
+  },statuses);
+  const allowReload=dialog=>dialog.accept();
+  page.once('dialog',allowReload);
+  await page.reload({waitUntil:'domcontentloaded'});
+  page.off('dialog',allowReload);
+  await page.locator('.ufs-copy-task-trigger').waitFor();
+}
+
+async function readCopyTaskCenterSnapshot(page) {
+  return page.evaluate(async()=>{
+    const db=await new Promise((resolve,reject)=>{
+      const request=indexedDB.open('ufs-copy-queue-v1',1);
+      request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);
+    });
+    const snapshot=await new Promise((resolve,reject)=>{
+      const request=db.transaction('snapshots','readonly').objectStore('snapshots').get('active');
+      request.onsuccess=()=>resolve(request.result?.snapshot);request.onerror=()=>reject(request.error);
+    });
+    db.close();return snapshot;
+  });
+}
+
+test('任务中心图标在两主题、窄屏和 Unraid 按钮样式下保持对齐，清空后不再恢复',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t);
+  await seedCopyTaskCenter(page);
+  const trigger=page.locator('.ufs-copy-task-trigger');
+  await page.locator('.ufs-entry').first().click();
+  await trigger.click();
+  const center=page.getByRole('dialog',{name:'复制任务中心'});
+  const close=center.getByRole('button',{name:'关闭任务中心',exact:true});
+  assert.equal(await close.evaluate(node=>document.activeElement===node),true);
+  await page.addStyleTag({content:
+    'button,button[type="button"]{min-width:86px;margin:10px 12px 10px 0;padding:8px;letter-spacing:1.8px;text-transform:uppercase}'
+  });
+  for(const dsm of [false,true]) {
+    await page.locator('#ufs-app').evaluate((app,dsm)=>app.classList.toggle('ufs-dsm',dsm),dsm);
+    for(const width of [1440,320]) {
+      await page.setViewportSize({width,height:760});
+      const layout=await center.evaluate(panel=>{
+        const box=node=>node.getBoundingClientRect();
+        const head=box(panel.querySelector('.ufs-task-center-head'));
+        const close=panel.querySelector('.ufs-task-center-close');
+        const dismiss=box(close);
+        const main=box(panel.querySelector('.ufs-task-center-open'));
+        const remove=box(panel.querySelector('.ufs-task-center-dismiss-record'));
+        const app=box(document.querySelector('#ufs-app'));
+        const bounds=box(panel);
+        return {width:dismiss.width,height:dismiss.height,margin:getComputedStyle(close).margin,
+          right:head.right-dismiss.right,vertical:(head.top+head.bottom-dismiss.top-dismiss.bottom)/2,
+          rowVertical:(main.top+main.bottom-remove.top-remove.bottom)/2,
+          inside:bounds.left>=app.left && bounds.right<=app.right,
+          closeIcon:close.querySelector('svg path').getAttribute('d')};
+      });
+      assert.equal(layout.width,28,JSON.stringify(layout));
+      assert.equal(layout.height,28,JSON.stringify(layout));
+      assert.equal(layout.margin,'0px');
+      assert.ok(Math.abs(layout.right-12)<=1,JSON.stringify(layout));
+      assert.ok(Math.abs(layout.vertical)<=1,JSON.stringify(layout));
+      assert.ok(Math.abs(layout.rowVertical)<=1,JSON.stringify(layout));
+      assert.equal(layout.inside,true);
+      assert.equal(layout.closeIcon,'M6 6l12 12');
+    }
+  }
+  await page.setViewportSize({width:1440,height:900});
+  await center.locator('.ufs-task-center-dismiss-record').first().focus();
+  const tooltip=center.getByRole('tooltip');
+  await tooltip.waitFor();
+  assert.match(await tooltip.innerText(),/移除记录，保留复制文件/);
+  assert.equal(await tooltip.evaluate(tip=>{
+    const bounds=tip.closest('.ufs-copy-task-center').getBoundingClientRect();
+    const box=tip.getBoundingClientRect();
+    return box.left>=bounds.left && box.right<=bounds.right && box.top>=bounds.top && box.bottom<=bounds.bottom;
+  }),true,'行内提示不会被滚动区裁切');
+  await page.keyboard.press('Escape');
+  assert.equal(await center.count(),0);
+  assert.equal(await page.locator('.ufs-entry.ufs-selected').count(),1,'Esc 只关闭当前任务面板');
+  assert.equal(await trigger.getAttribute('aria-expanded'),'false');
+  assert.equal(await trigger.evaluate(node=>document.activeElement===node),true);
+  await trigger.click();
+  await page.locator('.ufs-navigation').click();
+  assert.equal(await center.count(),0,'外部点击关闭面板');
+  await trigger.click();
+  await center.locator('.ufs-task-center-dismiss-record').first().click();
+  await page.waitForFunction(()=>document.querySelectorAll('.ufs-task-center-row').length===1);
+  assert.equal((await readCopyTaskCenterSnapshot(page)).tasks.length,1);
+  assert.match(await trigger.innerText(),/复制完成 1 项/);
+  await center.locator('.ufs-task-center-clear').click();
+  await trigger.waitFor({state:'hidden'});
+  assert.equal((await readCopyTaskCenterSnapshot(page)).tasks.length,0);
+  assert.equal(await center.count(),0);
+  assert.equal(await page.locator('.ufs-list').evaluate(node=>document.activeElement===node),true);
+  await page.reload({waitUntil:'domcontentloaded'});
+  await page.locator('.ufs-entry').first().waitFor();
+  assert.equal(await trigger.isVisible(),false);
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('任务中心批量清理保留排队和待核实记录，保存失败保留成功记录',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t);
+  await seedCopyTaskCenter(page,['success','queued','uncertain','success']);
+  const trigger=page.locator('.ufs-copy-task-trigger');
+  await trigger.click();
+  const center=page.getByRole('dialog',{name:'复制任务中心'});
+  await center.locator('.ufs-task-center-clear').click();
+  await page.waitForFunction(()=>document.querySelectorAll('.ufs-task-center-row').length===2);
+  assert.equal(await center.locator('[data-status="queued"]').count(),1);
+  assert.equal(await center.locator('[data-status="uncertain"]').count(),1);
+  assert.equal(await center.locator('.ufs-task-center-clear').isDisabled(),true);
+  assert.deepEqual((await readCopyTaskCenterSnapshot(page)).tasks.map(task=>task.status),['queued','uncertain']);
+  assert.equal(await center.getByRole('button',{name:'请先核实任务'}).isDisabled(),true);
+  const allowReload=dialog=>dialog.accept();
+  page.once('dialog',allowReload);
+  await page.reload({waitUntil:'domcontentloaded'});
+  page.off('dialog',allowReload);
+  await trigger.waitFor();
+  await trigger.click();
+  assert.equal(await center.locator('.ufs-task-center-row').count(),2);
+  await seedCopyTaskCenter(page);
+  await trigger.click();
+  await page.evaluate(()=>{
+    const original=IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put=function(...args) {
+      if(this.name==='snapshots') throw new Error('模拟保存失败');
+      return original.apply(this,args);
+    };
+  });
+  await center.locator('.ufs-task-center-clear').click();
+  await center.getByRole('alert').waitFor();
+  assert.match(await center.getByRole('alert').innerText(),/未清理任务记录/);
+  assert.equal(await center.locator('.ufs-task-center-row[data-status="success"]').count(),2);
+  assert.equal((await readCopyTaskCenterSnapshot(page)).tasks.length,2);
+  assert.equal(await trigger.isVisible(),true);
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('任务清理保留原生监控和暂停队列，状态重绘保留焦点与滚动',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t,{
+    simulateNativeMonitor:true,extraEntries:{'/mnt/user/downloads':[['notes.txt',false]]}
+  });
+  const native=await mockRecoveredNativeRead(page);
+  await seedCopyTaskCenter(page,['success','running',...Array(8).fill('queued')]);
+  const trigger=page.locator('.ufs-copy-task-trigger');
+  await trigger.getByText('原生复制中 · 队列暂停').waitFor();
+  await trigger.click();
+  const center=page.getByRole('dialog',{name:'复制任务中心'});
+  await center.locator('.ufs-task-center-clear').click();
+  await page.waitForFunction(()=>document.querySelectorAll('.ufs-task-center-row').length===9);
+  assert.equal(await center.locator('[data-status="running"]').count(),1);
+  assert.equal(await center.locator('[data-status="queued"]').count(),8);
+  assert.equal(await center.getByRole('button',{name:'等待当前复制完成'}).isDisabled(),true);
+  const focused=center.locator('.ufs-task-center-open').last();
+  await focused.evaluate(node=>node.focus({preventScroll:true}));
+  const scroll=await center.locator('.ufs-task-center-body').evaluate(body=>{
+    body.scrollTop=40;return body.scrollTop;
+  });
+  await page.evaluate(()=>window.__ufsMonitorTest.emitFileManager({
+    status:'Copying ... notes.txt\n  4,194,304 100%  91.24MB/s  0:00:00',done:1
+  }));
+  native.setActive(false);
+  await center.locator('.ufs-task-center-row[data-status="success"]').waitFor({timeout:15000});
+  assert.equal(await focused.evaluate(node=>document.activeElement===node),true);
+  assert.equal(await center.locator('.ufs-task-center-body').evaluate(body=>body.scrollTop),scroll);
+  assert.equal(await center.locator('.ufs-task-center-clear').isDisabled(),false);
+  const snapshot=await readCopyTaskCenterSnapshot(page);
+  assert.equal(snapshot.tasks.length,9);
+  assert.equal(snapshot.tasks[0].items[0].status,'success');
+  assert.equal(snapshot.tasks.slice(1).every(task=>task.status==='queued'),true);
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+  await native.dispose();
+});
+
+test('任务中心清理拒绝覆盖其他标签页的所有权和新快照',async t=>{
+  for(const conflict of ['lease','snapshot']) {
+    await t.test(conflict,async t=>{
+      const {page,errors}=await pageFor(t);
+      await seedCopyTaskCenter(page);
+      await page.evaluate(async conflict=>{
+        const db=await new Promise((resolve,reject)=>{
+          const request=indexedDB.open('ufs-copy-queue-v1',1);
+          request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);
+        });
+        await new Promise((resolve,reject)=>{
+          const tx=db.transaction(conflict==='lease'?'leases':'snapshots','readwrite');
+          const store=tx.objectStore(conflict==='lease'?'leases':'snapshots');
+          if(conflict==='lease') store.put({key:'dispatcher',owner:'ufs_other_page_owner',expiresAt:Date.now()+60000});
+          else {
+            const request=store.get('active');
+            request.onsuccess=()=>{
+              request.result.snapshot.tasks[0].taskId='copy_other_page_updated';
+              store.put(request.result);
+            };
+          }
+          tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error);
+        });
+        db.close();
+      },conflict);
+      await page.locator('.ufs-copy-task-trigger').click();
+      const center=page.getByRole('dialog',{name:'复制任务中心'});
+      await center.locator('.ufs-task-center-clear').click();
+      await center.getByRole('alert').waitFor();
+      assert.match(await center.getByRole('alert').innerText(),/未清理任务记录/);
+      assert.equal(await center.locator('.ufs-task-center-row').count(),2);
+      const snapshot=await readCopyTaskCenterSnapshot(page);
+      assert.equal(snapshot.tasks.length,2);
+      if(conflict==='snapshot') assert.equal(snapshot.tasks[0].taskId,'copy_other_page_updated');
+      assert.equal(errors.length,0,errors.join('\n'));
+    });
+  }
+});

@@ -935,6 +935,7 @@
     copy:['M8 4h11a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z','M4 16H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v1'],
     move:['M4 7h16','m15 3 5 4-5 4','M20 17H4','m9 13-5 4 5 4'],
     trash:['M3 6h18','M8 6V4h8v2','M5 6l1 15h12l1-15','M10 10v7','M14 10v7'],
+    eraser:['m7 21-4-4a2 2 0 0 1 0-3l10-10a2 2 0 0 1 3 0l5 5a2 2 0 0 1 0 3l-9 9H7z','m7 10 9 9','M12 21h10'],
     search:['M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z','m17 17 4 4'],
     close:['M6 6l12 12','M18 6 6 18'],
     download:['M12 3v13','m5 10 7 7 7-7','M4 18v3h16v-3'],
@@ -1153,6 +1154,8 @@
     // v0.2.5: scheme-A task badge and bottom-right multi-task center.
     "#ufs-app .ufs-status .ufs-copy-task-trigger{display:inline-flex;align-items:center;justify-content:center;gap:5px;max-width:56%;flex:0 0 auto;padding:1px 8px;font-size:11px}#ufs-app .ufs-status .ufs-copy-task-trigger[hidden]{display:none!important}#ufs-app .ufs-copy-task-trigger>.ufs-svg{height:13px;width:13px;flex:0 0 13px}#ufs-app .ufs-task-badge-main{color:inherit;white-space:nowrap}#ufs-app .ufs-task-badge-divider{width:1px;height:13px;background:#e8c6aa;flex:0 0 1px;margin:0 1px}#ufs-app .ufs-task-badge-wait{display:inline-flex;align-items:center;gap:3px;color:inherit}#ufs-app .ufs-task-badge-wait>.ufs-svg{height:12px;width:12px}#ufs-app .ufs-task-badge-chevron{margin-left:1px}#ufs-app .ufs-status .ufs-copy-task-trigger[data-phase=paused]{background:#fff1e4;color:#a74c13}#ufs-app .ufs-status .ufs-copy-task-trigger[data-phase=queued]{background:#f0f2f5;color:#4f5b6a;border-color:#d9dfe6}",
     "#ufs-app .ufs-copy-task-center{position:absolute;right:10px;bottom:37px;z-index:2147483635;width:min(355px,calc(100% - 20px));max-height:min(405px,65vh);display:flex;flex-direction:column;background:var(--ufs-bg);border:1px solid var(--ufs-border);border-radius:9px;box-shadow:0 12px 30px #0003;overflow:hidden}#ufs-app .ufs-task-center-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex:0 0 43px;padding:0 12px;border-bottom:1px solid var(--ufs-border);font-size:13px;color:var(--ufs-text)}#ufs-app .ufs-task-center-close{border:0;background:transparent;font-size:20px;color:var(--ufs-muted);padding:3px 6px}#ufs-app .ufs-task-center-body{overflow-y:auto;min-height:0;padding:5px 9px}#ufs-app .ufs-task-center-row{display:flex;flex-direction:column;gap:4px;padding:9px 5px;border-bottom:1px solid var(--ufs-border)}#ufs-app .ufs-task-center-open{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;border:0;background:transparent;color:var(--ufs-text);padding:2px;min-width:0;text-align:left}#ufs-app .ufs-task-center-open:hover{color:var(--ufs-accent)}#ufs-app .ufs-task-center-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}#ufs-app .ufs-task-center-status{flex:0 0 auto;font-size:11px;color:var(--ufs-muted)}#ufs-app .ufs-task-center-row[data-status=running] .ufs-task-center-status{color:var(--ufs-accent)}#ufs-app .ufs-task-center-row[data-status=success] .ufs-task-center-status{color:#258755}#ufs-app .ufs-task-center-row[data-status=failed] .ufs-task-center-status,#ufs-app .ufs-task-center-row[data-status=uncertain] .ufs-task-center-status{color:#c13d37}#ufs-app .ufs-task-center-progress{height:5px;background:var(--ufs-border);border-radius:9px;overflow:hidden}#ufs-app .ufs-task-center-progress-fill{height:100%;background:var(--ufs-accent)}#ufs-app .ufs-task-center-remove{align-self:flex-end;padding:3px 7px;background:var(--ufs-bg);border:1px solid var(--ufs-border);border-radius:4px;color:var(--ufs-muted);font-size:11px}#ufs-app .ufs-task-center-paused{padding:11px 12px;border-top:1px solid var(--ufs-border);font-size:12px;color:var(--ufs-muted);display:flex;flex-direction:column;gap:8px}#ufs-app .ufs-task-center-paused button{border:1px solid var(--ufs-border);background:var(--ufs-panel);border-radius:5px;padding:7px;color:var(--ufs-text)}",
+    "#ufs-app .ufs-task-center-head{gap:8px}#ufs-app .ufs-task-center-head>strong{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#ufs-app .ufs-task-center-actions{display:flex;align-items:center;gap:5px;flex:0 0 auto}#ufs-app .ufs-task-center-divider{width:1px;height:14px;margin:0 3px;background:var(--ufs-border)}#ufs-app .ufs-task-center-icon{position:relative;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;min-width:28px;min-height:28px;flex:0 0 28px;margin:0;padding:5px;border:0;background:transparent;color:var(--ufs-muted)}#ufs-app .ufs-task-center-icon:hover:not(:disabled){background:var(--ufs-hover);color:var(--ufs-text)}#ufs-app .ufs-task-center-icon>.ufs-svg{width:16px;height:16px}#ufs-app .ufs-task-center-line{display:flex;align-items:center;gap:7px;min-height:28px}#ufs-app .ufs-task-center-open{flex:1;width:auto;margin:0}#ufs-app .ufs-task-center-slot{width:28px;flex:0 0 28px}#ufs-app .ufs-task-center-cleanup-error{padding:9px 12px;border-top:1px solid var(--ufs-border);color:#c13d37;font-size:12px;overflow-wrap:anywhere}#ufs-app .ufs-task-center-cleanup-error[hidden]{display:none}",
+    "#ufs-app .ufs-task-center-tooltip{position:absolute;width:max-content;padding:6px 8px;border:1px solid var(--ufs-border);border-radius:5px;background:var(--ufs-panel);color:var(--ufs-text);font-size:11px;line-height:1.4;white-space:normal;pointer-events:none;z-index:2}#ufs-app .ufs-task-center-tooltip[hidden]{display:none}@media(pointer:coarse){#ufs-app .ufs-task-center-icon{width:44px;height:44px;min-width:44px;min-height:44px;flex-basis:44px}#ufs-app .ufs-task-center-slot{width:44px;flex-basis:44px}#ufs-app .ufs-task-center-head{flex-basis:52px}}",
     // v0.2.6.2: task-center rate, phase icons and persistent spinner nodes.
     "#ufs-app .ufs-task-live-spinner{box-sizing:border-box;display:inline-block;flex:0 0 14px;width:14px;height:14px;border:2px solid rgba(235,120,37,.22);border-top-color:var(--ufs-accent);border-radius:50%;animation:ufs-copy-spin .9s linear infinite}",
     "#ufs-app .ufs-task-center-state{display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;white-space:nowrap}#ufs-app .ufs-task-center-state>.ufs-svg{height:13px;width:13px;flex:0 0 13px;color:var(--ufs-muted)}",
@@ -1172,14 +1175,14 @@
     '#ufs-app .ufs-list{scrollbar-width:thin;scrollbar-color:transparent transparent}#ufs-app .ufs-list:hover,#ufs-app .ufs-list.ufs-scroll-active{scrollbar-color:rgba(105,115,126,.48) transparent}#ufs-app .ufs-list::-webkit-scrollbar{width:6px;height:6px;background:transparent}#ufs-app .ufs-list::-webkit-scrollbar-track{background:transparent}#ufs-app .ufs-list::-webkit-scrollbar-thumb{background:transparent;border-radius:8px}#ufs-app .ufs-list:hover::-webkit-scrollbar-thumb,#ufs-app .ufs-list.ufs-scroll-active::-webkit-scrollbar-thumb{background:rgba(105,115,126,.48)}#ufs-app .ufs-list::-webkit-scrollbar-thumb:hover{background:rgba(94,104,115,.7)}#ufs-app .ufs-list::-webkit-scrollbar-corner{background:transparent}',
     // Use the same native idle/hover/scroll scrollbar policy in every modal body
     // and the copy destination tree. Keep wheel, trackpad and thumb dragging native.
-    '#ufs-app .ufs-create-dialog .ufs-create-fields,#ufs-app .ufs-copy-picker{scrollbar-width:thin;scrollbar-color:transparent transparent}',
-    '#ufs-app .ufs-create-dialog .ufs-create-fields:hover,#ufs-app .ufs-create-dialog .ufs-create-fields.ufs-scroll-active,#ufs-app .ufs-copy-picker:hover,#ufs-app .ufs-copy-picker.ufs-scroll-active{scrollbar-color:rgba(105,115,126,.48) transparent}',
-    '#ufs-app .ufs-create-dialog .ufs-create-fields::-webkit-scrollbar,#ufs-app .ufs-copy-picker::-webkit-scrollbar{width:6px;height:6px;background:transparent}',
-    '#ufs-app .ufs-create-dialog .ufs-create-fields::-webkit-scrollbar-track,#ufs-app .ufs-copy-picker::-webkit-scrollbar-track{background:transparent}',
-    '#ufs-app .ufs-create-dialog .ufs-create-fields::-webkit-scrollbar-thumb,#ufs-app .ufs-copy-picker::-webkit-scrollbar-thumb{background:transparent;border-radius:8px}',
-    '#ufs-app .ufs-create-dialog .ufs-create-fields:hover::-webkit-scrollbar-thumb,#ufs-app .ufs-create-dialog .ufs-create-fields.ufs-scroll-active::-webkit-scrollbar-thumb,#ufs-app .ufs-copy-picker:hover::-webkit-scrollbar-thumb,#ufs-app .ufs-copy-picker.ufs-scroll-active::-webkit-scrollbar-thumb{background:rgba(105,115,126,.48)}',
-    '#ufs-app .ufs-create-dialog .ufs-create-fields::-webkit-scrollbar-thumb:hover,#ufs-app .ufs-copy-picker::-webkit-scrollbar-thumb:hover{background:rgba(94,104,115,.7)}',
-    '#ufs-app .ufs-create-dialog .ufs-create-fields::-webkit-scrollbar-corner,#ufs-app .ufs-copy-picker::-webkit-scrollbar-corner{background:transparent}',
+    '#ufs-app .ufs-create-dialog .ufs-create-fields,#ufs-app .ufs-copy-picker,#ufs-app .ufs-task-center-body{scrollbar-width:thin;scrollbar-color:transparent transparent}',
+    '#ufs-app .ufs-create-dialog .ufs-create-fields:hover,#ufs-app .ufs-create-dialog .ufs-create-fields.ufs-scroll-active,#ufs-app .ufs-copy-picker:hover,#ufs-app .ufs-copy-picker.ufs-scroll-active,#ufs-app .ufs-task-center-body:hover,#ufs-app .ufs-task-center-body.ufs-scroll-active{scrollbar-color:rgba(105,115,126,.48) transparent}',
+    '#ufs-app .ufs-create-dialog .ufs-create-fields::-webkit-scrollbar,#ufs-app .ufs-copy-picker::-webkit-scrollbar,#ufs-app .ufs-task-center-body::-webkit-scrollbar{width:6px;height:6px;background:transparent}',
+    '#ufs-app .ufs-create-dialog .ufs-create-fields::-webkit-scrollbar-track,#ufs-app .ufs-copy-picker::-webkit-scrollbar-track,#ufs-app .ufs-task-center-body::-webkit-scrollbar-track{background:transparent}',
+    '#ufs-app .ufs-create-dialog .ufs-create-fields::-webkit-scrollbar-thumb,#ufs-app .ufs-copy-picker::-webkit-scrollbar-thumb,#ufs-app .ufs-task-center-body::-webkit-scrollbar-thumb{background:transparent;border-radius:8px}',
+    '#ufs-app .ufs-create-dialog .ufs-create-fields:hover::-webkit-scrollbar-thumb,#ufs-app .ufs-create-dialog .ufs-create-fields.ufs-scroll-active::-webkit-scrollbar-thumb,#ufs-app .ufs-copy-picker:hover::-webkit-scrollbar-thumb,#ufs-app .ufs-copy-picker.ufs-scroll-active::-webkit-scrollbar-thumb,#ufs-app .ufs-task-center-body:hover::-webkit-scrollbar-thumb,#ufs-app .ufs-task-center-body.ufs-scroll-active::-webkit-scrollbar-thumb{background:rgba(105,115,126,.48)}',
+    '#ufs-app .ufs-create-dialog .ufs-create-fields::-webkit-scrollbar-thumb:hover,#ufs-app .ufs-copy-picker::-webkit-scrollbar-thumb:hover,#ufs-app .ufs-task-center-body::-webkit-scrollbar-thumb:hover{background:rgba(94,104,115,.7)}',
+    '#ufs-app .ufs-create-dialog .ufs-create-fields::-webkit-scrollbar-corner,#ufs-app .ufs-copy-picker::-webkit-scrollbar-corner,#ufs-app .ufs-task-center-body::-webkit-scrollbar-corner{background:transparent}',
     // Hovering the inner picker should not illuminate the outer body's scrollbar.
     '#ufs-app .ufs-copy-dialog .ufs-create-fields:has(.ufs-copy-picker:hover){scrollbar-color:transparent transparent}',
     '#ufs-app .ufs-copy-dialog .ufs-create-fields:has(.ufs-copy-picker:hover)::-webkit-scrollbar-thumb{background:transparent}',
@@ -1905,6 +1908,8 @@
   let copyJobCounter=0;
   let copyQueueRunning=false;
   let copyQueuePaused=false;
+  let copyCleanupPending=false;
+  let copyCleanupError='';
 
   // Browser persistence is deliberately fail-closed. The only automatic
   // startup action is reading/restoring records, never scheduling work.
@@ -2505,31 +2510,86 @@
     updateCopyTaskButton();
     void runCopyQueue();
   }
-  function closeCopyTaskCenter() {
-    $('.ufs-copy-task-center',app)?.remove();
-    $('.ufs-copy-task-trigger',app)?.setAttribute('aria-expanded','false');
+  async function clearCompletedCopyJobs(job) {
+    if(copyCleanupPending) return;
+    const targets=copyJobs.filter(item=>item.status==='success' && (!job || item===job));
+    if(!targets.length) return;
+    copyCleanupPending=true;
+    copyCleanupError='';
+    updateCopyTaskButton();
+    let previous=null;
+    try {
+      await initializeCopyPersistence();
+      await ensureCopyOwnership();
+      await copyPersistTail;
+      const fresh=await persistentCopyStore.read();
+      if(JSON.stringify(fresh?.tasks||[])!==lastPersistedTasks)
+        throw new Error('队列内容已在其他标签页发生变化，请重新加载后核实');
+      if(destroyed) return;
+      previous=copyJobs.slice();
+      for(let index=copyJobs.length-1;index>=0;index--)
+        if(targets.includes(copyJobs[index])) copyJobs.splice(index,1);
+      await persistCopyQueue();
+    } catch(error) {
+      if(previous) {
+        // Restore only removed records; other jobs may have progressed or been cancelled.
+        const added=copyJobs.filter(item=>!previous.includes(item));
+        const restored=previous.filter(item=>targets.includes(item)||copyJobs.includes(item));
+        copyJobs.splice(0,copyJobs.length,...restored,...added);
+      }
+      copyCleanupError='未清理任务记录：'+String(error?.message||error);
+      notify(copyCleanupError);
+    } finally {
+      copyCleanupPending=false;
+      if(!destroyed) updateCopyTaskButton();
+    }
   }
-  function showCopyTaskCenter() {
-    if($('.ufs-copy-task-center',app)) {closeCopyTaskCenter();return;}
-    if(!copyJobs.length || $('.ufs-dialog-overlay',app)) return;
+  function closeCopyTaskCenter(restoreFocus=false) {
+    const panel=$('.ufs-copy-task-center',app);
+    panel?._ufsScrollCleanup?.();
+    panel?.remove();
+    const trigger=$('.ufs-copy-task-trigger',app);
+    trigger?.setAttribute('aria-expanded','false');
+    if(restoreFocus && !destroyed)
+      (trigger && !trigger.hidden?trigger:$('.ufs-list',app))?.focus({preventScroll:true});
+  }
+  function showCopyTaskCenter(focus=true) {
+    if($('.ufs-copy-task-center',app)) {closeCopyTaskCenter(true);return;}
+    if(!copyJobs.length || $('.ufs-dialog-overlay',app) ||
+        document.querySelector('.ufs-diagnostic-overlay')) return;
     const panel=element('div','ufs-copy-task-center');
     panel.setAttribute('role','dialog');
     panel.setAttribute('aria-label','复制任务中心');
     const head=element('div','ufs-task-center-head');
     head.append(element('strong','','复制任务 · '+copyJobs.length+' 项'));
-    const dismiss=element('button','ufs-task-center-close','×');
+    const actions=element('div','ufs-task-center-actions');
+    const clear=element('button','ufs-task-center-icon ufs-task-center-clear');
+    clear.type='button';
+    clear.dataset.taskFocus='clear';
+    clear.setAttribute('aria-label','清理已完成任务记录');
+    clear.append(icon('eraser'));
+    clear.addEventListener('click',()=>void clearCompletedCopyJobs());
+    const divider=element('span','ufs-task-center-divider');
+    divider.setAttribute('aria-hidden','true');
+    const dismiss=element('button','ufs-task-center-close ufs-task-center-icon');
     dismiss.type='button';
+    dismiss.dataset.taskFocus='close';
+    dismiss.dataset.tooltip='收起面板，保留全部任务';
     dismiss.setAttribute('aria-label','关闭任务中心');
-    dismiss.addEventListener('click',closeCopyTaskCenter);
-    head.append(dismiss);
+    dismiss.append(icon('close'));
+    dismiss.addEventListener('click',()=>closeCopyTaskCenter(true));
+    actions.append(clear,divider,dismiss);
+    head.append(actions);
     panel.append(head);
     const body=element('div','ufs-task-center-body');
     for(const job of copyJobs) {
       const row=element('div','ufs-task-center-row');
       row.dataset.status=job.status;
       row.dataset.phase=job.phase||'';
+      const line=element('div','ufs-task-center-line');
       const main=element('button','ufs-task-center-open');
       main.type='button';
+      main.dataset.taskFocus='open-'+job.id;
       const info=element('span','ufs-task-center-name',job.name);
       info.title=job.name;
       const statusWrap=element('span','ufs-task-center-state');
@@ -2539,7 +2599,22 @@
       statusWrap.append(element('span','ufs-task-center-status',copyJobStatusLabel(job)));
       main.append(info,statusWrap);
       main.addEventListener('click',()=>{closeCopyTaskCenter();job.reopen();});
-      row.append(main);
+      line.append(main);
+      if(job.status==='success') {
+        const remove=element('button','ufs-task-center-icon ufs-task-center-dismiss-record');
+        remove.type='button';
+        remove.dataset.taskFocus='remove-'+job.id;
+        remove.dataset.tooltip='移除记录，保留复制文件';
+        remove.setAttribute('aria-label','移除记录：'+job.name);
+        remove.append(icon('trash'));
+        remove.addEventListener('click',()=>void clearCompletedCopyJobs(job));
+        line.append(remove);
+      } else {
+        const slot=element('span','ufs-task-center-slot');
+        slot.setAttribute('aria-hidden','true');
+        line.append(slot);
+      }
+      row.append(line);
       if(job.status==='running') {
         const meta=element('div','ufs-task-center-meta',copyJobMeta(job));
         meta.classList.toggle('ufs-task-center-meta-muted',!currentCopySpeed(job));
@@ -2556,6 +2631,7 @@
         const cancel=element('button','ufs-task-center-remove',
           job.recovered?'移除保存记录':'取消排队');
         cancel.type='button';
+        cancel.dataset.taskFocus='cancel-'+job.id;
         cancel.addEventListener('click',()=>{
           job.cancelQueued();
           closeCopyTaskCenter();
@@ -2576,11 +2652,13 @@
         uncertain?'上次复制有 '+uncertain+' 项待核实。请打开任务详情，核实后选择跳过；不能自动重试。':
         '检测到上次保存的 '+waiting+' 项待恢复任务，当前队列已暂停。'));
       const later=element('button','','稍后处理');
-      later.type='button';later.addEventListener('click',closeCopyTaskCenter);
+      later.type='button';later.dataset.taskFocus='later';
+      later.addEventListener('click',()=>closeCopyTaskCenter(true));
       panel.append(later);
       const confirm=element('button','',monitoring?'等待当前复制完成':
         uncertain?'请先核实任务':'确认恢复队列');
       confirm.type='button';confirm.disabled=monitoring || uncertain>0 || waiting===0;
+      confirm.dataset.taskFocus='recover';
       confirm.addEventListener('click',()=>void confirmRecoveredCopyQueue());
       panel.append(confirm);
       panel.setAttribute('role','group');
@@ -2596,6 +2674,7 @@
       paused.append(element('div','','后续队列已暂停，请先核实失败或待核实任务。'));
       const resume=element('button','','确认已核实，继续排队任务');
       resume.type='button';
+      resume.dataset.taskFocus='resume';
       resume.addEventListener('click',()=>{
         resumeCopyQueue();
         closeCopyTaskCenter();
@@ -2603,13 +2682,50 @@
       paused.append(resume);
       panel.append(paused);
     }
+    const error=element('div','ufs-task-center-cleanup-error');
+    error.setAttribute('role','alert');
+    panel.append(error);
+    const tooltip=element('div','ufs-task-center-tooltip');
+    tooltip.id='ufs-copy-task-tooltip';
+    tooltip.setAttribute('role','tooltip');
+    tooltip.hidden=true;
+    panel.append(tooltip);
+    const showTooltip=event=>{
+      const control=event.target.closest('.ufs-task-center-icon[data-tooltip]');
+      if(!control) return;
+      control.setAttribute('aria-describedby',tooltip.id);
+      tooltip.textContent=control.dataset.tooltip;
+      const bounds=panel.getBoundingClientRect();
+      const button=control.getBoundingClientRect();
+      const right=Math.max(8,bounds.right-button.right);
+      tooltip.style.right=right+'px';
+      tooltip.style.maxWidth=(panel.clientWidth-right-8)+'px';
+      tooltip.hidden=false;
+      const above=button.top-bounds.top-tooltip.offsetHeight-5;
+      tooltip.style.top=Math.max(4,Math.min(panel.clientHeight-tooltip.offsetHeight-4,
+        above>=4?above:button.bottom-bounds.top+5))+'px';
+    };
+    const hideTooltip=event=>{
+      if(event.target.closest('.ufs-task-center-icon')?.contains(event.relatedTarget)) return;
+      tooltip.hidden=true;
+    };
+    panel.addEventListener('mouseover',showTooltip);
+    panel.addEventListener('focusin',showTooltip);
+    panel.addEventListener('mouseout',hideTooltip);
+    panel.addEventListener('focusout',hideTooltip);
+    body.addEventListener('scroll',()=>{tooltip.hidden=true;},{passive:true});
+    panel._ufsScrollCleanup=setupListScrollbars(body);
     app.append(panel);
     $('.ufs-copy-task-trigger',app)?.setAttribute('aria-expanded','true');
+    updateCopyTaskButton();
+    if(focus) dismiss.focus({preventScroll:true});
   }
   function updateCopyTaskButton() {
     updateNativeModeProtection();
     const button=app && $('.ufs-copy-task-trigger',app);
     if(!button) return;
+    // Keep records visible until their deletion has been durably saved.
+    if(copyCleanupPending && !copyJobs.length) return;
     button.hidden=copyJobs.length===0;
     const active=copyJobs.find(job=>job.status==='running');
     synchronizeCopySpeedTimer(active);
@@ -2617,7 +2733,7 @@
       button.replaceChildren();
       delete button.dataset.renderKey;
       button.removeAttribute('data-phase');
-      closeCopyTaskCenter();
+      closeCopyTaskCenter(Boolean($('.ufs-copy-task-center',app)?.contains(document.activeElement)));
       return;
     }
     const queued=copyJobs.filter(job=>job.status==='queued').length;
@@ -2686,15 +2802,35 @@
     button.setAttribute('aria-label',button.title);
     const open=$('.ufs-copy-task-center',app);
     if(open) {
+      const focusedControl=document.activeElement;
+      const completed=copyJobs.filter(job=>job.status==='success').length;
+      const clear=open.querySelector('.ufs-task-center-clear');
+      clear.disabled=copyCleanupPending || completed===0;
+      clear.dataset.tooltip=copyCleanupPending?'正在保存清理结果':completed?
+        '清理 '+completed+' 项已完成记录，保留文件':'没有可清理的已完成记录';
+      clear.setAttribute('aria-label','清理已完成任务记录：'+clear.dataset.tooltip);
+      for(const control of open.querySelectorAll('.ufs-task-center-dismiss-record,.ufs-task-center-row[data-status=success] .ufs-task-center-open'))
+        control.disabled=copyCleanupPending;
+      if(open.contains(focusedControl) && focusedControl.disabled)
+        open.querySelector('.ufs-task-center-close').focus({preventScroll:true});
+      const error=open.querySelector('.ufs-task-center-cleanup-error');
+      error.hidden=!copyCleanupError;
+      error.textContent=copyCleanupError;
       const nodes=Array.from(open.querySelectorAll('.ufs-task-center-row'));
       const changed=nodes.length!==copyJobs.length || nodes.some((node,index)=>
         node.dataset.status!==copyJobs[index].status);
+      if(changed && copyCleanupPending) return;
       if(changed) {
         const scroll=open.querySelector('.ufs-task-center-body')?.scrollTop||0;
+        const focused=open.contains(document.activeElement)?document.activeElement.dataset.taskFocus:null;
         closeCopyTaskCenter();
-        showCopyTaskCenter();
+        showCopyTaskCenter(false);
         const body=$('.ufs-task-center-body',app);
         if(body) body.scrollTop=scroll;
+        if(focused) {
+          const control=$('[data-task-focus="'+focused+'"]',app);
+          (control && !control.disabled?control:$('.ufs-task-center-close',app))?.focus({preventScroll:true});
+        }
         return;
       }
       const row=open.querySelector('.ufs-task-center-row[data-status=running]');
@@ -5386,7 +5522,7 @@
     $('.ufs-refresh', app).addEventListener('click', refreshDirectory);
     $('.ufs-more', app).addEventListener('click', showAppMenu);
     $('.ufs-diagnostic-button', app).addEventListener('click',showDiagnosticCenter);
-    $('.ufs-copy-task-trigger', app).addEventListener('click',showCopyTaskCenter);
+    $('.ufs-copy-task-trigger', app).addEventListener('click',()=>showCopyTaskCenter());
     updateCopyTaskButton();
     // Only create-folder is writable in v0.2.1; other native actions remain disabled.
     $('.ufs-back', app).addEventListener('click', () => stepHistory(-1));
@@ -5418,6 +5554,7 @@
     });
     setupSidebarResizer();
     onCleanup(setupListScrollbars($('.ufs-list', app)));
+    onCleanup(()=>closeCopyTaskCenter());
     $('.ufs-list', app).addEventListener('scroll', scheduleVirtualWindow, {passive:true});
     if (typeof ResizeObserver !== 'undefined') {
       const locationObserver = new ResizeObserver(() => { scheduleLocationDisplay(); scheduleVirtualWindow(); });
@@ -5440,6 +5577,10 @@
     });
     document.addEventListener('pointerdown', (event) => {
       if (destroyed || !app.isConnected) return;
+      const center=$('.ufs-copy-task-center',app);
+      const trigger=$('.ufs-copy-task-trigger',app);
+      if(center && !center.contains(event.target) && !trigger?.contains(event.target))
+        closeCopyTaskCenter(center.contains(document.activeElement));
       const more = $('.ufs-more', app);
       const operations = $('.ufs-operations', app);
       const currentTrigger = currentMenu && currentMenu._ufsTrigger;
@@ -5450,6 +5591,11 @@
     }, { signal: lifecycle.signal });
     document.addEventListener('keydown', (event) => {
       if (destroyed || !app.isConnected || !app.contains(event.target)) return;
+      if(event.key==='Escape' && $('.ufs-copy-task-center',app)) {
+        event.preventDefault();event.stopPropagation();
+        closeCopyTaskCenter(true);
+        return;
+      }
       if (event.target.closest('input,textarea,[contenteditable]')) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') {
         event.preventDefault();

@@ -5,6 +5,94 @@ import vm from 'node:vm';
 
 const script = readFileSync(new URL('../src/unraid-file-station.user.js', import.meta.url), 'utf8');
 
+function createCopyCleanupHarness(statuses, overrides = {}) {
+  const jobs = statuses.map((status,id) => ({id,status,record:{taskId:'copy_cleanup_'+id}}));
+  const writes = [];
+  const messages = [];
+  const context = {
+    copyJobs:jobs,copyCleanupPending:false,copyCleanupError:'',destroyed:false,
+    copyPersistTail:Promise.resolve(),lastPersistedTasks:'[]',
+    initializeCopyPersistence:async()=>{},ensureCopyOwnership:async()=>{},
+    persistentCopyStore:{read:async()=>({tasks:[]})},
+    persistCopyQueue:async()=>{writes.push(jobs.map(job=>job.id));},
+    updateCopyTaskButton:()=>{},notify:message=>messages.push(message),
+    ...overrides
+  };
+  const begin = script.indexOf('  async function clearCompletedCopyJobs(');
+  const end = script.indexOf('  function closeCopyTaskCenter(',begin);
+  assert.ok(begin>=0 && end>begin);
+  vm.runInNewContext(script.slice(begin,end),context);
+  return {jobs,writes,messages,context,clear:context.clearCompletedCopyJobs};
+}
+
+test('任务记录清理只移除成功项，逐条和批量共用一次快照保存',async()=>{
+  const {jobs,writes,clear}=createCopyCleanupHarness([
+    'success','running','queued','failed','stopped','uncertain','success'
+  ]);
+  const last=jobs[6];
+  await clear(jobs[2]);
+  assert.equal(writes.length,0,'排队任务不能通过成功记录清理入口移除');
+  await clear(last);
+  assert.deepEqual(jobs.map(job=>job.status),[
+    'success','running','queued','failed','stopped','uncertain'
+  ]);
+  assert.equal(writes.length,1);
+  await clear();
+  assert.deepEqual(jobs.map(job=>job.status),['running','queued','failed','stopped','uncertain']);
+  assert.equal(writes.length,2,'每次批量操作只保存一次');
+  await clear();
+  assert.equal(writes.length,2,'没有成功记录时不写入');
+});
+
+test('任务清理保存失败恢复记录顺序，并保留其他任务实时变更',async()=>{
+  const harness=createCopyCleanupHarness(['success','running','queued','success']);
+  const before=harness.jobs.slice();
+  const added={id:4,status:'queued'};
+  harness.context.persistCopyQueue=async()=>{
+    before[1].status='uncertain';
+    harness.jobs.splice(harness.jobs.indexOf(before[2]),1);
+    harness.jobs.push(added);
+    throw new Error('模拟保存失败');
+  };
+  await harness.clear();
+  assert.deepEqual(harness.jobs,[before[0],before[1],before[3],added]);
+  assert.equal(harness.jobs[1].status,'uncertain');
+  assert.match(harness.context.copyCleanupError,/未清理任务记录.*模拟保存失败/);
+  assert.equal(harness.context.copyCleanupPending,false);
+  assert.equal(harness.messages.length,1);
+});
+
+test('任务清理遇到所有权冲突或快照过期时保留全部记录',async()=>{
+  for(const overrides of [
+    {ensureCopyOwnership:async()=>{throw new Error('已有其他标签页管理复制队列');}},
+    {persistentCopyStore:{read:async()=>({tasks:[{taskId:'copy_changed'}]})}}
+  ]) {
+    const {jobs,writes,context,clear}=createCopyCleanupHarness(['success','queued'],overrides);
+    const before=jobs.slice();
+    await clear();
+    assert.deepEqual(jobs,before);
+    assert.equal(writes.length,0);
+    assert.match(context.copyCleanupError,/其他标签页/);
+    assert.equal(context.copyCleanupPending,false);
+  }
+});
+
+test('任务清理等待保存检查时拒绝重复操作',async()=>{
+  let release;
+  const pending=new Promise(resolve=>{release=resolve;});
+  const {jobs,writes,clear}=createCopyCleanupHarness(['success','success'],{
+    initializeCopyPersistence:()=>pending
+  });
+  const first=clear(jobs[0]);
+  await clear(jobs[1]);
+  assert.equal(jobs.length,2);
+  release();
+  await first;
+  assert.equal(jobs.length,1);
+  assert.equal(jobs[0].id,1);
+  assert.equal(writes.length,1);
+});
+
 function createAPI(options = {}) {
   const rows = [];
   const sandbox = {
@@ -1577,7 +1665,7 @@ test('v0.2.3.12 全部弹窗统一 52px 标题、64px 底栏和独立滚动内�
   assert.match(script,/form\.append\(fields, buttons\);\s*dialog\.append\(header, form\);/);
 });
 test('v0.2.3.12 弹窗及目录树复用细滚动条和滚动触发显示，避免双滚动条同时突出',()=>{
-  assert.match(script,/#ufs-app \.ufs-create-dialog \.ufs-create-fields,#ufs-app \.ufs-copy-picker\{scrollbar-width:thin;scrollbar-color:transparent transparent\}/);
+  assert.match(script,/#ufs-app \.ufs-create-dialog \.ufs-create-fields,#ufs-app \.ufs-copy-picker,#ufs-app \.ufs-task-center-body\{scrollbar-width:thin;scrollbar-color:transparent transparent\}/);
   assert.match(script,/#ufs-app \.ufs-copy-dialog \.ufs-create-fields:has\(\.ufs-copy-picker:hover\)\{scrollbar-color:transparent transparent\}/);
   assert.match(script,/#ufs-app \.ufs-copy-dialog \.ufs-create-fields:has\(\.ufs-copy-picker:hover\)::-webkit-scrollbar-thumb/);
   assert.equal((script.match(/setupListScrollbars\(fields\);/g)||[]).length,3,
@@ -1720,11 +1808,11 @@ test('v0.2.5 方案 A 底部胶囊显示运行中总进度与独立排队数量'
   assert.match(script,/\.ufs-task-badge-speed/);
   assert.match(script,/element\('span','ufs-task-badge-divider'\)/);
   assert.match(script,/element\('span','ufs-task-badge-wait'\)/);
-  assert.match(script,/function showCopyTaskCenter\(\)/);
+  assert.match(script,/function showCopyTaskCenter\(focus=true\)/);
   assert.match(script,/job\.cancelQueued\(\)/);
   assert.match(script,/function resumeCopyQueue\(\)/);
   assert.match(script,/#ufs-app \.ufs-status \.ufs-copy-task-trigger\[hidden\]\{display:none!important\}/);
-  assert.match(script,/\.addEventListener\('click',showCopyTaskCenter\)/);
+  assert.match(script,/\.addEventListener\('click',\(\)=>showCopyTaskCenter\(\)\)/);
 });
 
 
