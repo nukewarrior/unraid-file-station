@@ -3545,3 +3545,34 @@ test('v0.2.11.5 删除被旧租约拦截时保留确认状态、无原生写入�
   assert.equal(deleted.length,1);
   assert.equal(errors.length,0,errors.join('\n'));
 });
+
+
+test('v0.2.11.6 移动完成诊断提供可归因的分段耗时，不重复提交',async t=>{
+  const {page,moved,nativePosts,errors}=await pageFor(t);
+  await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).first().waitFor();
+  await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).first().click();
+  await page.locator('.ufs-operations').click();
+  await page.getByRole('menuitem',{name:'移动到…'}).click();
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit',{hasText:'开始移动'}).click();
+  await page.locator('.ufs-copy-progress-panel[data-phase="success"]').waitFor({timeout:20000});
+  await page.locator('.ufs-copy-submit',{hasText:'完成'}).click();
+  await page.locator('.ufs-diagnostic-button').click();
+  const center=page.getByRole('dialog',{name:'File Station 诊断中心'});
+  const pending=page.waitForEvent('download');
+  await center.getByRole('button',{name:'导出 JSON'}).click();
+  const file=await pending;
+  const report=JSON.parse(readFileSync(await file.path(),'utf8'));
+  assert.equal(report.version,'0.2.11.6');
+  const moves=report.events.filter(e=>e.code==='move.verified');
+  assert.equal(moves.length,1);
+  const details=moves[0].details;
+  for(const key of ['requestMs','monitorMs','verifyMs','totalMs','polls'])
+    assert.ok(Number.isFinite(details[key]) && details[key]>=0,key);
+  assert.ok(details.polls>=2);
+  assert.equal(typeof details.observedOwnTask,'boolean');
+  assert.equal(typeof details.observedDone,'boolean');
+  assert.equal(moved.length,1);
+  assert.equal(nativePosts.filter(x=>x.mode==='file'&&x.action==='9').length,1);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
