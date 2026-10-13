@@ -2580,23 +2580,28 @@ test('v0.2.11.6 原生任务归属不匹配或者结果未核实不得标记完�
 });
 
 
-function nativeMoveBatchHarness({folders=false,conflict=false,partial=false,mismatch=false,
+function nativeMoveBatchHarness({folders=false,folderIndex=-1,wrongOriginType=false,
+  wrongDestinationType=false,conflict=false,partial=false,mismatch=false,
   throwPreflight=false,withoutEvidence=false}={}) {
   const first=script.indexOf('  function nativeMoveBatchEligible(');
   const last=script.indexOf('  async function moveNativeEntry(',first);
   assert.ok(first>0 && last>first);
   const sources=['alpha.txt','beta.txt','gamma.txt'].map(name=>'/mnt/user/TimeMachine/'+name);
   const plans=sources.map(source=>({
-    type:'move',source,folder:folders,conflictPolicy:'fail',
+    type:'move',source,folder:folders||sources.indexOf(source)===folderIndex,conflictPolicy:'fail',
     destinationDir:'/mnt/user/downloads',
     target:'/mnt/user/downloads/'+source.split('/').pop()
   }));
   const names=sources.map(source=>source.split('/').pop());
   let elapsed=20000,called=0,submitted=false,readCount=0,closed=false,encoded='',done=false;
   const audits=[],durable=[],polls=[];
-  const original=sources.map((path,i)=>({path,folder:false,size:100+i,copyPathVerified:true}));
+  const original=sources.map((path,i)=>({path,
+    folder:wrongOriginType&&i===folderIndex?false:plans[i].folder,
+    size:100+i,copyPathVerified:true}));
   const targetItems=()=>names.flatMap((name,i)=>
-    submitted && !(partial&&i===1)?[{path:plans[i].target,name,folder:false,size:100+i,copyPathVerified:true}]:[]);
+    submitted && !(partial&&i===1)?[{path:plans[i].target,name,
+      folder:wrongDestinationType&&i===folderIndex?false:plans[i].folder,
+      size:100+i,copyPathVerified:true}]:[]);
   const context={
     MOVE_ENABLED:true,isDemo:false,window:{__UFS_TEST_MODE__:true},
     withNativeWriteLock:async fn=>fn(),
@@ -2699,4 +2704,59 @@ test('v0.2.11.7 F5 恢复签名必须保存为原生批次，不能混淆串行�
   assert.equal(h.context.savedMoveBatchPlans({...saved,items:saved.items.map((p,i)=>
     i===0?{...p,folder:true}:p)}),null);
   assert.equal(h.context.savedMoveBatchPlans({...saved,batchMode:undefined}),null);
+});
+
+
+test('v0.2.11.8 文件夹加普通文件可进入一条原生 action=9，严格不扩大到多文件夹',async()=>{
+  const h=nativeMoveBatchHarness({folderIndex:0});
+  assert.equal(h.context.nativeMoveBatchEligible(h.plans),false);
+  assert.equal(h.context.nativeMoveMixedEligible(h.plans),true);
+  assert.equal(h.context.nativeMoveBatchMode(h.plans),'native-move-mixed');
+  assert.equal(h.context.nativeMoveFallbackReason(h.plans),'unsafe-or-unsupported-path');
+  const moved=await h.move();
+  assert.equal(moved.length,3);
+  assert.equal(moved[0].folder,true);
+  assert.equal(h.called,1);
+  assert.equal(h.encoded,h.sources.join('\r'));
+  const verified=h.audits.find(e=>e.code==='move.batch_verified');
+  assert.equal(verified.details.batchMode,'native-move-mixed');
+  assert.equal(verified.details.folderCount,1);
+  assert.equal(verified.details.folderVerification,'top-level-only');
+  assert.equal(h.context.nativeMoveBatchMode(h.plans.map(p=>({...p,folder:true}))),null);
+  assert.equal(h.context.nativeMoveFallbackReason(h.plans.map(p=>({...p,folder:true}))),
+    'multiple-directories');
+  assert.equal(h.context.nativeMoveBatchMode(h.plans.map((p,i)=>
+    i===1?{...p,folder:true}:p)),null);
+  assert.equal(h.context.nativeMoveBatchMode(h.plans.map((p,i)=>
+    i===0?{...p,destinationDir:p.source+'/nested',target:p.source+'/nested/alpha.txt'}:p)),null);
+});
+
+test('v0.2.11.8 混合批量前后类型不符或目标缺失只能拒绝/整批待核实',async()=>{
+  for(const opts of [{folderIndex:0,wrongOriginType:true},{folderIndex:0,conflict:true}]) {
+    const h=nativeMoveBatchHarness(opts);
+    await assert.rejects(h.move(),/类型不一致|目标存在同名/);
+    assert.equal(h.called,0);
+  }
+  for(const opts of [{folderIndex:0,wrongDestinationType:true},{folderIndex:0,partial:true}]) {
+    const h=nativeMoveBatchHarness(opts);
+    await assert.rejects(h.move(),/整批结果待核实/);
+    assert.equal(h.called,1);
+    assert.equal(h.audits.some(e=>e.code==='move.batch_verified'),false);
+    assert.equal(h.closed,true);
+  }
+});
+
+test('v0.2.11.8 混合批次恢复签名和持久化模式校验严格配对',()=>{
+  const h=nativeMoveBatchHarness({folderIndex:0});
+  const record={
+    operation:'move',batchMode:'native-move-mixed',destination:'/mnt/user/downloads',
+    items:h.plans.map(p=>({source:p.source,folder:p.folder}))
+  };
+  const saved=h.context.savedMoveBatchPlans(record);
+  assert.equal(saved.length,3);
+  assert.equal(h.context.matchesMoveBatchTask({action:9,
+    source:h.sources.join('\r'),target:'/mnt/user/downloads/'},saved),true);
+  assert.equal(h.context.savedMoveBatchPlans({...record,batchMode:'native-move-files'}),null);
+  assert.equal(h.context.savedMoveBatchPlans({...record,items:record.items.map(p=>({...p,folder:true}))}),null);
+  assert.equal(h.context.savedMoveBatchPlans({...record,batchMode:'unknown'}),null);
 });
