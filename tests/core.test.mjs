@@ -2168,7 +2168,7 @@ test('v0.2.7.1 刷新后仅重新观察严格匹配的原生任务，无法确�
 test('v0.2.7.2 Tampermonkey 自动更新元数据与脚本版本保持一致',()=>{
   const header=script.split('// ==/UserScript==',1)[0];
   const updateUrl='https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js';
-  assert.match(header,/^\/\/ @version\s+0\.2\.10\.2$/m);
+  assert.match(header,/^\/\/ @version\s+0\.2\.10\.3$/m);
   assert.ok(header.split('\n').includes('// @updateURL    '+updateUrl));
   assert.ok(header.split('\n').includes('// @downloadURL  '+updateUrl));
   assert.equal(header.match(/^\/\/ @version\s+/gm)?.length,1);
@@ -2319,4 +2319,11 @@ test('v0.2.10.2 诊断日志版本与脚本版本同步，恢复删除任务有�
  assert.match(script,/原生删除中/);
  assert.match(script,/确认继续执行尚未提交的永久删除任务/);
  assert.match(script,/永久删除不能撤销/);
+});
+
+test('v0.2.10.3 删除原生提交后结果不确定不会被队列外层 catch 覆盖为可重试失败',()=>{
+ assert.match(script,/const ambiguous=job\.phase==='uncertain' \|\|/);
+ assert.match(script,/item\.submission==='intent-saved'\|\|item\.submission==='unknown'/);
+ assert.match(script,/job\.status=ambiguous\?'uncertain':'failed'/);
+ assert.match(script,/if\(\(job\.status==='failed' && !job\.recoverable\) \|\|/);
 });

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.10.2
+// @version      0.2.10.3
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
@@ -1548,7 +1548,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.10.2';
+  const DIAGNOSTIC_VERSION='0.2.10.3';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -2654,8 +2654,14 @@
               state==='uncertain'||state==='cancelled'?'uncertain':'failed';
           }
         } catch(error) {
-          job.status='failed';
-          job.phase='failed';
+          // A POST-intent that has reached native Unraid must NEVER be collapsed
+          // into an ordinary retryable failure by the outer scheduler.
+          const ambiguous=job.phase==='uncertain' ||
+            job.record?.items?.some(item=>item.status==='uncertain' ||
+              ((item.submission==='intent-saved'||item.submission==='unknown') &&
+                !['success','skipped','excluded'].includes(item.status)));
+          job.status=ambiguous?'uncertain':'failed';
+          job.phase=job.status;
           job.error=String(error?.message||error);
         } finally {
           diagnosticLog(job.status==='success'?'INFO':'WARN','queue.finished',{
