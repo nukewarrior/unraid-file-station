@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.10.0
+// @version      0.2.10.1
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
@@ -2438,7 +2438,10 @@
       notify('存在原生结果待核实的任务，请先逐项核实并排除，不能直接恢复队列');
       return;
     }
-    if(!window.confirm('确认恢复尚未执行的复制队列？\n\n恢复后将使用原先的忽略/覆盖策略执行文件操作。'))return;
+    const queuedDelete=copyJobs.some(job=>job.recovered&&job.status==='queued'&&job.record.operation==='delete');
+    if(!window.confirm(queuedDelete?
+      '确认继续执行尚未提交的永久删除任务？\n\n文件和文件夹会永久删除、无法撤销。已提交或待核实的任务不会自动重发。':
+      '确认恢复尚未执行的文件任务队列？\n\n移动会移除原位置文件；复制仍使用原有忽略/覆盖策略。'))return;
     try {
       await ensureCopyOwnership();
       if(await readNativeActive())
@@ -2467,14 +2470,17 @@
     dialog.setAttribute('role','dialog');
     dialog.setAttribute('aria-label','恢复复制任务详情');
     const h=element('div','ufs-create-head');
-    h.append(element('h3','','已保存复制任务'));
+    h.append(element('h3','',job.record.operation==='delete'?'已保存永久删除任务':job.record.operation==='move'?'已保存移动任务':'已保存复制任务'));
     const close=element('button','ufs-create-dismiss','×');
     close.type='button';close.addEventListener('click',()=>overlay.remove());
     h.append(close);
     const body=element('div','ufs-create-fields');
-    body.append(element('div','ufs-batch-meta',job.record.operation==='delete'?'来源：'+job.destination:'目标：'+job.destination),
-      element('div','ufs-batch-meta','同名处理：'+
+    body.append(element('div','ufs-batch-meta',job.record.operation==='delete'?'来源：'+job.destination:'目标：'+job.destination));
+    if(!job.record.operation || job.record.operation==='copy')
+      body.append(element('div','ufs-batch-meta','同名处理：'+
         (job.conflictPolicy==='overwrite'?'覆盖':'忽略')));
+    if(job.record.operation==='delete')
+      body.append(element('div','ufs-delete-warning','永久删除不能撤销；请在 NAS 上核实结果。'));
     for(let i=0;i<job.record.items.length;i++){
       const item=job.record.items[i];
       const row=element('div','ufs-batch-preview-row');
@@ -2492,7 +2498,7 @@
         const skip=element('button','ufs-task-center-remove','已人工核实，跳过此项');
         skip.type='button';
         skip.addEventListener('click',async()=>{
-          if(!window.confirm('请先在 Unraid 核实该项的复制结果。\n选择跳过后本队列不会重新复制这个文件，确认吗？'))return;
+          if(!window.confirm('请先在 Unraid 核实该项操作结果。\n选择跳过后本队列不会重新执行该操作，确认吗？'))return;
           try {
             await ensureCopyOwnership();
             if(await readNativeActive()) throw new Error('Unraid 仍有原生任务运行，禁止清除此状态');
@@ -2673,7 +2679,10 @@
   function resumeCopyQueue() {
     if(copyRecoveryLocked || !copyQueuePaused ||
         !copyJobs.some(job=>job.status==='queued')) return;
-    if(!window.confirm('确认已核实失败或不确定的原生复制任务及目标目录？\n\n继续只会启动尚未执行的排队任务，不会重试已失败的项目。')) return;
+    const pendingDeletion=copyJobs.some(job=>job.status==='queued'&&job.record?.operation==='delete');
+    if(!window.confirm(pendingDeletion?
+      '确认继续执行后续永久删除？\n\n删除不可撤销；不会重发已提交或待核实项目。':
+      '确认已核实失败或不确定的原生文件任务？\n\n仅执行尚未提交的排队项目。')) return;
     copyQueuePaused=false;
     updateCopyTaskButton();
     void runCopyQueue();
@@ -2914,9 +2923,9 @@
     const text=copyRecoveryLocked?
       (active?.recoveryMonitoring?'原生复制中 · 队列暂停':
         needsCheck?'有 '+needsCheck+' 项任务待核实':'有 '+waitingRestore+' 项任务待恢复'):
-      copyQueuePaused&&queued?'复制已暂停':
+      copyQueuePaused&&queued?'文件任务已暂停':
       active?copyJobPhaseLabel(active):
-      queued?'等待中':complete?'复制完成 '+copyJobs.length+' 项':
+      queued?'等待中':complete?(copyJobs.some(job=>job.record?.operation==='delete')?'文件任务完成 ':'复制完成 ')+copyJobs.length+' 项':
       problems?(copyJobs.some(job=>job.status==='uncertain'||job.status==='stopped'||
         (job.status==='failed'&&!job.preflightRejected))?'复制待核实':
         '预检未通过'):'复制任务 '+copyJobs.length+' 项';
@@ -3135,7 +3144,7 @@
     event.stopImmediatePropagation();
     if (event.type==='click' || event.type==='contextmenu') {
       if (nativeReadonlyNote) nativeReadonlyNote.textContent=
-        '复制队列未结束：原生文件操作暂为只读，请先返回 File Station 处理任务。';
+        '文件任务未结束：原生文件操作暂为只读，请先返回 File Station 处理任务。';
     }
   }
   function switchFileManager(mode) {
@@ -5701,7 +5710,7 @@
     form.addEventListener('submit',event=>{
       event.preventDefault();
       if(closed||enqueuePending)return;
-      if(job?.status==='success'||job?.status==='stopped'){close();return;}
+      if(job && ['success','stopped'].includes(job.phase)){close();return;}
       if(job)return;
       if(needConfirm&&!check.checked)return;
       void (async()=>{
@@ -6139,7 +6148,7 @@
       button.id='ufs-native-enable';
       button.type='button';
       button.addEventListener('click',()=>switchFileManager('file-station'));
-      nativeReadonlyNote=element('span','','复制队列未结束：原生文件操作暂为只读。');
+      nativeReadonlyNote=element('span','','文件任务未结束：原生文件操作暂为只读。');
       nativeReadonlyNote.id='ufs-native-readonly-note';
       nativeRefreshNote=element('span','','');
       nativeRefreshNote.id='ufs-native-refresh-note';

@@ -137,6 +137,10 @@ async function pageFor(t, options = {}) {
   const createdAnywhere = [];
   const renamed = [];
   const copied = [];
+  const moved = [];
+  const deleted = [];
+  let latestMutation = null;
+  let mutationReads = 0;
   const browseRequests = [];
   let copyActiveReads = 0;
   let latestCopy = null;
@@ -163,12 +167,16 @@ async function pageFor(t, options = {}) {
       sourceForCopied.source + oldPath.slice(sourceForCopied.target.length) : oldPath;
     const originalRows=[...(contents[sourcePath] || []),
       ...(options.extraEntries?.[sourcePath] || [])];
-    const mappedRows=originalRows.map(([name,folder])=>{
+    const mappedRows=originalRows.filter(([name])=>
+      !deleted.some(item=>item.source===sourcePath+'/'+name) &&
+      !moved.some(item=>item.source===sourcePath+'/'+name)).map(([name,folder])=>{
       const oldEntry=oldPath+'/'+name;
       const changed=renamed.find(item=>item.source===oldEntry);
       return [changed ? changed.target.split('/').pop() : name,folder];
     });
     const copyRows=copied.filter(item=>item.destinationDir===path)
+      .map(item=>[item.name,item.folder]);
+    const moveRows=moved.filter(item=>item.destinationDir===path)
       .map(item=>[item.name,item.folder]);
     const conflictRows=options.copyConflictDest===path ?
       (options.copyConflictNames||['notes.txt']).map(item=>Array.isArray(item)?item:[item,false]) : [];
@@ -176,7 +184,7 @@ async function pageFor(t, options = {}) {
     const response=options.bulkCount && path==='/mnt/user/TimeMachine' ?
       bulkRows(path,options.bulkCount) : responseFor(path,
         [...(path==='/mnt/user/TimeMachine' ? created.map(name=>[name,true]) : []),
-         ...copyRows,...conflictRows,...createdOtherRows], mappedRows);
+         ...copyRows,...moveRows,...conflictRows,...createdOtherRows], mappedRows);
     await route.fulfill({status:200,contentType:'text/html',body:response}).catch(()=>{});
   });
   await page.route('**/webGui/include/Control.php',async route=>{
@@ -190,6 +198,7 @@ async function pageFor(t, options = {}) {
     if (mode==='read') {
       const busy=options.nativeBusy ?
         JSON.stringify({action:'6',source:'/mnt/user/TimeMachine/backup',target:''}) :
+        latestMutation && ++mutationReads<=1 ? JSON.stringify(latestMutation):
         latestCopy && (options.longCopy ? !copyStopped :
           ++copyActiveReads <= (options.firstCopyHoldReads && copied.length===1 ? options.firstCopyHoldReads : 1)) ? JSON.stringify({
           action:latestCopy.folder?'3':'8',source:latestCopy.source,
@@ -226,6 +235,19 @@ async function pageFor(t, options = {}) {
       await route.fulfill({status:200,body:''});
       return;
     }
+    if(mode==='file' && ['4','9','1','6'].includes(body.get('action'))) {
+      const action=body.get('action');
+      const source=decodeURIComponent(body.get('source')||'');
+      const destinationDir=decodeURIComponent(body.get('target')||'').replace(/\/$/,'');
+      const folder=action==='4'||action==='1';
+      if(action==='4'||action==='9')
+        moved.push({source,destinationDir,folder,name:source.split('/').pop()});
+      else deleted.push({source,folder});
+      latestMutation={action,source,target:action==='4'||action==='9'?destinationDir+'/':''};
+      mutationReads=0;
+      await route.fulfill({status:200,body:''});
+      return;
+    }
     if(mode==='file' && body.get('action')==='99') {
       copyStopped=true;
       latestCopy=null;
@@ -236,7 +258,7 @@ async function pageFor(t, options = {}) {
     await route.fulfill({status:400,body:'Unexpected native operation'});
   });
   await page.goto(base + '/Shares/Browse?dir=%2Fmnt%2Fuser');
-  return {page,errors,nativePosts,created,createdAnywhere,renamed,copied,browseRequests};
+  return {page,errors,nativePosts,created,createdAnywhere,renamed,copied,moved,deleted,browseRequests};
 }
 
 const currentLabel = page => page.locator('.ufs-tab.ufs-active .ufs-tab-name');
@@ -3157,4 +3179,52 @@ test('任务中心清理拒绝覆盖其他标签页的所有权和新快照',asy
       assert.equal(errors.length,0,errors.join('\n'));
     });
   }
+});
+
+
+test('v0.2.9 移动普通文件复用复制选择树，原生任务 action 9 不覆盖',async t=>{
+  const {page,moved,nativePosts,errors}=await pageFor(t);
+  await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).first().click();
+  await page.locator('.ufs-operations').click();
+  await page.getByRole('menuitem',{name:'移动到…'}).click();
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit',{hasText:'开始移动'}).click();
+  await page.locator('.ufs-copy-progress-panel[data-phase="success"]').waitFor({timeout:20000});
+  assert.equal(moved.length,1);
+  assert.equal(moved[0].source,'/mnt/user/TimeMachine/notes.txt');
+  assert.equal(moved[0].destinationDir,'/mnt/user/downloads');
+  assert.equal(nativePosts.filter(x=>x.mode==='file'&&x.action==='9').length,1);
+  assert.equal(await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).count(),0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.10 删除单文件通过二次确认窗口执行原生 action 6',async t=>{
+  const {page,deleted,nativePosts,errors}=await pageFor(t);
+  await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).first().click();
+  await page.locator('.ufs-operations').click();
+  await page.getByRole('menuitem',{name:'删除'}).click();
+  await page.getByText('原生永久删除不会进入回收站。',{exact:false}).waitFor();
+  await page.locator('.ufs-delete-submit').click();
+  await page.locator('.ufs-create-feedback',{hasText:'永久删除完成'}).waitFor({timeout:20000});
+  assert.equal(deleted.length,1);
+  assert.equal(deleted[0].source,'/mnt/user/TimeMachine/notes.txt');
+  assert.equal(nativePosts.filter(x=>x.mode==='file'&&x.action==='6').length,1);
+  assert.equal(await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).count(),0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.10 删除文件夹必须勾选明确的不可恢复确认后方可提交',async t=>{
+  const {page,deleted,errors}=await pageFor(t);
+  await page.locator('.ufs-entry').filter({hasText:'Photos'}).first().click();
+  await page.locator('.ufs-operations').click();
+  await page.getByRole('menuitem',{name:'删除'}).click();
+  assert.equal(await page.locator('.ufs-delete-submit').isDisabled(),true);
+  assert.equal(deleted.length,0);
+  await page.locator('.ufs-delete-acknowledge input').check();
+  assert.equal(await page.locator('.ufs-delete-submit').isEnabled(),true);
+  await page.locator('.ufs-delete-submit').click();
+  await page.locator('.ufs-create-feedback',{hasText:'永久删除完成'}).waitFor({timeout:20000});
+  assert.equal(deleted.length,1);
+  assert.equal(deleted[0].folder,true);
+  assert.equal(errors.length,0,errors.join('\n'));
 });
