@@ -1723,7 +1723,7 @@ test('v0.2.3.13 复制弹窗焦点、Esc 分层处理和原生取消安全行为
   assert.match(script,/const reopen=\(\)=>\{[\s\S]*?focusDialog\(\)/);
   assert.match(script,/dialog\.addEventListener\('keydown',event=>\{\s*if\(event\.key!=='Escape'\) return;\s*event\.preventDefault\(\);\s*event\.stopPropagation\(\);/);
   assert.match(script,/if\(inlineDraft && !inlineDraft\.busy\) \{cancelInlineCreate\(\);return;\}/);
-  assert.match(script,/close\(\); \/\/ During an active copy this minimizes/);
+  assert.match(script,/close\('escape'\); \/\/ During an active copy this minimizes/);
   assert.match(script,/showCopyFields\(summary,progressPanel\);[\s\S]*?focusDialog\(\);/);
   assert.match(script,/const yes=window\.confirm\(/);
   assert.match(script,/requestCancelNativeCopy\(activeCopySession\.plan,control\)/);
