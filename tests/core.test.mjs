@@ -1398,7 +1398,7 @@ test('v0.2.3.2 动画仅显示不确定进度、提供三阶段和减少动态�
   assert.match(script,/@keyframes ufs-copy-spin/);
   assert.match(script,/@media\(prefers-reduced-motion:reduce\)/);
   assert.match(script,/track\.setAttribute\('role','progressbar'\)/);
-  assert.match(script,/aria-label','复制任务进行中，进度未知'/);
+  assert.match(script,/aria-label',\(isMove\?'移动任务进行中，进度未知':'复制任务进行中，进度未知'\)/);
   assert.match(script,/track\.setAttribute\('aria-valuenow','100'\)/);
   assert.match(script,/showCopyFields\(summary,progressPanel\)/);
   assert.match(script,/renderCopyProgress\('success',outcome\.copyOutcome/);
@@ -1513,7 +1513,7 @@ test('v0.2.3.3 取消任务需持有当前写入锁，拒绝未归属的全局�
 test('v0.2.3.3 后台任务、手动完成与取消确认的保护逻辑存在',()=>{
   assert.match(script,/ufs-copy-task-trigger/);
   assert.match(script,/activeCopySession=copyJob/);
-  assert.match(script,/await copyNativeEntry\(plan,updateCopyProgress,control,/);
+  assert.match(script,/await \(isMove\?moveNativeEntry:copyNativeEntry\)\(plan,updateCopyProgress,control,/);
   assert.match(script,/button\.hidden=copyJobs\.length===0/);
   assert.match(script,/background\.addEventListener\('click',minimize\)/);
   assert.match(script,/Unraid 使用全局停止接口/);
@@ -1683,7 +1683,7 @@ test('v0.2.3.10 复制菜单及提交前必须验证原生 Browse 文件名一�
   assert.match(script,/copyPathVerified: cells\[2\]\?\.textContent === path\.substring/);
   assert.match(script,/chosen\.map\(copyBlockedReason\)\.find\(Boolean\)/);
   assert.match(script,/button\.disabled = true;[\s\S]*?button\.title = disabledReason/);
-  assert.match(script,/entries\.some\(item => !item \|\| copyBlockedReason\(item\)/);
+  assert.match(script,/entries\.some\(item => !item \|\| \(isMove\?!safeWritePath\(item\.path\):copyBlockedReason\(item\)\)/);
   assert.match(script,/if \(sourceEntry\.copyPathVerified === false\)/);
   assert.match(script,/safeCopyPath\(item\.path, true\) && item\.copyPathVerified !== false/);
   assert.match(script,/!safeCopyPath\(plan\.source\)/);
@@ -1801,7 +1801,7 @@ test('v0.2.4 文件操作菜单支持多选复制，但批量任务必须顺序�
   assert.match(script,/async function preflightBatchCopy\(plans\)/);
   assert.match(script,/await preflightBatchCopy\(plans\)/);
   assert.match(script,/for\(let i=0;i<plans\.length;i\+\+\)/);
-  assert.match(script,/await copyNativeEntry\(plans\[i\],/);
+  assert.match(script,/await \(isMove\?moveNativeEntry:copyNativeEntry\)\(plans\[i\],/);
   assert.match(script,/if\(batch\.stopAfterCurrent\)/);
   assert.match(script,/requestCancelNativeCopy\(activeCopySession\.plan,control\)/);
   assert.match(script,/const batch=multi\?/);
@@ -2154,7 +2154,7 @@ test('v0.2.7.1 刷新后仅重新观察严格匹配的原生任务，无法确�
   assert.match(script,/const unwatch=observeNativeProgress\(data=>/);
   assert.match(script,/if\(finishedEvent && sameTaskObserved\)/);
   assert.match(script,/await verifyRecoveredNativeCopy\(job,index\)/);
-  assert.match(script,/if\(!origin \|\| !dest \|\| origin\.folder!==item\.folder/);
+  assert.match(script,/job\.record\.operation==='move'\?!!origin:!origin/);
   assert.match(script,/await persistentCopyStore\.read\(\)/);
   assert.match(script,/job\.recoveryMonitoring=false/);
   assert.match(script,/copyQueuePaused=true; \/\/ NEVER resume waiting jobs/);
@@ -2168,7 +2168,7 @@ test('v0.2.7.1 刷新后仅重新观察严格匹配的原生任务，无法确�
 test('v0.2.7.2 Tampermonkey 自动更新元数据与脚本版本保持一致',()=>{
   const header=script.split('// ==/UserScript==',1)[0];
   const updateUrl='https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js';
-  assert.match(header,/^\/\/ @version\s+0\.2\.9\.0$/m);
+  assert.match(header,/^\/\/ @version\s+0\.2\.9\.1$/m);
   assert.ok(header.split('\n').includes('// @updateURL    '+updateUrl));
   assert.ok(header.split('\n').includes('// @downloadURL  '+updateUrl));
   assert.equal(header.match(/^\/\/ @version\s+/gm)?.length,1);
@@ -2211,7 +2211,7 @@ test('v0.2.7.5 单项与批量使用统一布局、统一阶段及真实速度�
   assert.match(script,/renderSharedCopyStages\(batchStageNodes,visualPhase/);
   assert.match(script,/const batchCurrentFile=element\('div','ufs-copy-current-file'\)/);
   assert.match(script,/batchCurrentFile\.textContent='当前文件：'/);
-  assert.match(script,/if\(info\?\.percent!=null && !entry\.folder\)/,
+  assert.match(script,/if\(info\?\.percent!=null && !entry\.folder && !isMove\)/,
     '目录不能将内部当前文件的进度冒充为整个目录的进度');
   assert.match(script,/progressFilePercent\.textContent='当前文件进度 '/);
   assert.match(script,/progressFilePercent\.hidden=true/);
