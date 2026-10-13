@@ -3657,3 +3657,46 @@ test('v0.2.11.7 原生批量移动目标少文件，整批待核实且不能串�
   assert.equal(await page.locator('.ufs-batch-list-row[data-status="uncertain"]').count(),2);
   assert.equal(errors.length,0,errors.join('\n'));
 });
+
+
+test('v0.2.11.7 F5 恢复不重发原生批量：整批意图持久化且必须手动核实',async t=>{
+  const {page,nativePosts,errors}=await pageFor(t,{
+    extraEntries:{'/mnt/user/TimeMachine':[['another.mkv',false]]},
+    nativeMutationHoldReads:12
+  });
+  await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).first().waitFor();
+  await page.locator('.ufs-entry[data-ufs-file="/mnt/user/TimeMachine/notes.txt"]').click();
+  await page.locator('.ufs-entry[data-ufs-file="/mnt/user/TimeMachine/another.mkv"]')
+    .click({modifiers:['Control']});
+  await page.locator('.ufs-operations').click();
+  await page.getByRole('menuitem',{name:'移动到…'}).click();
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.locator('.ufs-copy-submit',{hasText:'开始移动'}).click();
+  await page.waitForFunction(()=>document.querySelector('.ufs-batch-panel')?.dataset.phase==='copying',
+    null,{timeout:10000});
+  await page.waitForFunction(async()=>{
+    const db=await new Promise((resolve,reject)=>{
+      const req=indexedDB.open('ufs-copy-queue-v1',1);
+      req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);
+    });
+    const tx=db.transaction('snapshots','readonly');
+    const saved=await new Promise((resolve,reject)=>{
+      const req=tx.objectStore('snapshots').get('active');
+      req.onsuccess=()=>resolve(req.result?.snapshot);req.onerror=()=>reject(req.error);
+    });
+    db.close();
+    return saved?.tasks?.[0]?.batchMode==='native-move-files' &&
+      saved.tasks[0].items.length===2 &&
+      saved.tasks[0].items.every(item=>item.submission==='intent-saved');
+  },null,{timeout:10000});
+  assert.equal(nativePosts.filter(x=>x.mode==='file'&&x.action==='9').length,1);
+  await page.reload();
+  await page.locator('.ufs-copy-task-trigger').first().waitFor({timeout:10000});
+  await page.waitForTimeout(2400);
+  assert.equal(nativePosts.filter(x=>x.mode==='file'&&x.action==='9').length,1,
+    'F5 必须只连接观察，不能重新提交批量 Move');
+  await page.locator('.ufs-copy-task-trigger').first().click();
+  assert.ok(await page.locator('.ufs-task-recovery').count()>=1,
+    '不确定的原生批次必须保留手动恢复入口');
+  assert.equal(errors.length,0,errors.join('\n'));
+});
