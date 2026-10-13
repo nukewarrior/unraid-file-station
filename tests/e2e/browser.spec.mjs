@@ -2815,7 +2815,7 @@ test('v0.2.7.1 F5 重连已提交的原生复制，显示实时进度且后续�
   const native=await mockRecoveredNativeRead(page);
   await page.reload({waitUntil:'domcontentloaded'});
   const badge=page.locator('.ufs-status .ufs-copy-task-trigger');
-  await badge.getByText('原生复制中 · 队列暂停').waitFor({timeout:15000});
+  await badge.getByText('原生文件操作中 · 队列暂停').waitFor({timeout:15000});
   await page.evaluate(()=>window.__ufsMonitorTest.emitFileManager({
     status:'Copying ... notes.txt\n  4,194,304  29%  91.24MB/s  0:01:38'
   }));
@@ -2852,7 +2852,7 @@ test('v0.2.7.1 不匹配的 Unraid 原生任务绝不能冒充旧复制任务',a
     status:'Copying unrelated\n  4,194,304  29%  91.24MB/s  0:01:38',done:1
   }));
   await page.waitForTimeout(400);
-  assert.doesNotMatch(await badge.innerText(),/91.24MB\/s|原生复制中/);
+  assert.doesNotMatch(await badge.innerText(),/91.24MB\/s|原生文件操作中/);
   assert.equal(nativePosts.filter(x=>x.mode==='file').length,0);
   assert.equal(errors.length,0,errors.join('\n'));
   await native.dispose();
@@ -2867,7 +2867,7 @@ test('v0.2.7.1 原生完成事件且路径大小核验成功，仅结束该项�
   const native=await mockRecoveredNativeRead(page);
   await page.reload({waitUntil:'domcontentloaded'});
   const badge=page.locator('.ufs-status .ufs-copy-task-trigger');
-  await badge.getByText('原生复制中 · 队列暂停').waitFor({timeout:15000});
+  await badge.getByText('原生文件操作中 · 队列暂停').waitFor({timeout:15000});
   await page.evaluate(()=>window.__ufsMonitorTest.emitFileManager({
     status:'Copying ... notes.txt\n  4,194,304 100%  91.24MB/s  0:00:00',done:1
   }));
@@ -2907,7 +2907,7 @@ test('v0.2.7.1 原生任务消失但未收到 done 完成事件，必须恢复�
   const native=await mockRecoveredNativeRead(page);
   await page.reload({waitUntil:'domcontentloaded'});
   const badge=page.locator('.ufs-status .ufs-copy-task-trigger');
-  await badge.getByText('原生复制中 · 队列暂停').waitFor({timeout:15000});
+  await badge.getByText('原生文件操作中 · 队列暂停').waitFor({timeout:15000});
   native.setActive(false);
   await badge.getByText('有 1 项任务待核实').waitFor({timeout:15000});
   assert.equal(nativePosts.filter(x=>x.mode==='file').length,0);
@@ -2932,7 +2932,10 @@ test('v0.2.8 诊断日志支持标记问题、脱敏导出和跨页面刷新',as
   const download=await pending;
   assert.match(download.suggestedFilename(),/^unraid-file-station-diagnostic-/);
   const report=JSON.parse(readFileSync(await download.path(),'utf8'));
-  assert.equal(report.version,'0.2.8.0');
+  const currentVersion=readFileSync(new URL('../../src/unraid-file-station.user.js',import.meta.url),'utf8')
+    .match(/^\/\/ @version\s+(\S+)/m)?.[1];
+  assert.ok(currentVersion,'必须具有 UserScript @version');
+  assert.equal(report.version,currentVersion);
   assert.equal(report.schemaVersion,1);
   assert.equal(report.events.some(event=>event.code==='user.issue_marker'),true);
   assert.equal(report.events.some(event=>event.code==='diagnostic.mode'),true);
@@ -3112,7 +3115,7 @@ test('任务清理保留原生监控和暂停队列，状态重绘保留焦点�
   const native=await mockRecoveredNativeRead(page);
   await seedCopyTaskCenter(page,['success','running',...Array(8).fill('queued')]);
   const trigger=page.locator('.ufs-copy-task-trigger');
-  await trigger.getByText('原生复制中 · 队列暂停').waitFor();
+  await trigger.getByText('原生文件操作中 · 队列暂停').waitFor();
   await trigger.click();
   const center=page.getByRole('dialog',{name:'复制任务中心'});
   await center.locator('.ufs-task-center-clear').click();
