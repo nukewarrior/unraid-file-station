@@ -3834,6 +3834,7 @@ test('v0.2.11.8 空文件夹与普通文件混合完成时仅声明顶层核验'
   assert.equal(nativePosts.filter(x=>x.mode==='file').length,1);
   assert.equal(moved.length,2);
   assert.equal(moved.find(x=>x.name==='EmptyFolder')?.folder,true);
-  assert.match(await page.locator('.ufs-batch-warning').last().innerText(),/文件夹内部内容并未递归校验/);
+  assert.match(await page.locator('.ufs-batch-panel > .ufs-batch-warning').innerText(),
+    /文件夹内部内容并未递归校验/);
   assert.equal(errors.length,0,errors.join('\n'));
 });
