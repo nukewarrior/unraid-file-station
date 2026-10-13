@@ -2578,3 +2578,125 @@ test('v0.2.11.6 原生任务归属不匹配或者结果未核实不得标记完�
     assert.equal(harness.closed,true);
   }
 });
+
+
+function nativeMoveBatchHarness({folders=false,conflict=false,partial=false,mismatch=false,
+  throwPreflight=false,withoutEvidence=false}={}) {
+  const first=script.indexOf('  function nativeMoveBatchEligible(');
+  const last=script.indexOf('  async function moveNativeEntry(',first);
+  assert.ok(first>0 && last>first);
+  const sources=['alpha.txt','beta.txt','gamma.txt'].map(name=>'/mnt/user/TimeMachine/'+name);
+  const plans=sources.map(source=>({
+    type:'move',source,folder:folders,conflictPolicy:'fail',
+    destinationDir:'/mnt/user/downloads',
+    target:'/mnt/user/downloads/'+source.split('/').pop()
+  }));
+  const names=sources.map(source=>source.split('/').pop());
+  let elapsed=20000,called=0,submitted=false,readCount=0,closed=false,encoded='',done=false;
+  const audits=[],durable=[],polls=[];
+  const original=sources.map((path,i)=>({path,folder:false,size:100+i,copyPathVerified:true}));
+  const targetItems=()=>names.flatMap((name,i)=>
+    submitted && !(partial&&i===1)?[{path:plans[i].target,name,folder:false,size:100+i,copyPathVerified:true}]:[]);
+  const context={
+    MOVE_ENABLED:true,isDemo:false,window:{__UFS_TEST_MODE__:true},
+    withNativeWriteLock:async fn=>fn(),
+    safeWritePath:path=>typeof path==='string'&&path.startsWith('/mnt/user/'),
+    copyDestinationAllowed:()=>true,
+    parentPath:path=>path.slice(0,path.lastIndexOf('/')),
+    fileName:path=>path.slice(path.lastIndexOf('/')+1),
+    listDirectory:async path=>{
+      if(throwPreflight)throw new Error('cannot read preflight');
+      if(path==='/mnt/user/TimeMachine')return submitted?[]:original;
+      if(path==='/mnt/user/downloads')return conflict?
+        [{name:'beta.txt',path:plans[1].target,folder:false},...targetItems()]:targetItems();
+      throw new Error('unexpected '+path);
+    },
+    readNativeActive:async()=>{
+      if(!submitted)return null;
+      readCount++;
+      if(withoutEvidence)return null;
+      return readCount===1 ? {action:9,
+        source:mismatch?sources[0]:sources.join('\r'),
+        target:'/mnt/user/downloads/'}:null;
+    },
+    nativeCsrfToken:()=>{},activeCopySession:{taskId:'batch-test'},
+    diagnosticLog:(level,code,details)=>audits.push({level,code,details}),
+    observeNativeProgress:()=>()=>{closed=true;},
+    postNativeControl:async post=>{
+      called++;
+      assert.equal(post.action,'9');
+      assert.equal(post.exist,'');
+      encoded=decodeURIComponent(post.source);
+      submitted=true;
+      return '';
+    },
+    waitNative:async ms=>{polls.push(ms);elapsed+=ms;},
+    Date:{now:()=>elapsed},
+    nativeCopyProgressPayload:()=>null,parseRsyncProgress:()=>({}),
+    stripNativeStatusHtml:x=>x,
+  };
+  vm.runInNewContext(script.slice(first,last),context);
+  return {context,plans,sources,move:()=>context.moveNativeBatch(plans,()=>{},{},
+    async()=>{durable.push('all intent-saved');}),
+    get called(){return called;},get submitted(){return submitted;},
+    get encoded(){return encoded;},get audits(){return audits;},get polls(){return polls;},
+    get durable(){return durable;},get closed(){return closed;}};
+}
+
+test('v0.2.11.7 原生批量签名只接受同目录普通文件和严格一致的原生任务',()=>{
+  const h=nativeMoveBatchHarness();
+  assert.equal(h.context.nativeMoveBatchEligible(h.plans),true);
+  assert.equal(h.context.nativeMoveBatchEligible(h.plans.slice(0,1)),false);
+  assert.equal(h.context.nativeMoveBatchEligible(h.plans.map((p,i)=>i===1?{...p,folder:true}:p)),false);
+  assert.equal(h.context.nativeMoveBatchEligible(h.plans.map((p,i)=>i===1?{...p,source:'/mnt/user/appdata/beta.txt'}:p)),false);
+  assert.equal(h.context.nativeMoveBatchEligible([...h.plans,h.plans[0]]),false);
+  const signature={action:9,source:h.sources.join('\r'),target:'/mnt/user/downloads/'};
+  assert.equal(!!h.context.matchesMoveBatchTask(signature,h.plans),true);
+  assert.equal(!!h.context.matchesMoveBatchTask({...signature,source:h.sources[0]},h.plans),false);
+  assert.equal(!!h.context.matchesMoveBatchTask({...signature,action:8},h.plans),false);
+  assert.equal(!!h.context.matchesMoveBatchTask({...signature,target:'/mnt/user/appdata/'},h.plans),false);
+});
+
+test('v0.2.11.7 原生批量移动一次提交 CR 编码的 3 个源路径并整体核验',async()=>{
+  const h=nativeMoveBatchHarness();
+  const result=await h.move();
+  assert.equal(h.called,1);
+  assert.equal(h.encoded,h.sources.join('\r'));
+  assert.equal(result.length,3);
+  assert.equal(result.every(item=>item.moveOutcome==='moved'),true);
+  assert.equal(h.durable.length,1);
+  assert.equal(h.audits.filter(item=>item.code==='move.batch_verified').length,1);
+  assert.equal(h.audits.find(item=>item.code==='move.batch_verified').details.count,3);
+  assert.deepEqual(h.polls,[200,200,200]);
+  assert.equal(h.closed,true);
+});
+
+test('v0.2.11.7 批量移动预检同名冲突零写入；提交后归属和文件缺失只能待核实',async()=>{
+  const conflict=nativeMoveBatchHarness({conflict:true});
+  await assert.rejects(conflict.move(),/目标存在同名项目/);
+  assert.equal(conflict.called,0);
+  assert.equal(conflict.durable.length,0);
+  for(const opts of [{partial:true},{mismatch:true},{withoutEvidence:true}]) {
+    const h=nativeMoveBatchHarness(opts);
+    await assert.rejects(h.move(),/整批结果待核实/);
+    assert.equal(h.called,1);
+    assert.equal(h.audits.filter(item=>item.code==='move.batch_failed').length,1);
+    assert.equal(h.audits.filter(item=>item.code==='move.batch_verified').length,0);
+    assert.equal(h.closed,true);
+  }
+});
+
+test('v0.2.11.7 F5 恢复签名必须保存为原生批次，不能混淆串行任务',()=>{
+  const h=nativeMoveBatchHarness();
+  const saved={
+    operation:'move',batchMode:'native-move-files',destination:'/mnt/user/downloads',
+    items:h.sources.map(source=>({source,folder:false}))
+  };
+  const plans=h.context.savedMoveBatchPlans(saved);
+  assert.equal(plans.length,3);
+  assert.equal(h.context.matchesMoveBatchTask({action:9,source:h.sources.join('\r'),
+    target:'/mnt/user/downloads/'},plans),true);
+  assert.equal(h.context.savedMoveBatchPlans({...saved,items:saved.items.map((p,i)=>
+    i===0?{...p,folder:true}:p)}),null);
+  assert.equal(h.context.savedMoveBatchPlans({...saved,batchMode:undefined}),null);
+});
