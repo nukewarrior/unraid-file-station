@@ -463,6 +463,25 @@ test('v0.2.8.1 顶部刷新图标采用 rotate-cw，按钮统一尺寸且仅目�
   assert.match(script,/\$\('\.ufs-refresh', app\)\.addEventListener\('click', refreshDirectory\)/);
 });
 
+
+test('v0.2.8.2 诊断日志按钮使用 Lucide scroll-text 且保留原有行为与样式', () => {
+  const { api } = createAPI();
+  const header = api.renderHeaderMarkup();
+  const start = script.indexOf('  const ICONS = {');
+  const end = script.indexOf('  function icon(',start);
+  const icons = vm.runInNewContext(script.slice(start,end)+'\nICONS');
+  assert.deepEqual(Array.from(icons['scroll-text']),[
+    'M15 12h-5',
+    'M15 8h-5',
+    'M19 17V5a2 2 0 0 0-2-2H4',
+    'M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3'
+  ]);
+  assert.match(header,/class="ufs-ico ufs-diagnostic-button" title="诊断日志" aria-label="诊断日志"><span data-ufs-icon="scroll-text"><\/span>/);
+  assert.doesNotMatch(header,/data-ufs-icon="bug"/);
+  assert.match(script,/#ufs-app \.ufs-app-actions>\.ufs-ico\{[^']*width:32px[^']*height:32px/);
+  assert.match(script,/\.ufs-diagnostic-button', app\)\.addEventListener\('click',/);
+});
+
 test('回归：滚动页面不能让 File Station 的高度不断增长', () => {
   const { api } = createAPI();
   // The app remains at document position 280, but its viewport top moves
@@ -2149,7 +2168,7 @@ test('v0.2.7.1 刷新后仅重新观察严格匹配的原生任务，无法确�
 test('v0.2.7.2 Tampermonkey 自动更新元数据与脚本版本保持一致',()=>{
   const header=script.split('// ==/UserScript==',1)[0];
   const updateUrl='https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js';
-  assert.match(header,/^\/\/ @version\s+0\.2\.8\.1$/m);
+  assert.match(header,/^\/\/ @version\s+0\.2\.8\.2$/m);
   assert.ok(header.split('\n').includes('// @updateURL    '+updateUrl));
   assert.ok(header.split('\n').includes('// @downloadURL  '+updateUrl));
   assert.equal(header.match(/^\/\/ @version\s+/gm)?.length,1);

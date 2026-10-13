@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.8.1
+// @version      0.2.8.2
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
@@ -912,7 +912,7 @@
     'clock-3':['M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z','M12 6v6h4'],
     file:['M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z','M14 2v6h6'],
     more:['M5 12h.01','M12 12h.01','M19 12h.01'],
-    bug:['M8 2l1.6 2.5','M16 2l-1.6 2.5','M3 12h4','M17 12h4','M4 5l3 3','M20 5l-3 3','M4 19l3-3','M20 19l-3-3','M9 7h6a4 4 0 0 1 4 4v3a7 7 0 0 1-14 0v-3a4 4 0 0 1 4-4z','M9 11h6'],
+    'scroll-text':['M15 12h-5','M15 8h-5','M19 17V5a2 2 0 0 0-2-2H4','M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3'],
     archive:['M4 4h16v16H4z','M4 9h16','M12 9v8','M10 13h4'],
     image:['M3 3h18v18H3z','M8 8h.01','m3 13 5-5 5 5'],
     video:['M3 5h18v14H3z','m10 4 5 3-5 3z'],
@@ -5464,7 +5464,7 @@
       '<div class="ufs-tabs" aria-label="目录标签页"></div>',
       '<div class="ufs-app-actions"><span class="ufs-preview-chip">文件操作可用</span>',
       '<button type="button" class="ufs-ico ufs-refresh" title="刷新" aria-label="刷新目录"><span data-ufs-icon="rotate-cw"></span></button>',
-      '<button type="button" class="ufs-ico ufs-diagnostic-button" title="诊断日志" aria-label="诊断日志"><span data-ufs-icon="bug"></span></button>',
+      '<button type="button" class="ufs-ico ufs-diagnostic-button" title="诊断日志" aria-label="诊断日志"><span data-ufs-icon="scroll-text"></span></button>',
       '<button type="button" class="ufs-ico ufs-more" title="更多选项" aria-label="更多选项" aria-haspopup="menu" aria-expanded="false"><span data-ufs-icon="more"></span></button>',
       '</div></div>'
     ].join('');
