@@ -3689,6 +3689,10 @@ test('v0.2.11.7 F5 恢复不重发原生批量：整批意图持久化且必须�
       saved.tasks[0].items.length===2 &&
       saved.tasks[0].items.every(item=>item.submission==='intent-saved');
   },null,{timeout:10000});
+  // Intent is durably committed BEFORE the native POST. Do not assert the
+  // write synchronously at that checkpoint; wait until the request exists.
+  for(let i=0;i<100 && !nativePosts.some(x=>x.mode==='file'&&x.action==='9');i++)
+    await page.waitForTimeout(30);
   assert.equal(nativePosts.filter(x=>x.mode==='file'&&x.action==='9').length,1);
   await page.reload();
   await page.locator('.ufs-copy-task-trigger').first().waitFor({timeout:10000});
