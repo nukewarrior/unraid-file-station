@@ -5935,7 +5935,10 @@
         batchCurrentInfo.textContent='成功 '+(done-skipped)+' · 忽略 '+skipped+' · 问题 '+problems+' · 未执行 '+waiting;
         batchCurrentMetrics.hidden=true;
         batchCurrentInfo.title=batch.error||'';
-        batchNote.textContent=batch.error || (batch.phase==='success'?(isMove?'移动结果已核对。':'复制结果已核对。'):
+        batchNote.textContent=batch.error || (batch.phase==='success'?
+          (batch.nativeGroup && copyJob?.record?.batchMode==='native-move-mixed'?
+            '顶层移动结果已核对；文件夹内部内容并未递归校验，请在 NAS 上确认。':
+            (isMove?'移动结果已核对。':'复制结果已核对。')):
           '请核实未完成项目，切勿直接重试。');
         batchListOpen.textContent='查看全部 '+batch.rows.length+' 项结果 →';
         batchStopChoices.hidden=true;
