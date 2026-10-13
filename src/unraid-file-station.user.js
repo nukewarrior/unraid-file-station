@@ -2834,10 +2834,32 @@
     void runCopyQueue();
   }
   function removeCopyJob(job) {
-    // Finishing/closing the modal is not permission to silently erase a
-    // persisted record after the dispatcher lease was released.
+    // Preserve immediate UI dismissal, but durably commit it under a fresh
+    // lease. On failure restore the completed record rather than lose history.
     if(job?.status==='success' && job.record) {
-      void clearCompletedCopyJobs(job);
+      const oldIndex=copyJobs.indexOf(job);
+      if(oldIndex<0)return;
+      copyOwnerReservations++;
+      copyJobs.splice(oldIndex,1);
+      updateCopyTaskButton();
+      void (async()=>{
+        await initializeCopyPersistence();
+        await ensureCopyOwnership();
+        await copyPersistTail;
+        const fresh=await persistentCopyStore.read();
+        if(JSON.stringify(fresh?.tasks||[])!==lastPersistedTasks)
+          throw new Error('其他页面修改了任务记录，不能清除当前记录');
+        await persistCopyQueue();
+      })().catch(error=>{
+        if(!copyJobs.includes(job))
+          copyJobs.splice(Math.min(oldIndex,copyJobs.length),0,job);
+        diagnosticLog('WARN','queue.completed_removal_failed',{reason:String(error?.message||error)});
+        updateCopyTaskButton();
+        notify('完成记录未成功保存，已恢复记录：'+String(error?.message||error));
+      }).finally(()=>{
+        copyOwnerReservations--;
+        void releaseIdleCopyOwnership('completed-dialog-dismissed');
+      });
       return;
     }
     if(job?.record && !copyOwnerHeld) {

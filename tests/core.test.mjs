@@ -2453,7 +2453,10 @@ test('v0.2.11.5 完成窗口清理必须持久化，删除提交前先申请独�
   const removeEnd=script.indexOf('  async function runCopyQueue(',removeStart);
   const removed=script.slice(removeStart,removeEnd);
   assert.match(removed,/job\?\.status==='success' && job\.record/);
-  assert.match(removed,/void clearCompletedCopyJobs\(job\)/);
+  assert.match(removed,/copyJobs\.splice\(oldIndex,1\)/);
+  assert.match(removed,/await ensureCopyOwnership\(\)/);
+  assert.match(removed,/await persistCopyQueue\(\)/);
+  assert.match(removed,/queue\.completed_removal_failed/);
   assert.match(removed,/queue\.record_removal_blocked/);
   const delStart=script.indexOf('  function showDeleteDialog(');
   const delEnd=script.indexOf('  function showOperationsMenu(',delStart);
