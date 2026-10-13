@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.8.2
+// @version      0.2.9.0
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
@@ -696,14 +696,14 @@
     }
     let filename='';
     for(const line of lines) {
-      if(/\b(?:Copying|复制中|正在复制)\s*\.{2,3}\s*/i.test(line)) {
-        filename=line.replace(/^.*?\b(?:Copying|复制中|正在复制)\s*\.{2,3}\s*/i,'').trim();
+      if(/\b(?:Copying|Moving|复制中|正在复制|移动中|正在移动)\s*\.{2,3}\s*/i.test(line)) {
+        filename=line.replace(/^.*?\b(?:Copying|Moving|复制中|正在复制|移动中|正在移动)\s*\.{2,3}\s*/i,'').trim();
         break;
       }
     }
     // Status-only events ("Done", errors, JSON metadata) must never replace the current filename.
     // Never synthesize a percentage, bytes or ETA from speed-only status.
-    if(!speed && /(?:Copying\s*\.{2,3}|复制中|正在复制|xfr#\d+|to-chk=)/i.test(text)) {
+    if(!speed && /(?:(?:Copying|Moving)\s*\.{2,3}|复制中|正在复制|移动中|正在移动|xfr#\d+|to-chk=)/i.test(text)) {
       const rate=[...text.matchAll(/(?:^|\s)([\d,.]+\s*[kKMGTPE]?(?:i?B)?\/s)(?=\s|$|[,;])/g)].pop();
       if(rate) speed=rate[1].replace(/\s+/g,'');
     }
@@ -877,6 +877,83 @@
     });
   }
 
+
+
+  // v0.2.9: only rsync move (action 4/9); never use mv -f or merge targets.
+  function matchesMoveTask(active,plan) {
+    return active && Number(active.action)===(plan.folder?4:9) &&
+      active.source===plan.source && active.target===plan.destinationDir+'/';
+  }
+  async function moveNativeEntry(plan,progress=()=>{},control={},beforeSubmit=null) {
+    return withNativeWriteLock(async()=>{
+      if(!MOVE_ENABLED || !plan || plan.type!=='move' || plan.conflictPolicy!=='fail' ||
+         !safeWritePath(plan.source) || !safeWritePath(plan.destinationDir,true) ||
+         !copyDestinationAllowed(plan,plan.destinationDir) ||
+         plan.target!==plan.destinationDir+'/'+fileName(plan.source) ||
+         typeof plan.folder!=='boolean')throw new Error('不安全的移动计划');
+      if(isDemo && window.__UFS_TEST_MODE__!==true)throw new Error('演示模式不能移动真实文件');
+      progress('正在核对移动源与目标…','checking');
+      const [sources,destinations]=await Promise.all([
+        listDirectory(parentPath(plan.source)),listDirectory(plan.destinationDir)
+      ]);
+      const origin=sources.find(x=>x.path===plan.source);
+      if(!origin || origin.folder!==plan.folder || origin.copyPathVerified===false)
+        throw new Error('源路径已经变化或无法安全校验');
+      if(destinations.some(x=>x.path===plan.target || x.name===fileName(plan.source)))
+        throw new Error('目标存在同名项目，禁止移动或合并');
+      if(await readNativeActive())throw new Error('Unraid 原生任务正在运行');
+      nativeCsrfToken();
+      if(beforeSubmit)await beforeSubmit(); // Durable intent BEFORE native POST.
+      diagnosticLog('INFO','move.intent',{source:plan.source,target:plan.target});
+      let submitted=false,seen=false,done=false,remoteError='';
+      const stop=observeNativeProgress(data=>{
+        const payload=nativeCopyProgressPayload(data);
+        if(payload){const info=parseRsyncProgress(payload);if(info.text)progress(info.text,null,info);}
+        if(data.error)remoteError=stripNativeStatusHtml(data.error).slice(0,200);
+        if(data.done===1)done=true;
+      });
+      try {
+        submitted=true;
+        const response=await postNativeControl({mode:'file',
+          action:plan.folder?'4':'9',title:encodeURIComponent('移动'),
+          source:encodeURIComponent(plan.source),target:encodeURIComponent(plan.destinationDir+'/'),
+          hdlink:'',sparse:'',exist:'',zfs:''});
+        if(response.trim())throw new Error('原生接口返回非预期内容');
+        progress('Unraid 正在移动文件…','copying');
+        let idle=0;const limit=Date.now()+6*60*60*1000;
+        while(Date.now()<limit){
+          await waitNative(700);
+          if(remoteError)throw new Error('Unraid 报告移动错误：'+remoteError);
+          const current=await readNativeActive();
+          if(current){
+            if(!matchesMoveTask(current,plan))throw new Error('无法确认当前原生任务归属');
+            seen=true;control.observedOwnTask=true;idle=0;
+          }else{
+            idle++;
+            if(idle>=2 && (seen||done))break;
+            if(idle>=5&&!seen&&!done)throw new Error('未观察到原生移动任务');
+          }
+        }
+        if(idle<2 || !(seen||done) || remoteError)throw new Error('无法确认移动已结束');
+        progress('正在核对移动结果…','verifying');
+        const [afterSource,afterDestination]=await Promise.all([
+          listDirectory(parentPath(plan.source)),listDirectory(plan.destinationDir)
+        ]);
+        const target=afterDestination.find(x=>x.path===plan.target);
+        if(afterSource.some(x=>x.path===plan.source) || !target ||
+           target.folder!==plan.folder || target.copyPathVerified===false)
+          throw new Error('源仍存在或目标未核实，移动可能不完整');
+        if(!plan.folder && Number.isFinite(origin.size)&&Number.isFinite(target.size)&&
+           origin.size!==target.size)throw new Error('移动前后文件大小不同');
+        diagnosticLog('INFO','move.verified',{source:plan.source,target:plan.target});
+        return {...target,moveOutcome:'moved'};
+      }catch(error){
+        diagnosticLog('ERROR','move.failed',{submitted,message:error?.message});
+        if(submitted)throw new Error('移动请求可能已提交；结果不确定，源目录可能部分删除。请检查两处目录，切勿直接重试。详情：'+String(error?.message||error));
+        throw error;
+      }finally{stop();}
+    });
+  }
 
   async function requestCancelNativeCopy(plan, control={}) {
     if (!nativeWriteBusy || !plan || !control || control.cancelRequested ||
@@ -1744,6 +1821,7 @@
   // v0.2.7 stage 1: durable data model only. Reading snapshots never submits
   // native writes, starts the scheduler or silently confirms copied files.
   const COPY_QUEUE_SCHEMA=1;
+  const MOVE_ENABLED=true;
   const COPY_QUEUE_DATABASE='ufs-copy-queue-v1';
   const COPY_QUEUE_STATES=new Set([
     'queued','checking','submission-intent','copying','verifying',
@@ -1774,7 +1852,13 @@
         !Array.isArray(task.items) || !task.items.length || task.items.length>10000) {
       throw new Error('持久化复制任务格式错误或路径不安全');
     }
+    const operation=task.operation||'copy';
+    if(!['copy','move'].includes(operation) ||
+       (operation==='move' && (task.conflictPolicy!=='fail' || !safeWritePath(task.destination,true))))
+      throw new Error('持久化移动任务格式错误');
     const items=task.items.map(normalizeSavedCopyItem);
+    if(operation==='move' && items.some(item=>!safeWritePath(item.source)))
+      throw new Error('不安全的移动源路径');
     if(items.some(item=>!copyDestinationAllowed(
       {source:item.source,folder:item.folder},task.destination))) {
       throw new Error('恢复任务包含不安全或自包含的目标目录');
@@ -1782,6 +1866,7 @@
     return {
       taskId:task.taskId,name:task.name,destination:task.destination,
       conflictPolicy:task.conflictPolicy,status:task.status,
+      ...(operation==='move'?{operation}:{}),
       createdAt:Number.isFinite(task.createdAt)?task.createdAt:0,
       updatedAt:Number.isFinite(task.updatedAt)?task.updatedAt:0,
       items
@@ -1991,10 +2076,11 @@
     if(destroyed || !copyOwnerHeld || (copyQueuePaused && status!=='excluded'))
       throw new Error('持久化状态不可信或队列已暂停，拒绝继续复制');
   }
-  function newCopyRecord(entries,destination,conflictPolicy,name) {
+  function newCopyRecord(entries,destination,conflictPolicy,name,operation='copy') {
     return normalizeSavedCopyTask({
       taskId:'copy_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,16),
       name,destination,conflictPolicy,status:'queued',
+      ...(operation==='move'?{operation}:{}),
       createdAt:Date.now(),updatedAt:Date.now(),
       items:entries.map(entry=>({
         source:entry.path,folder:entry.folder,size:entry.size,
@@ -2080,7 +2166,7 @@
         const signature={
           folder:item.folder,source:item.source,destinationDir:job.destination
         };
-        if(matchesCopyTask(active,signature))matches.push({job,index:i,signature});
+        if(job.record.operation==='move'?matchesMoveTask(active,signature):matchesCopyTask(active,signature))matches.push({job,index:i,signature});
       }
     }
     if(matches.length!==1) {
@@ -2130,7 +2216,7 @@
         catch(_) {break;}
         if(destroyed)return;
         if(current) {
-          if(!matchesCopyTask(current,signature))break;
+          if(!(job.record.operation==='move'?matchesMoveTask(current,signature):matchesCopyTask(current,signature)))break;
           sameTaskObserved=true;
           idle=0;
         } else if(++idle>=2) {
@@ -2175,11 +2261,11 @@
     ]);
     const origin=origins.find(entry=>entry.path===item.source);
     const dest=destinations.find(entry=>entry.path===target);
-    if(!origin || !dest || origin.folder!==item.folder ||
-        dest.folder!==item.folder || origin.copyPathVerified===false ||
-        dest.copyPathVerified===false)
+    if((job.record.operation==='move'?!!origin:!origin) || !dest ||
+        dest.folder!==item.folder || (origin && origin.folder!==item.folder) ||
+        origin?.copyPathVerified===false || dest.copyPathVerified===false)
       throw new Error('原生任务结束后源或目标无法核实');
-    if(!item.folder && Number.isFinite(origin.size) &&
+    if(job.record.operation!=='move' && !item.folder && Number.isFinite(origin?.size) &&
         Number.isFinite(dest.size) && origin.size!==dest.size)
       throw new Error('原生任务结束后文件大小不一致');
     // Release of the old browser tab's lease may lag behind reload. If the
@@ -2243,12 +2329,12 @@
       if(['success','skipped','excluded'].includes(item.status))continue;
       if(item.status!=='queued' || item.submission!=='not-submitted')
         throw new Error('恢复任务包含未核实的原生提交记录，禁止执行');
-      const plan=planFileOperation({type:'copy',source:item.source,
+      const plan=planFileOperation({type:job.record.operation||'copy',source:item.source,
         folder:item.folder,destinationDir:job.destination,
         conflictPolicy:job.conflictPolicy});
       try {
         await copyItemCheckpoint(job,i,'checking','not-submitted');
-        const result=await copyNativeEntry(plan,(_,phase,info)=>{
+        const result=await (job.record.operation==='move'?moveNativeEntry:copyNativeEntry)(plan,(_,phase,info)=>{
           copyJobSignal(job,phase,info);
         },{},async()=>copyItemCheckpoint(job,i,'submission-intent','intent-saved'));
         await copyItemCheckpoint(job,i,result.copyOutcome==='skipped'?'skipped':'success',
@@ -2371,7 +2457,7 @@
   function copyJobPhaseLabel(job) {
     if(job.phase==='checking') return '正在检查';
     if(job.phase==='verifying') return '正在核验';
-    return '复制中';
+    return job.record?.operation==='move'?'移动中':'复制中';
   }
   function copyJobStatusLabel(job) {
     return job.status==='running'?copyJobPhaseLabel(job)+
@@ -2382,7 +2468,7 @@
   }
   function copyJobMeta(job) {
     if(job.phase==='checking') return '正在验证源文件和目标目录';
-    if(job.phase==='verifying') return '正在核对复制结果';
+    if(job.phase==='verifying') return job.record?.operation==='move'?'正在核对移动结果':'正在核对复制结果';
     const speed=currentCopySpeed(job);
     return speed?'速度 '+speed+(job.recoveryMonitoring && job.eta?' · 剩余 '+job.eta:''):
       (job.speedUpdatedAt?'速度暂无数据':'速度获取中…');
@@ -2562,9 +2648,9 @@
         document.querySelector('.ufs-diagnostic-overlay')) return;
     const panel=element('div','ufs-copy-task-center');
     panel.setAttribute('role','dialog');
-    panel.setAttribute('aria-label','复制任务中心');
+    panel.setAttribute('aria-label',copyJobs.some(j=>j.record?.operation==='move')?'文件任务中心':'复制任务中心');
     const head=element('div','ufs-task-center-head');
-    head.append(element('strong','','复制任务 · '+copyJobs.length+' 项'));
+    head.append(element('strong','',(copyJobs.some(j=>j.record?.operation==='move')?'文件任务':'复制任务')+' · '+copyJobs.length+' 项'));
     const actions=element('div','ufs-task-center-actions');
     const clear=element('button','ufs-task-center-icon ufs-task-center-clear');
     clear.type='button';
@@ -3762,6 +3848,10 @@
         actions.push(['复制到…', () => showCopyDialog(chosen),
           blocked || (chosen.some(item => parentPath(item.path) !== currentPath()) ?
             '只能复制当前目录下已选择的项目' : '')]);
+        actions.push(['移动到…',()=>showCopyDialog(chosen,'move'),
+          chosen.some(item=>!safeWritePath(item.path)||item.copyPathVerified===false)?
+            '当前选择包含不安全的移动路径':
+            chosen.some(item=>parentPath(item.path)!==currentPath())?'只能移动当前目录下的项目':'']);
       }
       actions.push(['复制路径（' + chosen.length + ' 项）', copySelectedPaths]);
       if (chosen.length === 1 && !chosen[0].folder)
@@ -4038,18 +4128,20 @@
   }
 
 
-  function showCopyDialog(entryOrEntries) {
+  function showCopyDialog(entryOrEntries,operation='copy') {
+    const isMove=operation==='move';
+    if(!['copy','move'].includes(operation))return;
     // Snapshot the selection: navigation or re-selection must not alter this batch.
     const entries=Array.isArray(entryOrEntries)?entryOrEntries.slice():[entryOrEntries];
     const entry=entries[0];
     const multi=entries.length>1;
-    if (!COPY_ENABLED || destroyed || !entry || !activeTab() || state.busy ||
+    if (!(isMove?MOVE_ENABLED:COPY_ENABLED) || destroyed || !entry || !activeTab() || state.busy ||
         $('.ufs-dialog-overlay', app) ||
-        entries.some(item => !item || copyBlockedReason(item) ||
+        entries.some(item => !item || (isMove?!safeWritePath(item.path):copyBlockedReason(item)) ||
           currentPath() !== parentPath(item.path))) return;
     const source = entry.path;
     const copyDestinationAllowedForAll=dir=>entries.every(item =>
-      copyDestinationAllowed({source:item.path,folder:item.folder},dir));
+      copyDestinationAllowed({source:item.path,folder:item.folder},dir) && (!isMove||safeWritePath(dir,true)));
     // The menu action may remove the opener before this dialog is constructed.
     // Fall back to the file list when returning focus to a detached opener.
     const opener = document.activeElement;
@@ -4058,13 +4150,13 @@
     dialog.tabIndex = -1;
     dialog.setAttribute('role','dialog');
     dialog.setAttribute('aria-modal','true');
-    dialog.setAttribute('aria-label','复制到');
+    dialog.setAttribute('aria-label',(isMove?'移动到':'复制到'));
     const header = element('div','ufs-create-head');
-    const heading=element('h3','','复制到');
+    const heading=element('h3','',(isMove?'移动到':'复制到'));
     header.append(heading);
     const dismiss = element('button','ufs-create-dismiss');
     dismiss.type='button';
-    dismiss.setAttribute('aria-label','关闭复制窗口');
+    dismiss.setAttribute('aria-label',(isMove?'关闭移动窗口':'关闭复制窗口'));
     dismiss.append(icon('close'));
     header.append(dismiss);
     const form=element('form','ufs-create-form ufs-copy-form');
@@ -4101,10 +4193,10 @@
     location.append(element('label','ufs-create-label','目标位置'));
     const picker=element('div','ufs-copy-picker');
     picker.setAttribute('role','tree');
-    picker.setAttribute('aria-label','选择复制目标文件夹');
+    picker.setAttribute('aria-label',(isMove?'选择移动目标文件夹':'选择复制目标文件夹'));
     const destinationText=element('div','ufs-copy-destination','请选择目标文件夹');
     location.append(picker);
-    let conflictPolicy='skip';
+    let conflictPolicy=isMove?'fail':'skip';
     const policy=element('div','ufs-copy-policy');
     policy.setAttribute('role','group');
     policy.setAttribute('aria-label','遇到同名项目');
@@ -4143,24 +4235,25 @@
     checkingPanel.setAttribute('aria-live','polite');
     checkingPanel.append(icon('folder-search','ufs-preflight-checking-icon'));
     const checkingContent=element('div','ufs-preflight-checking-body');
-    checkingContent.append(element('strong','','正在检查复制任务…'),
+    checkingContent.append(element('strong','',(isMove?'正在检查移动任务…':'正在检查复制任务…')),
       element('div','ufs-preflight-checking-detail',
         '正在核验源文件、目标目录及全部同名冲突，请稍候。'));
     checkingPanel.append(checkingContent);
     const feedback=element('div','ufs-create-feedback ufs-copy-feedback',
-      '不允许将文件夹复制到自身内部。');
+      (isMove?'不允许将文件夹移动到自身内部。':'不允许将文件夹复制到自身内部。'));
     feedback.setAttribute('role','status');
     location.append(feedback);
     const fixedOptions=element('div','ufs-copy-fixed-options');
     fixedOptions.append(destinationText,policy);
+    if(isMove)policy.hidden=true;
     fields.append(summary,location);
     function showPreflightError(error,conflicts=[]) {
       preflightNotice.hidden=false;
       const heading=preflightNotice.querySelector('.ufs-preflight-title');
-      heading.textContent=conflicts.length?'发现 '+conflicts.length+' 项同名冲突':'复制预检未通过';
+      heading.textContent=conflicts.length?'发现 '+conflicts.length+' 项同名冲突':(isMove?'移动预检未通过':'复制预检未通过');
       noticeDetail.textContent=conflicts.length?
-        '所选 '+entries.length+' 项均未开始复制，目标目录的已有文件不会被覆盖。':
-        '本次未开始复制：'+String(error?.message||error);
+        '所选 '+entries.length+(isMove?' 项均未开始移动，目标目录的已有文件不会被覆盖。':' 项均未开始复制，目标目录的已有文件不会被覆盖。'):
+        (isMove?'本次未开始移动：':'本次未开始复制：')+String(error?.message||error);
       noticeConflicts.replaceChildren();
       noticeConflicts.hidden=!conflicts.length;
       for(const name of conflicts) {
@@ -4169,7 +4262,7 @@
         row.title=name;
         noticeConflicts.append(row);
       }
-      noticeAdvice.textContent='请选择其他目标文件夹，或取消后重新选择需要复制的项目。';
+      noticeAdvice.textContent=(isMove?'请选择其他目标文件夹，或取消后重新选择需要移动的项目。':'请选择其他目标文件夹，或取消后重新选择需要复制的项目。');
       showCopyFields(preflightNotice,summary,location);
       fields.scrollTop=0;
       // Keep the original status text for compatibility with screen readers
@@ -4179,14 +4272,14 @@
     function clearPreflightError() {
       preflightNotice.hidden=true;
       noticeConflicts.replaceChildren();
-      setFeedback('不允许将文件夹复制到自身内部。');
+      setFeedback((isMove?'不允许将文件夹移动到自身内部。':'不允许将文件夹复制到自身内部。'));
     }
     // Prepared once; shown in place of the picker only after the user submits.
     // This is an indeterminate animation, never a synthetic percentage.
     const progressPanel=element('div','ufs-copy-progress-panel ufs-unified-progress');
     progressPanel.dataset.phase='checking';
     progressPanel.dataset.progressMode='indeterminate';
-    progressPanel.append(element('label','ufs-create-label','复制到'));
+    progressPanel.append(element('label','ufs-create-label',(isMove?'移动到':'复制到')));
     const progressTarget=element('div','ufs-copy-progress-target');
     progressTarget.append(icon('folder','ufs-folder-icon'));
     const progressTargetPath=element('span','ufs-copy-progress-target-text');
@@ -4203,7 +4296,7 @@
     progressPanel.append(progressStatus);
     const track=element('div','ufs-copy-progress-track');
     track.setAttribute('role','progressbar');
-    track.setAttribute('aria-label','复制任务进行中，进度未知');
+    track.setAttribute('aria-label',(isMove?'移动任务进行中，进度未知':'复制任务进行中，进度未知'));
     // No aria-valuenow or made-up percentage: rsync does not reliably provide it.
     const fill=element('div','ufs-copy-progress-fill');
     track.append(fill);
@@ -4215,7 +4308,7 @@
     progressPanel.append(singleSummary);
     const progressStages=element('div','ufs-copy-progress-stages');
     const stages=[
-      ['checking','目标检查'],['copying','文件复制'],['verifying','完成核对']
+      ['checking','目标检查'],['copying',(isMove?'文件移动':'文件复制')],['verifying','完成核对']
     ];
     const stageNodes=stages.map(([phase,title])=>{
       const node=element('span','ufs-copy-progress-stage','○ '+title);
@@ -4236,7 +4329,7 @@
     const progressMetrics=element('div','ufs-copy-progress-metrics ufs-unified-metrics');
     const speedMetric=element('div','ufs-unified-metric');
     const speedLabel=element('span','','当前速度');
-    const speedValue=element('strong','','正在获取复制速度…');
+    const speedValue=element('strong','',(isMove?'正在获取移动速度…':'正在获取复制速度…'));
     speedMetric.append(speedLabel,speedValue);
     const etaMetric=element('div','ufs-unified-metric');
     const etaLabel=element('span','','当前文件预计剩余');
@@ -4255,7 +4348,7 @@
     function renderSingleCopyMetrics() {
       if(visibleCopyPhase!=='copying') return;
       const rate=currentCopySpeed(copyJob);
-      speedValue.textContent=rate || (copyJob?.speedUpdatedAt?'暂无实时速度数据':'正在获取复制速度…');
+      speedValue.textContent=rate || (copyJob?.speedUpdatedAt?'暂无实时速度数据':(isMove?'正在获取移动速度…':'正在获取复制速度…'));
       etaValue.textContent=rate && lastCopyEta?lastCopyEta:'—';
       transferValue.textContent=lastCopyTransferred?'已传输 '+lastCopyTransferred:'';
     }
@@ -4277,10 +4370,10 @@
       singleBasis.textContent=entry.folder?'文件夹总体进度未知':'当前文件进度';
       const labels={
         checking:['正在检查目标…','准备中','正在检查源文件和目标目录…'],
-        copying:['正在复制文件…','进行中','正在等待 Unraid 完成文件操作，请勿关闭页面。'],
-        verifying:['正在核对复制结果…','核对中','正在检查目标目录和复制结果…'],
-        success:['复制完成','已完成','复制结果已核对，窗口即将关闭。'],
-        uncertain:['无法确认复制结果','需核实','结果不确定，请检查目标目录及原生任务状态，切勿直接重试。']
+        copying:[(isMove?'正在移动文件…':'正在复制文件…'),'进行中','正在等待 Unraid 完成文件操作，请勿关闭页面。'],
+        verifying:[(isMove?'正在核对移动结果…':'正在核对复制结果…'),'核对中',(isMove?'正在检查目标目录和移动结果…':'正在检查目标目录和复制结果…')],
+        success:[(isMove?'移动完成':'复制完成'),'已完成',(isMove?'移动结果已核对，窗口即将关闭。':'复制结果已核对，窗口即将关闭。')],
+        uncertain:[(isMove?'无法确认移动结果':'无法确认复制结果'),'需核实','结果不确定，请检查目标目录及原生任务状态，切勿直接重试。']
       };
       const info=labels[phase] || labels.checking;
       progressStateText.textContent=info[0];
@@ -4297,8 +4390,8 @@
         lastCopyTransferred='';
         lastCopyEta='';
       } else renderSingleCopyMetrics();
-      track.setAttribute('aria-label',phase==='success'?'复制完成':
-        phase==='uncertain'?'复制结果无法确认':'复制任务进行中，进度未知');
+      track.setAttribute('aria-label',phase==='success'?(isMove?'移动完成':'复制完成'):
+        phase==='uncertain'?(isMove?'移动结果无法确认':'复制结果无法确认'):(isMove?'移动任务进行中，进度未知':'复制任务进行中，进度未知'));
       if(phase==='success') {fill.style.width='100%';track.setAttribute('aria-valuenow','100');}
       if(phase==='uncertain' || phase==='cancelled') {fill.style.animation='none';}
       if(phase==='checking') {progressPanel.dataset.progressMode='indeterminate';fill.style.width='35%';fill.style.animation='';track.removeAttribute('aria-valuenow');}
@@ -4326,7 +4419,7 @@
           progressFilePercent.textContent='当前文件进度 '+info.percent+'%';
           progressFilePercent.hidden=false;
         }
-        if(info?.percent!=null && !entry.folder) {
+        if(info?.percent!=null && !entry.folder && !isMove) {
           if(copyJob) {
             copyJob.percent=Math.max(copyJob.percent??0,Math.min(99.9,info.percent));
             updateCopyTaskButton();
@@ -4335,14 +4428,14 @@
           fill.style.animation='none';
           fill.style.width=info.percent+'%';
           track.setAttribute('aria-valuenow',String(info.percent));
-          track.setAttribute('aria-label','复制进度 '+info.percent+'%');
+          track.setAttribute('aria-label',(isMove?'移动进度 ':'复制进度 ')+info.percent+'%');
           progressIndicator.textContent=info.percent+'%';
         }
         if(info?.transferred) lastCopyTransferred=info.transferred;
         if(info?.eta) lastCopyEta=info.eta;
         renderSingleCopyMetrics();
         // Do not dump full rsync paths and octal bytes into a multi-line panel.
-        progressNote.textContent='正在复制，请保持此页面打开。';
+        progressNote.textContent=(isMove?'正在移动，请保持此页面打开。':'正在复制，请保持此页面打开。');
       }
     }
     const footer=element('div','ufs-create-buttons');
@@ -4351,7 +4444,7 @@
     const background=element('button','ufs-copy-background','后台运行');
     background.type='button';
     background.hidden=true;
-    const submit=element('button','ufs-create-submit ufs-copy-submit','开始复制');
+    const submit=element('button','ufs-create-submit ufs-copy-submit',(isMove?'开始移动':'开始复制'));
     submit.type='submit';
     submit.disabled=true;
     footer.append(background,cancel,submit);
@@ -4403,7 +4496,7 @@
       overlay.remove();
       updateCopyTaskButton();
       restoreFocus($('.ufs-copy-task-trigger',app));
-      notify('复制继续在当前页面运行；点击底部右侧任务按钮可恢复窗口。请勿刷新页面。');
+      notify((isMove?'移动继续在当前页面运行；点击底部右侧任务按钮可恢复窗口。请勿刷新页面。':'复制继续在当前页面运行；点击底部右侧任务按钮可恢复窗口。请勿刷新页面。'));
     };
     const reopen=()=>{
       if(closed || destroyed || $('.ufs-dialog-overlay',app)) return;
@@ -4435,12 +4528,13 @@
           finalPhase==='cancelled') {close();return;}
       if(finalPhase==='cancelling') {minimize();return;}
       if(finalPhase!=='copying' || cancelSubmitting || control.cancelRequested) return;
+      if(isMove){progressNote.textContent='移动任务不可安全立即停止，请等待完成并核实。';return;}
       if(!control.observedOwnTask) {
         progressNote.textContent='原生任务归属尚未确认，暂时无法安全停止。可选择后台运行。';
         return;
       }
       const yes=window.confirm(
-        '确定停止此次复制吗？\n\n取消可能留下不完整的文件或文件夹，需要手动检查目标目录。\n'+
+        (isMove?'确定停止此次移动吗？\n\n取消可能留下不完整的文件或文件夹，需要手动检查目标目录。\n':'确定停止此次复制吗？\n\n取消可能留下不完整的文件或文件夹，需要手动检查目标目录。\n')+
         'Unraid 使用全局停止接口；即使已经检查任务归属，并发任务切换仍有误停风险。\n\n确定继续？'
       );
       if(!yes) return;
@@ -4450,7 +4544,7 @@
       cancel.textContent='正在停止…';
       void requestCancelNativeCopy(activeCopySession.plan,control).then(()=>{
         renderCopyProgress('uncertain','已发送停止指令，正在等待 Unraid 确认；请勿直接重试。');
-        heading.textContent='正在停止复制';
+        heading.textContent=(isMove?'正在停止移动':'正在停止复制');
       }).catch(error=>{
         if(!closed && !destroyed) {
           renderCopyProgress('uncertain',String(error?.message||error));
@@ -4579,7 +4673,7 @@
           const entries=await listDirectory(path);
           if(closed || request!==requestVersion) return;
           nodes.set(path, sortedCopyFolders(path, entries));
-          setFeedback('不允许将文件夹复制到自身内部。');
+          setFeedback((isMove?'不允许将文件夹移动到自身内部。':'不允许将文件夹复制到自身内部。'));
         } catch(error) {
           if(closed || request!==requestVersion) return;
           opened.delete(path);
@@ -4749,7 +4843,7 @@
     // Batch mode reuses this dialog's existing target-tree picker, inline mkdir,
     // copyNativeEntry write lock, and current-page background session.
     const batchPanel=element('div','ufs-batch-panel ufs-unified-progress');
-    const batchTargetLabel=element('label','ufs-create-label','复制到');
+    const batchTargetLabel=element('label','ufs-create-label',(isMove?'移动到':'复制到'));
     const batchTarget=element('div','ufs-copy-progress-target');
     batchTarget.append(icon('folder','ufs-folder-icon'));
     const batchTargetPath=element('span','ufs-copy-progress-target-text');
@@ -4762,7 +4856,7 @@
     batchHeading.append(batchCaption,batchPercentText);
     const batchTrack=element('div','ufs-batch-track');
     batchTrack.setAttribute('role','progressbar');
-    batchTrack.setAttribute('aria-label','批量复制总体进度');
+    batchTrack.setAttribute('aria-label',(isMove?'批量移动总体进度':'批量复制总体进度'));
     batchTrack.setAttribute('aria-valuemin','0');
     batchTrack.setAttribute('aria-valuemax','100');
     const batchFill=element('div','ufs-batch-fill');
@@ -4783,12 +4877,12 @@
     const batchCurrentOrdinal=element('span','','当前项目 · 第 1 / '+entries.length+' 项');
     const batchCurrentType=element('span','','准备中');
     batchCurrentTop.append(batchCurrentOrdinal,batchCurrentType);
-    const batchCurrentName=element('span','ufs-batch-current-name','正在准备复制任务…');
+    const batchCurrentName=element('span','ufs-batch-current-name',(isMove?'正在准备移动任务…':'正在准备复制任务…'));
     const batchCurrentInfo=element('span','ufs-batch-meta ufs-batch-current-info','等待安全预检');
     const batchCurrentFile=element('div','ufs-copy-current-file');
     const batchCurrentMetrics=element('div','ufs-unified-metrics');
     const batchSpeedRow=element('div','ufs-batch-speed-row');
-    const batchSpeedValue=element('strong','ufs-batch-speed-value','正在获取复制速度…');
+    const batchSpeedValue=element('strong','ufs-batch-speed-value',(isMove?'正在获取移动速度…':'正在获取复制速度…'));
     batchSpeedRow.append(element('span','ufs-batch-meta','当前速度'),batchSpeedValue);
     const batchEtaRow=element('div','ufs-batch-speed-row');
     const batchEtaValue=element('strong','ufs-batch-speed-value','—');
@@ -4804,13 +4898,13 @@
     const batchNote=element('div','ufs-batch-warning','请勿刷新或关闭当前浏览器页面。');
     const batchStopChoices=element('div','ufs-batch-stop-choices');
     batchStopChoices.hidden=true;
-    batchStopChoices.append(element('strong','','停止复制队列'));
+    batchStopChoices.append(element('strong','',(isMove?'停止移动队列':'停止复制队列')));
     const stopSafely=element('button','','当前项目完成后停止（推荐）');
     stopSafely.type='button';
     stopSafely.addEventListener('click',()=>{
       batch.stopAfterCurrent=true;
       batchStopChoices.hidden=true;
-      batchNote.textContent='将在当前项目复制完成后停止，后续项目不再开始。';
+      batchNote.textContent=(isMove?'将在当前项目移动完成后停止，后续项目不再开始。':'将在当前项目复制完成后停止，后续项目不再开始。');
       cancel.textContent='等待当前项结束';
       cancel.disabled=true;
       renderBatchProgress();
@@ -4818,11 +4912,12 @@
     const stopNow=element('button','','尝试停止当前项目及后续队列…');
     stopNow.type='button';
     stopNow.addEventListener('click',()=>{
+      if(isMove){batchNote.textContent='移动任务请等待当前项完成后停止后续队列。';return;}
       if(!busy || batch.currentIndex<0 || !control.observedOwnTask) {
         batchNote.textContent='尚未确认当前原生任务归属，无法安全发送停止指令；可选择等待当前项完成。';
         return;
       }
-      if(!window.confirm('停止当前复制可能留下不完整文件或文件夹。\nUnraid 的停止接口是全局操作，存在误停并发任务的风险。\n确定尝试停止当前任务及后续队列吗？')) return;
+      if(!window.confirm((isMove?'停止当前移动可能留下不完整文件或文件夹。\nUnraid 的停止接口是全局操作，存在误停并发任务的风险。\n确定尝试停止当前任务及后续队列吗？':'停止当前复制可能留下不完整文件或文件夹。\nUnraid 的停止接口是全局操作，存在误停并发任务的风险。\n确定尝试停止当前任务及后续队列吗？'))) return;
       batch.stopAfterCurrent=true;
       batchStopChoices.hidden=true;
       cancel.disabled=true;
@@ -4831,6 +4926,7 @@
         batchNote.textContent='停止请求结果待核实：'+String(error?.message||error);
       });
     });
+    if(isMove)stopNow.hidden=true;
     batchStopChoices.append(stopSafely,stopNow,
       element('div','ufs-batch-warning','停止当前项目需要原生任务归属检查，结果可能不确定。'));
     batchPanel.append(batchHeading,batchTrack,batchMeta,batchStages,batchCurrent,batchStats,
@@ -4841,11 +4937,11 @@
     const batchSearch=element('input','ufs-batch-list-search');
     batchSearch.type='search';
     batchSearch.placeholder='搜索文件名或序号…';
-    batchSearch.setAttribute('aria-label','筛选复制任务清单');
+    batchSearch.setAttribute('aria-label',(isMove?'筛选移动任务清单':'筛选复制任务清单'));
     const batchScroll=element('div','ufs-batch-list-scroll');
     batchScroll.setAttribute('role','list');
     batchListPanel.append(batchListBack,batchListSummary,batchSearch,batchScroll,
-      element('div','ufs-batch-meta','清单视图仅用于查看，不改变目标目录和复制顺序。'));
+      element('div','ufs-batch-meta',(isMove?'清单视图仅用于查看，不改变目标目录和移动顺序。':'清单视图仅用于查看，不改变目标目录和复制顺序。')));
     function renderBatchRows() {
       if(!multi || batch.view!=='list') return;
       const q=batchSearch.value.trim().toLowerCase();
@@ -4877,11 +4973,11 @@
     function showBatchList() {
       if(!multi) return;
       batch.view='list';
-      batchListBack.textContent=batch.started?'← 返回复制进度':'← 返回目标选择';
+      batchListBack.textContent=batch.started?(isMove?'← 返回移动进度':'← 返回复制进度'):'← 返回目标选择';
       heading.textContent=batch.started?'任务清单（'+entries.length+'）':'已选项目（'+entries.length+'）';
       cancel.hidden=false;
       cancel.disabled=false;
-      cancel.textContent=batch.started?'返回复制进度':'返回目标选择';
+      cancel.textContent=batch.started?(isMove?'返回移动进度':'返回复制进度'):'返回目标选择';
       submit.hidden=true;
       background.hidden=true;
       showCopyFields(batchListPanel);
@@ -4891,7 +4987,7 @@
     function showBatchMain() {
       if(!multi) return;
       batch.view='main';
-      heading.textContent=batch.finished?'复制结果':batch.started?'正在复制':'复制到';
+      heading.textContent=batch.finished?(isMove?'移动结果':'复制结果'):batch.started?(isMove?'正在移动':'正在复制'):(isMove?'移动到':'复制到');
       cancel.hidden=batch.finished;
       cancel.disabled=batch.stopAfterCurrent && !batch.finished;
       cancel.textContent=batch.started?
@@ -4912,8 +5008,8 @@
       if(!multi || !batch.started || batch.finished || batch.currentIndex<0) return;
       const rate=currentCopySpeed(copyJob),phase=copyJob?.phase;
       batchSpeedValue.textContent=phase==='checking'?'正在检查目标…':
-        phase==='verifying'?'正在核对复制结果…':
-        rate || (copyJob?.speedUpdatedAt?'暂无实时速度数据':'正在获取复制速度…');
+        phase==='verifying'?(isMove?'正在核对移动结果…':'正在核对复制结果…'):
+        rate || (copyJob?.speedUpdatedAt?'暂无实时速度数据':(isMove?'正在获取移动速度…':'正在获取复制速度…'));
       batchEtaValue.textContent=phase==='copying' && rate && copyJob?.eta?copyJob.eta:'—';
     }
     function renderBatchProgress() {
@@ -4926,7 +5022,7 @@
       const skipped=batch.rows.filter(row=>row.status==='skipped').length;
       const waiting=batch.rows.filter(row=>row.status==='pending').length;
       const current=batch.rows[batch.currentIndex];
-      const result=batchCopyOverallProgress(batch.rows,batch.currentIndex,batch.currentPercent);
+      const result=batchCopyOverallProgress(batch.rows,batch.currentIndex,isMove?null:batch.currentPercent);
       batch.percent=Math.max(batch.percent,result.percent);
       batch.mode=result.mode;
       batchPercentText.textContent=batch.percent.toFixed(batch.percent%1===0?0:2)+'%';
@@ -4947,11 +5043,11 @@
         batchCurrentName.textContent=batch.phase==='success'?
           '已处理 '+done+' 项（忽略 '+skipped+' 项）':batch.phase==='stopped'?
           '队列已停止，后续任务未执行':
-          '复制任务已暂停，需检查失败或待核实项目';
+          (isMove?'移动任务已暂停，需检查失败或待核实项目':'复制任务已暂停，需检查失败或待核实项目');
         batchCurrentInfo.textContent='成功 '+(done-skipped)+' · 忽略 '+skipped+' · 问题 '+problems+' · 未执行 '+waiting;
         batchCurrentMetrics.hidden=true;
         batchCurrentInfo.title=batch.error||'';
-        batchNote.textContent=batch.error || (batch.phase==='success'?'复制结果已核对。':
+        batchNote.textContent=batch.error || (batch.phase==='success'?(isMove?'移动结果已核对。':'复制结果已核对。'):
           '请核实未完成项目，切勿直接重试。');
         batchListOpen.textContent='查看全部 '+batch.rows.length+' 项结果 →';
         batchStopChoices.hidden=true;
@@ -4976,7 +5072,7 @@
     async function preflightBatchCopy(plans) {
       // Take fresh source + destination snapshots before submitting ANY write.
       if(new Set(plans.map(plan=>plan.target)).size!==plans.length)
-        throw new Error('有多个项目对应同一个目标文件名，拒绝批量复制');
+        throw new Error((isMove?'有多个项目对应同一个目标文件名，拒绝批量移动':'有多个项目对应同一个目标文件名，拒绝批量复制'));
       const sourceItems=await listDirectory(parentPath(plans[0].source));
       const destinationItems=await listDirectory(plans[0].destinationDir);
       const typeConflicts=findBatchCopyTypeConflicts(plans,destinationItems);
@@ -4984,7 +5080,7 @@
         plans[0].conflictPolicy==='fail'?findBatchCopyConflicts(plans,destinationItems):[];
       if(conflicts.length) {
         const error=new Error('发现 '+conflicts.length+
-          (typeConflicts.length?' 项文件/文件夹类型冲突':' 项同名冲突')+'，整批未开始复制');
+          (typeConflicts.length?' 项文件/文件夹类型冲突':' 项同名冲突')+(isMove?'，整批未开始移动':'，整批未开始复制'));
         error.copyConflicts=conflicts;
         throw error;
       }
@@ -4992,7 +5088,8 @@
         const fresh=sourceItems.find(item=>item.path===plan.source);
         if(!fresh || fresh.folder!==plan.folder || fresh.copyPathVerified===false)
           throw new Error('源项目已更改或路径不安全：'+fileName(plan.source));
-        if(copyBlockedReason(fresh)) throw new Error(copyBlockedReason(fresh));
+        if(isMove && !safeWritePath(fresh.path))throw new Error('移动源路径包含不安全的字符');
+        if(!isMove && copyBlockedReason(fresh)) throw new Error(copyBlockedReason(fresh));
         batch.rows[i].entry={...fresh};
       }
       if(await readNativeActive()) throw new Error('Unraid 正在执行其他原生文件任务，请稍后重试');
@@ -5006,7 +5103,7 @@
       }
       let plans;
       try {
-        plans=entries.map(item=>planFileOperation({type:'copy',source:item.path,
+        plans=entries.map(item=>planFileOperation({type:operation,source:item.path,
           destinationDir:selected,folder:item.folder,conflictPolicy:copyJob.conflictPolicy}));
         if(!copyDestinationAllowedForAll(selected))
           throw new Error('目标目录与所选源文件夹冲突');
@@ -5022,7 +5119,7 @@
       cancel.disabled=true;
       dismiss.disabled=true;
       clearPreflightError();
-      heading.textContent='正在检查复制任务';
+      heading.textContent=(isMove?'正在检查移动任务':'正在检查复制任务');
       checkingPanel.querySelector('.ufs-preflight-checking-detail').textContent=
         '正在核验 '+entries.length+' 项源文件、目标目录及同名冲突，请稍候。';
       showCopyFields(checkingPanel);
@@ -5037,12 +5134,12 @@
         copyJob.error=batch.error;
         copyJob.recoverable=true;
         copyJob.preflightRejected=true;
-        heading.textContent='复制到';
+        heading.textContent=(isMove?'移动到':'复制到');
         showCopyFields(summary,location);
         background.hidden=true;
         cancel.hidden=false;
         cancel.textContent='取消';
-        submit.textContent='开始复制';
+        submit.textContent=(isMove?'开始移动':'开始复制');
         submit.hidden=false;
         submit.disabled=false;
         showPreflightError(error,error.copyConflicts||[]);
@@ -5063,7 +5160,7 @@
       copyJob.speed='';
       copyJob.speedUpdatedAt=0;
       updateCopyTaskButton();
-      heading.textContent='正在复制';
+      heading.textContent=(isMove?'正在移动':'正在复制');
       submit.hidden=true;
       submit.disabled=true;
       cancel.textContent='停止队列…';
@@ -5088,7 +5185,7 @@
             copyJob.speed='';
             copyJob.speedUpdatedAt=0;
             copyJob.eta='';
-            batchSpeedValue.textContent='正在获取复制速度…';
+            batchSpeedValue.textContent=(isMove?'正在获取移动速度…':'正在获取复制速度…');
             batchEtaValue.textContent='—';
             batchCurrentFile.textContent='';
             batchCurrentFile.removeAttribute('title');
@@ -5101,12 +5198,12 @@
             activeCopySession.plan=plans[i];
             renderBatchProgress();
             await copyItemCheckpoint(copyJob,i,'checking','not-submitted');
-            const outcome=await copyNativeEntry(plans[i],(message,phase,info)=>{
+            const outcome=await (isMove?moveNativeEntry:copyNativeEntry)(plans[i],(message,phase,info)=>{
               copyJobSignal(copyJob,phase,info);
               if(phase==='checking') batchCurrentInfo.textContent='正在检查源文件和目标目录…';
-              if(phase==='verifying') batchCurrentInfo.textContent='正在核对复制结果…';
+              if(phase==='verifying') batchCurrentInfo.textContent=(isMove?'正在核对移动结果…':'正在核对复制结果…');
               if(info && Number.isFinite(info.percent) && !row.entry.folder) {
-                batch.currentPercent=Math.max(batch.currentPercent??0,info.percent);
+                if(!isMove)batch.currentPercent=Math.max(batch.currentPercent??0,info.percent);
               }
               if(phase==='checking' || phase==='verifying') {
                 batchCurrentFile.textContent='';
@@ -5164,9 +5261,10 @@
         dismiss.title='关闭';
         renderBatchProgress();
         renderBatchRows();
-        if(batch.view==='main') heading.textContent='复制结果';
+        if(batch.view==='main') heading.textContent=(isMove?'移动结果':'复制结果');
         state.tree.delete(selected);
-        if(currentPath()===selected) await refreshDirectory().catch(()=>{});
+        if(isMove)state.tree.delete(parentPath(source));
+        if(currentPath()===selected || (isMove && currentPath()===parentPath(source))) await refreshDirectory().catch(()=>{});
         else if(state.expanded.has(selected)) void loadTree(selected,true).catch(()=>{});
         updateCopyTaskButton();
       }
@@ -5183,7 +5281,7 @@
       }
       let plan;
       try {
-        plan=planFileOperation({type:'copy',source,destinationDir:selected,folder:entry.folder,
+        plan=planFileOperation({type:operation,source,destinationDir:selected,folder:entry.folder,
           conflictPolicy:copyJob.conflictPolicy});
         if(!copyDestinationAllowed(plan,selected)) throw new Error('不能选择源位置或文件夹自身内部');
       } catch(error) {
@@ -5200,13 +5298,13 @@
       updateCopyTaskButton();
       submit.disabled=true;
       cancel.disabled=false;
-      cancel.textContent='取消复制';
+      cancel.textContent=(isMove?'取消移动':'取消复制');
       background.hidden=false;
       dismiss.disabled=false;
       dismiss.title='后台运行';
-      submit.textContent='复制中…';
+      submit.textContent=(isMove?'移动中…':'复制中…');
       progressTargetPath.textContent=plan.destinationDir;
-      heading.textContent='正在复制';
+      heading.textContent=(isMove?'正在移动':'正在复制');
       lastActiveCopyStep=0;
       showCopyFields(summary,progressPanel);
       // The selected folder button was removed; keep Esc available while
@@ -5218,17 +5316,17 @@
       },1000);
       try {
         await copyItemCheckpoint(copyJob,0,'checking','not-submitted');
-        const outcome=await copyNativeEntry(plan,updateCopyProgress,control,
+        const outcome=await (isMove?moveNativeEntry:copyNativeEntry)(plan,updateCopyProgress,control,
           async()=>copyItemCheckpoint(copyJob,0,'submission-intent','intent-saved'));
         await copyItemCheckpoint(copyJob,0,
           outcome.copyOutcome==='skipped'?'skipped':'success',
           outcome.copyOutcome==='skipped'?'not-submitted':'confirmed');
         if(closed || destroyed) return;
         finalPhase='success';
-        heading.textContent=outcome.copyOutcome==='skipped'?'已忽略同名文件':'复制完成';
+        heading.textContent=outcome.copyOutcome==='skipped'?'已忽略同名文件':(isMove?'移动完成':'复制完成');
         renderCopyProgress('success',outcome.copyOutcome==='skipped'?
-          '目标文件已存在，按「忽略」策略保留原文件，未提交复制请求。':
-          outcome.copyOutcome==='merged'?'同名文件夹已合并；内部文件按所选策略处理。':'复制结果已核对。');
+          (isMove?'目标文件已存在，按「忽略」策略保留原文件，未提交移动请求。':'目标文件已存在，按「忽略」策略保留原文件，未提交复制请求。'):
+          outcome.copyOutcome==='merged'?'同名文件夹已合并；内部文件按所选策略处理。':(isMove?'移动结果已核对。':'复制结果已核对。'));
         if(outcome.copyOutcome==='skipped') {
           progressStateText.textContent='已忽略同名文件';
           progressIndicator.textContent='已忽略';
@@ -5241,9 +5339,10 @@
         background.hidden=true;
         dismiss.title='关闭';
         state.tree.delete(plan.destinationDir);
-        if(currentPath()===plan.destinationDir) await refreshDirectory();
+        if(isMove)state.tree.delete(parentPath(plan.source));
+        if(currentPath()===plan.destinationDir || (isMove && currentPath()===parentPath(plan.source))) await refreshDirectory();
         else if(state.expanded.has(plan.destinationDir)) void loadTree(plan.destinationDir,true);
-        notify((outcome.copyOutcome==='skipped'?'已忽略：':'复制完成：')+fileName(plan.target)+'；点击「完成」关闭结果');
+        notify((outcome.copyOutcome==='skipped'?'已忽略：':(isMove?'移动完成：':'复制完成：'))+fileName(plan.target)+'；点击「完成」关闭结果');
       } catch(error) {
         if(closed || destroyed) return;
         const message=String(error?.message||error);
@@ -5257,11 +5356,11 @@
         }
         if(message.includes('结果不确定') || control.cancelRequested || message.includes('已请求取消')) {
           finalPhase=control.cancelRequested?'cancelled':'uncertain';
-          heading.textContent=control.cancelRequested?'复制已请求停止':'复制结果待核实';
+          heading.textContent=control.cancelRequested?(isMove?'移动已请求停止':'复制已请求停止'):(isMove?'移动结果待核实':'复制结果待核实');
           renderCopyProgress('uncertain',message);
           activeCopySession.phase=finalPhase;
           updateCopyTaskButton();
-          submit.textContent='请核实复制状态';
+          submit.textContent=(isMove?'请核实移动状态':'请核实复制状态');
           submit.disabled=true;
           cancel.textContent='关闭';
           background.hidden=true;
@@ -5269,7 +5368,7 @@
         } else {
           // Preflight failures happened without a native write. Let the user
           // choose another destination and retry from the original picker.
-          heading.textContent='复制到';
+          heading.textContent=(isMove?'移动到':'复制到');
           finalPhase='picker';
           copyJob.phase='failed';
           copyJob.error=message;
@@ -5290,7 +5389,7 @@
           cancel.disabled=false;
           dismiss.disabled=false;
           if(finalPhase==='picker') {
-            submit.textContent='开始复制';
+            submit.textContent=(isMove?'开始移动':'开始复制');
             submit.disabled=!selected;
           } else if(finalPhase==='success') {
             submit.textContent='完成';
@@ -5307,14 +5406,14 @@
       if(copyJob && copyJob.status!=='failed') return;
       if(copyJob && copyJob.status==='failed') removeCopyJob(copyJob);
       try {
-        const plans=entries.map(item=>planFileOperation({type:'copy',
+        const plans=entries.map(item=>planFileOperation({type:operation,
           source:item.path,destinationDir:selected,folder:item.folder,conflictPolicy}));
         if(!copyDestinationAllowedForAll(selected) ||
           new Set(plans.map(plan=>plan.target)).size!==plans.length)
           throw new Error('目标位置无效或存在重复目标名称');
       } catch(error) {setFeedback(String(error?.message||error),true);return;}
       const name=multi?entries[0].name+' 等 '+entries.length+' 项':entry.name;
-      const record=newCopyRecord(entries,selected,conflictPolicy,name);
+      const record=newCopyRecord(entries,selected,conflictPolicy,name,operation);
       copyJob={
         dialog,reopen,execute:executeCopyJob,record,taskId:record.taskId,
         prepare:()=>{submit.hidden=false;submit.disabled=false;},
@@ -5328,10 +5427,10 @@
         name,destination:selected,conflictPolicy,count:entries.length,
         batch,percent:null,plan:null,error:''
       };
-      heading.textContent='等待复制';
+      heading.textContent=(isMove?'等待移动':'等待复制');
       const waiting=element('div','ufs-batch-panel');
-      waiting.append(element('strong','','已加入复制队列'),
-        element('div','ufs-batch-meta','等待前面的复制任务完成后自动开始。'),
+      waiting.append(element('strong','',(isMove?'已加入移动队列':'已加入复制队列')),
+        element('div','ufs-batch-meta',(isMove?'等待前面的移动任务完成后自动开始。':'等待前面的复制任务完成后自动开始。')),
         element('div','ufs-batch-meta','目标：'+selected));
       fields.replaceChildren(waiting);
       submit.hidden=true;

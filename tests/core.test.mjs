@@ -285,7 +285,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.8\b/);
+  assert.match(script, /@version\s+0\.2\.9\b/);
 });
 
 
@@ -627,7 +627,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.8\b/);
+  assert.match(script, /@version\s+0\.2\.9\b/);
 });
 
 
@@ -2168,7 +2168,7 @@ test('v0.2.7.1 刷新后仅重新观察严格匹配的原生任务，无法确�
 test('v0.2.7.2 Tampermonkey 自动更新元数据与脚本版本保持一致',()=>{
   const header=script.split('// ==/UserScript==',1)[0];
   const updateUrl='https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js';
-  assert.match(header,/^\/\/ @version\s+0\.2\.8\.2$/m);
+  assert.match(header,/^\/\/ @version\s+0\.2\.9\.0$/m);
   assert.ok(header.split('\n').includes('// @updateURL    '+updateUrl));
   assert.ok(header.split('\n').includes('// @downloadURL  '+updateUrl));
   assert.equal(header.match(/^\/\/ @version\s+/gm)?.length,1);
@@ -2262,4 +2262,16 @@ test('v0.2.8 诊断界面、持久化与导出必须与复制队列独立',()=>{
   assert.match(script,/diagnosticLog\('INFO','copy\.submission_intent'/);
   assert.match(script,/diagnosticLog\('WARN','queue\.restore_assessed'/);
   assert.match(script,/window\.addEventListener\('unhandledrejection',captureRejection/);
+});
+
+test('v0.2.9 移动使用原生 action 4/9，禁覆盖，并与现有任务队列持久化兼容',()=>{
+ const {api}=createAPI();
+ assert.match(script,/async function moveNativeEntry\(/);
+ assert.match(script,/plan\.conflictPolicy!=='fail'/);
+ assert.match(script,/action:plan\.folder\?'4':'9'/);
+ assert.match(script,/if\(beforeSubmit\)await beforeSubmit\(\)/);
+ assert.match(script,/function matchesMoveTask\(/);
+ assert.match(script,/task\.operation\|\|'copy'/);
+ assert.match(script,/showCopyDialog\(chosen,'move'\)/);
+ assert.match(api.renderHeaderMarkup(),/ufs-refresh/);
 });
