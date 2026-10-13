@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.8.0
+// @version      0.2.8.1
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
@@ -925,7 +925,7 @@
     'arrow-left':['M19 12H5','m12 19-7-7 7-7'],
     'arrow-right':['M5 12h14','m12 5 7 7-7 7'],
     'arrow-up':['M12 19V5','m5 12 7-7 7 7'],
-    refresh:['M20 7v5h-5','M4 17v-5h5','M5.6 9A7 7 0 0 1 18 6l2 1','M18.4 15A7 7 0 0 1 6 18l-2-1'],
+    'rotate-cw':['M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8','M21 3v5h-5'],
     theme:['M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13z'],
     list:['M8 6h13','M8 12h13','M8 18h13','M3 6h.01','M3 12h.01','M3 18h.01'],
     grid:['M3 3h7v7H3z','M14 3h7v7h-7z','M3 14h7v7H3z','M14 14h7v7h-7z'],
@@ -1198,6 +1198,9 @@
     '#ufs-app .ufs-location-col{display:flex;align-items:center;min-width:0;overflow:hidden;white-space:nowrap}#ufs-app .ufs-entry .ufs-location-trigger{display:inline-flex;align-items:center;gap:4px;width:100%;min-width:0;max-width:100%;height:30px;min-height:0;overflow:hidden;padding:0;border:0;background:transparent;border-radius:0;text-align:left;color:var(--ufs-text);font-size:12px;font-weight:400;line-height:1.4;cursor:pointer!important}#ufs-app .ufs-entry .ufs-location-trigger:hover{color:var(--ufs-accent);background:transparent}#ufs-app .ufs-location-text{white-space:nowrap;overflow:hidden;text-overflow:clip;flex:0 1 auto;min-width:0}#ufs-app .ufs-location-ellipsis{white-space:nowrap;flex-shrink:0;color:var(--ufs-muted)}#ufs-app .ufs-location-more-link{color:var(--ufs-accent);font-size:11px;flex:0 0 auto;white-space:nowrap;text-decoration:underline;text-underline-offset:2px}#ufs-app .ufs-location-popover{width:min(440px,calc(100vw - 20px));max-width:none;padding:0;overflow:hidden}#ufs-app .ufs-location-popover-header{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--ufs-border);font-weight:600}#ufs-app .ufs-menu .ufs-location-popover-close{display:inline-flex;align-items:center;justify-content:center;flex:0 0 28px;width:28px;height:28px;min-width:28px;padding:0;border:0;background:transparent;color:var(--ufs-muted);text-align:center}#ufs-app .ufs-location-popover-items{display:grid;grid-template-columns:repeat(auto-fill,minmax(85px,1fr));gap:6px;padding:12px;max-height:min(300px,50vh);overflow-y:auto;overscroll-behavior:contain}#ufs-app .ufs-location-device{padding:6px 8px;border-radius:4px;background:var(--ufs-panel);font-size:12px;overflow-wrap:anywhere}#ufs-app .ufs-owner{min-width:0;overflow:hidden;text-overflow:ellipsis}',
     '@media(max-width:720px){#ufs-app .ufs-sidebar{width:42px;flex-basis:42px;padding:4px}#ufs-app .ufs-resizer{display:none}#ufs-app .ufs-sidebar .ufs-tree-name,#ufs-app .ufs-tree-label,#ufs-app .ufs-tree-toggle,#ufs-app .ufs-sidebar .ufs-tree-spacer{display:none}#ufs-app .ufs-search{width:90px}}',
     '#ufs-app .ufs-top{height:46px;gap:9px;padding:0 12px}#ufs-app .ufs-brand{display:flex;align-items:center;gap:7px;flex-shrink:0;white-space:nowrap}#ufs-app .ufs-heading{font-size:15px}#ufs-app .ufs-brand-divider{height:19px;width:1px;background:var(--ufs-border);flex-shrink:0}#ufs-app .ufs-preview-chip{font-size:11px;color:var(--ufs-muted);white-space:nowrap}#ufs-app .ufs-app-actions{display:flex;align-items:center;gap:3px;flex-shrink:0}',
+    '#ufs-app .ufs-app-actions>.ufs-ico{flex:0 0 32px;width:32px;min-width:32px;height:32px;min-height:32px;max-height:32px;margin:0;padding:0;border-radius:6px}#ufs-app .ufs-app-actions>.ufs-ico>.ufs-svg{width:20px;height:20px;min-width:20px;stroke-width:1.8}',
+    '@keyframes ufs-refresh-spin{to{transform:rotate(360deg)}}#ufs-app .ufs-app-actions>.ufs-refresh.ufs-spinning{opacity:1}#ufs-app .ufs-app-actions>.ufs-refresh.ufs-spinning>.ufs-svg{animation:ufs-refresh-spin 1s linear infinite;transform-origin:center}',
+    '@media(prefers-reduced-motion:reduce){#ufs-app .ufs-app-actions>.ufs-refresh.ufs-spinning>.ufs-svg{animation:none}}',
     '#ufs-app .ufs-top .ufs-tabs{display:flex;align-items:center;flex:1;min-width:0;height:100%;gap:4px;padding:0;background:transparent;border:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}#ufs-app .ufs-top .ufs-tabs::-webkit-scrollbar{display:none}#ufs-app .ufs-top .ufs-tab{flex-shrink:0;height:31px;min-width:85px;max-width:195px;padding:4px 8px}#ufs-app .ufs-top .ufs-tabs>.ufs-ico{flex:0 0 auto}',
     '#ufs-app .ufs-file-actions{display:flex;align-items:center;gap:5px;height:34px;min-height:34px;max-height:34px;flex-shrink:0;padding:0 10px;border-bottom:1px solid var(--ufs-border);background:var(--ufs-bg);overflow:hidden}#ufs-app .ufs-file-actions .ufs-view-controls{display:flex;align-items:center;gap:3px;margin-left:auto;flex-shrink:0}#ufs-app .ufs-file-actions .ufs-ico{height:28px;min-height:0;padding:3px 8px}',
     // v0.2.3.15: Treat only the two file-action buttons as one compact pair.
@@ -3435,7 +3438,10 @@
     $('.ufs-back', app).disabled = !tab || state.initializing || tab.cursor <= 0;
     $('.ufs-next', app).disabled = !tab || state.initializing || tab.cursor >= tab.history.length - 1;
     $('.ufs-up', app).disabled = !tab || state.initializing || currentPath() === PREFIX || isShareRoot(currentPath());
-    $('.ufs-refresh', app).disabled = state.busy || state.initializing;
+    const refreshButton = $('.ufs-refresh', app);
+    refreshButton.disabled = state.busy || state.initializing;
+    refreshButton.classList.toggle('ufs-spinning', state.busy && !state.initializing);
+    refreshButton.setAttribute('aria-busy', String(state.busy && !state.initializing));
   }
   let visibleCache = null;
   const nameCollator = new Intl.Collator('zh-CN', {numeric:true});
@@ -5457,7 +5463,7 @@
       '<span class="ufs-brand-divider" aria-hidden="true"></span>',
       '<div class="ufs-tabs" aria-label="目录标签页"></div>',
       '<div class="ufs-app-actions"><span class="ufs-preview-chip">文件操作可用</span>',
-      '<button type="button" class="ufs-ico ufs-refresh" title="刷新目录" aria-label="刷新目录"><span data-ufs-icon="refresh"></span></button>',
+      '<button type="button" class="ufs-ico ufs-refresh" title="刷新" aria-label="刷新目录"><span data-ufs-icon="rotate-cw"></span></button>',
       '<button type="button" class="ufs-ico ufs-diagnostic-button" title="诊断日志" aria-label="诊断日志"><span data-ufs-icon="bug"></span></button>',
       '<button type="button" class="ufs-ico ufs-more" title="更多选项" aria-label="更多选项" aria-haspopup="menu" aria-expanded="false"><span data-ufs-icon="more"></span></button>',
       '</div></div>'

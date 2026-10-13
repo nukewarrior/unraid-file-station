@@ -444,6 +444,25 @@ test('只读版本采用固定操作菜单且不再创建选中操作栏', () =>
   assert.match(script, /footer = isDemo \? null : document\.querySelector\('#footer'\)/);
 });
 
+
+test('v0.2.8.1 顶部刷新图标采用 rotate-cw，按钮统一尺寸且仅目录加载时旋转', () => {
+  const { api } = createAPI();
+  const header = api.renderHeaderMarkup();
+  const start = script.indexOf('  const ICONS = {');
+  const end = script.indexOf('  function icon(',start);
+  const icons = vm.runInNewContext(script.slice(start,end)+'\nICONS');
+  assert.deepEqual(Array.from(icons['rotate-cw']),[
+    'M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8',
+    'M21 3v5h-5'
+  ]);
+  assert.match(header,/class="ufs-ico ufs-refresh" title="刷新" aria-label="刷新目录"><span data-ufs-icon="rotate-cw"><\/span>/);
+  assert.match(script,/#ufs-app \.ufs-app-actions>\.ufs-ico\{[^']*width:32px[^']*height:32px/);
+  assert.match(script,/#ufs-app \.ufs-app-actions>\.ufs-ico>\.ufs-svg\{width:20px;height:20px/);
+  assert.match(script,/refreshButton\.classList\.toggle\('ufs-spinning', state\.busy && !state\.initializing\)/);
+  assert.match(script,/@media\(prefers-reduced-motion:reduce\).*ufs-refresh\.ufs-spinning/);
+  assert.match(script,/\$\('\.ufs-refresh', app\)\.addEventListener\('click', refreshDirectory\)/);
+});
+
 test('回归：滚动页面不能让 File Station 的高度不断增长', () => {
   const { api } = createAPI();
   // The app remains at document position 280, but its viewport top moves
@@ -2130,7 +2149,7 @@ test('v0.2.7.1 刷新后仅重新观察严格匹配的原生任务，无法确�
 test('v0.2.7.2 Tampermonkey 自动更新元数据与脚本版本保持一致',()=>{
   const header=script.split('// ==/UserScript==',1)[0];
   const updateUrl='https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js';
-  assert.match(header,/^\/\/ @version\s+0\.2\.8\.0$/m);
+  assert.match(header,/^\/\/ @version\s+0\.2\.8\.1$/m);
   assert.ok(header.split('\n').includes('// @updateURL    '+updateUrl));
   assert.ok(header.split('\n').includes('// @downloadURL  '+updateUrl));
   assert.equal(header.match(/^\/\/ @version\s+/gm)?.length,1);
