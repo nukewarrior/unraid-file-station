@@ -2467,7 +2467,7 @@ test('v0.2.11.5 完成窗口清理必须持久化，删除提交前先申请独�
 
 
 test('v0.2.11.5 页面卸载不提前释放正在运行或待核实队列的租约',()=>{
-  const begin=script.indexOf('  onCleanup(()=>{\\n    stopCopyLeaseTimer()');
+  const begin=script.indexOf('  onCleanup(()=>{',script.indexOf('function cleanupApp()'));
   assert.ok(begin>=0,'pagehide 清理入口存在');
   const part=script.slice(begin,begin+550);
   assert.match(part,/!copyQueueNeedsOwnership\(\)/);
