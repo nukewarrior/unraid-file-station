@@ -1,3 +1,10 @@
+## v0.2.11.6 移动轮询优化（待实机验收）
+- [ ] 7 个测试文件在同一目标目录内移动并移回，导出诊断 JSON，对比旧版约 13.3 秒的两个任务；检查 `move.verified.monitorMs` 与整批任务总耗时。
+- [ ] 每个移动任务 `move.verified` 具有 `requestMs / monitorMs / verifyMs / totalMs / polls / observedOwnTask / observedDone`；原始状态与数据一致。
+- [ ] 模拟较长时间的原生移动，轮询 3 秒后回到 700ms，不会因为 fast poll 提前宣告结束。
+- [ ] 原生任务归属不匹配、done 丢失且从未观测到原生任务、源残留、目标大小异常时，进入待核实，不虚报成功、不自动重发。
+- [ ] 移动过程中 F5、切换原生界面和任务中心恢复与 v0.2.11.5 保护行为一致。
+
 ## v0.2.11.5 租约与 AI Agent 诊断（待实机验收）
 - [ ] 单 Browse 页完成一次移动后自动释放 `leases/dispatcher`；刷新后无需等待 30 秒重新提交
 - [ ] 只有 `/Shares/Browse` 和 `/Main` 两个 Chrome 标签页时，不应持续提示「其他标签页抢锁」
