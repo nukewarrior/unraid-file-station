@@ -4,7 +4,7 @@
 // @version      0.2.10.3
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
-// @description  DSM-inspired File Station with native mkdir, rename and copy for Unraid 7.2.2
+// @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
 // @grant        none
