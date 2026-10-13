@@ -5025,7 +5025,7 @@
       started:false,preflighting:false,finished:false,stopAfterCurrent:false,view:'main',phase:'picker',error:''
     }:null;
     const close=(reason='button')=>{
-      if(inlineDraft?.busy || (multi && batch.preflighting)) return;
+      if(enqueuePending || inlineDraft?.busy || (multi && batch.preflighting)) return;
       if(busy || copyJob?.status==='queued') {minimize();return;}
       logMoveDialog('dialog.move_closed',{reason,phase:finalPhase,prefillPending});
       closed=true; ++requestVersion;
@@ -6020,6 +6020,7 @@
             submit.textContent=isMove?'开始移动':'开始复制';
           }
         }
+      if(closed || destroyed || !dialog.isConnected)return;
       logMoveDialog('dialog.move_submit',{target:selected});
       const name=multi?entries[0].name+' 等 '+entries.length+' 项':entry.name;
       const record=newCopyRecord(entries,selected,conflictPolicy,name,operation);
