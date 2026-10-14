@@ -2943,7 +2943,28 @@
          dest.mtime!==after.dest.mtime)
         throw new Error('文件在核验过程中发生变化');
       if(await readNativeActive())throw new Error('核验结束时原生任务占用');
-      await verifyRecoveredNativeCopy(job,index);
+      try {
+        await verifyRecoveredNativeCopy(job,index);
+      } catch(error) {
+        // The original page's IndexedDB writer lease may outlive a reload.
+        // Never steal it. Wait until it naturally expires, then re-check
+        // that both files are still unchanged before trying the checkpoint.
+        if(!String(error?.message||'').includes('旧租约占用'))throw error;
+        const lease=await copyLeaseObservation();
+        if(!lease || !(lease.remainingMs>0) || lease.remainingMs>COPY_LEASE_TTL)
+          throw error;
+        diagnosticLog('INFO','queue.recovery_wait_old_lease',
+          {taskId:job.taskId,remainingMs:lease.remainingMs});
+        await waitNative(Math.ceil(lease.remainingMs)+180);
+        if(destroyed)return;
+        const finalState=await inspect();
+        if(!finalState.origin||!finalState.dest||
+           finalState.origin.size!==origin.size||finalState.origin.mtime!==origin.mtime||
+           finalState.dest.size!==dest.size||finalState.dest.mtime!==dest.mtime||
+           await readNativeActive())
+          throw new Error('等待旧租约过期期间文件或原生任务状态变化');
+        await verifyRecoveredNativeCopy(job,index);
+      }
       verified=true;
       diagnosticLog('INFO','queue.recovery_readback_verified',{taskId:job.taskId,itemIndex:index,
         bytes:origin.size,method:'stream-byte-equality'});
