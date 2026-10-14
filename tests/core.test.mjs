@@ -769,7 +769,7 @@ test('根目录不能通过上一级、新标签、面包屑和历史回退被�
   assert.match(script, /add\.addEventListener\('click', \(\) => \{ void addDefaultTab\(\); \}\)/);
   assert.match(script, /currentPath\(\) === PREFIX \|\| isShareRoot\(currentPath\(\)\)/);
   assert.match(script, /const crumb = element\(path === PREFIX \? 'span' : 'button'/);
-  assert.match(script, /if \(path !== PREFIX\) crumb\.addEventListener\('click'/);
+  assert.match(script, /if \(path !== PREFIX\) \{\s*crumb\.type = 'button';\s*if \(interactive\) crumb\.addEventListener\('click'/);
   assert.match(script, /const path = requested === PREFIX \? defaultSharePath\(\) : resolveRenamedFolderPath\(requested\)/);
   assert.match(script, /if \(requested === PREFIX \|\| path !== requested\)/);
   assert.match(script, /restoreBrowserPath\(path, event\.state\?\.ufs \? event\.state\.tabId : null\)/);
