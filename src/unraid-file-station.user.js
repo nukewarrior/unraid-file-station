@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.12.3
+// @version      0.2.12.4
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -1373,9 +1373,10 @@
     '#ufs-app .ufs-tree-row.ufs-drop-valid,#ufs-app .ufs-entry.ufs-drop-valid,#ufs-app .ufs-address .ufs-crumb.ufs-drop-valid,#ufs-app .ufs-menu[data-ufs-breadcrumb-menu] button.ufs-drop-valid{background:rgba(65,148,220,.14)!important;outline:2px dashed #338bce;outline-offset:-2px;border-radius:4px}#ufs-app .ufs-tree-row.ufs-drop-invalid,#ufs-app .ufs-entry.ufs-drop-invalid,#ufs-app .ufs-address .ufs-crumb.ufs-drop-invalid,#ufs-app .ufs-menu[data-ufs-breadcrumb-menu] button.ufs-drop-invalid{background:rgba(215,74,65,.09)!important;outline:2px dashed #c64b40;outline-offset:-2px;border-radius:4px}#ufs-app .ufs-address .ufs-crumb.ufs-drop-expand{background:rgba(65,148,220,.14)!important;outline:2px dashed #338bce;outline-offset:-2px;border-radius:4px}',
     // Breadcrumb drop targets lift above adjacent crumbs without resizing the 30px address bar.
     // Tree rows, file rows and the overflow breadcrumb menu retain their existing drag styles.
-    '#ufs-app .ufs-address .ufs-crumb{position:relative;z-index:1;transform-origin:center center;transition:transform .17s ease,box-shadow .17s ease,background-color .17s ease,color .17s ease,opacity .17s ease}#ufs-app.ufs-drag-active .ufs-address .ufs-crumb:not(.ufs-drop-valid):not(.ufs-drop-invalid):not(.ufs-drop-expand){opacity:.78}#ufs-app.ufs-drag-active .ufs-address>.ufs-svg{opacity:.62}',
-    '#ufs-app .ufs-address .ufs-crumb.ufs-drop-valid{background:#fff!important;color:#1b527e!important;outline:1px solid #90c0eb!important;outline-offset:0;transform:translateY(-3px) scale(1.04);box-shadow:0 8px 17px rgba(58,148,212,.24),0 0 0 2px rgba(217,235,255,.95);border-radius:6px;z-index:5;opacity:1!important}',
-    '#ufs-app .ufs-address .ufs-crumb.ufs-drop-invalid{background:#fff1ef!important;color:#a9433c!important;outline:1px solid #e0a19c!important;outline-offset:0;transform:translateY(-2px) scale(1.025);box-shadow:0 7px 15px rgba(207,90,82,.16),0 0 0 2px rgba(255,229,226,.85);border-radius:6px;z-index:5;opacity:1!important}',
+    // Span (share root) and buttons (folders) require identical vertical metrics; avoid clipping inside the 30px scrollable address bar.
+    '#ufs-app .ufs-address .ufs-crumb{position:relative;box-sizing:border-box;z-index:1;display:inline-flex;align-items:center;justify-content:flex-start;height:22px;min-height:22px;max-height:22px;line-height:20px;font-family:inherit;font-size:13px;font-weight:400;margin:0;padding:0 6px;transform-origin:center center;transition:transform .17s ease,box-shadow .17s ease,background-color .17s ease,color .17s ease,opacity .17s ease}#ufs-app .ufs-address .ufs-crumb:last-child{font-weight:600}#ufs-app.ufs-drag-active .ufs-address .ufs-crumb:not(.ufs-drop-valid):not(.ufs-drop-invalid):not(.ufs-drop-expand){opacity:.78}#ufs-app.ufs-drag-active .ufs-address>.ufs-svg{opacity:.62}',
+    '#ufs-app .ufs-address .ufs-crumb.ufs-drop-valid{background:#fff!important;color:#1b527e!important;outline:1px solid #90c0eb!important;outline-offset:0;transform:translateY(-2px) scale(1.02);box-shadow:0 8px 17px rgba(58,148,212,.24),0 0 0 2px rgba(217,235,255,.95);border-radius:6px;z-index:5;opacity:1!important}',
+    '#ufs-app .ufs-address .ufs-crumb.ufs-drop-invalid{background:#fff1ef!important;color:#a9433c!important;outline:1px solid #e0a19c!important;outline-offset:0;transform:translateY(-2px) scale(1.02);box-shadow:0 7px 15px rgba(207,90,82,.16),0 0 0 2px rgba(255,229,226,.85);border-radius:6px;z-index:5;opacity:1!important}',
     '#ufs-app .ufs-address .ufs-crumb.ufs-drop-expand{background:#eaf4ff!important;color:#1b527e!important;outline:1px solid #b3d4f2!important;outline-offset:0;transform:translateY(-2px) scale(1.02);box-shadow:0 5px 12px rgba(58,148,212,.18);border-radius:6px;z-index:5;opacity:1!important}',
     '@media(prefers-reduced-motion:reduce){#ufs-app .ufs-address .ufs-crumb{transition:none!important}}',
     '#ufs-app .ufs-drag-ghost{position:absolute;z-index:2147483630;pointer-events:none;display:flex;align-items:center;gap:8px;padding:8px 11px;border-radius:6px;background:#293a4cee;color:#fff;box-shadow:0 5px 18px #0003;font-size:12px;white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis}#ufs-app.ufs-drag-active .ufs-entry{user-select:none;cursor:grabbing!important}',
@@ -1787,7 +1788,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.12.3';
+  const DIAGNOSTIC_VERSION='0.2.12.4';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
