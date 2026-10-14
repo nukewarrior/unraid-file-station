@@ -3157,16 +3157,17 @@
     h.append(close);
     const body=element('div','ufs-create-fields');
     body.append(element('div','ufs-batch-meta',job.record.operation==='delete'?'来源：'+job.destination:'目标：'+job.destination));
-    if(!job.record.operation || job.record.operation==='copy')
+    if(job.record.operation!=='delete')
       body.append(element('div','ufs-batch-meta','同名处理：'+
-        (job.conflictPolicy==='overwrite'?'覆盖':'忽略')));
+        (job.conflictPolicy==='overwrite'?'覆盖':job.conflictPolicy==='skip'?'忽略':'拒绝冲突')));
     if(job.record.operation==='delete')
       body.append(element('div','ufs-delete-warning','永久删除不能撤销；请在 NAS 上核实结果。'));
     for(let i=0;i<job.record.items.length;i++){
       const item=job.record.items[i];
       const row=element('div','ufs-batch-preview-row');
       const label=job.recoveryMonitoring && (job.recoveryBatch||job.recoveryMonitorIndex===i)?(job.record.operation==='delete'?'原生删除中':job.record.operation==='move'?'原生移动中':'原生复制中'):
-        item.status==='success'?'已完成':
+        item.status==='success'?(item.moveOutcome==='merged-partial'?
+          '部分移动 · 源目录仍有文件':'已完成'):
         item.status==='skipped'?'已忽略':
         item.status==='excluded'?'已排除，不重复执行':
         ['submission-intent','copying','verifying','uncertain'].includes(item.status) ||
@@ -3227,7 +3228,9 @@
   function copyJobStatusLabel(job) {
     return job.status==='running'?copyJobPhaseLabel(job)+
       (job.phase==='copying' && Number.isFinite(job.percent)?' '+Math.floor(job.percent)+'%':''):
-      job.status==='queued'?'等待中':job.status==='success'?'已完成':
+      job.status==='queued'?'等待中':job.status==='success'?
+        (job.record?.items?.some(item=>item.moveOutcome==='merged-partial')?
+          '部分移动 · 源目录有剩余':'已完成'):
       job.status==='failed'?(job.preflightRejected?'预检未通过 · 未开始':'失败'):
       job.status==='uncertain'?'待核实':'已停止';
   }
@@ -3544,7 +3547,7 @@
       else statusWrap.append(icon(job.status==='queued'?'clock-3':
         job.status==='success'?'check-circle':'alert-circle'));
       statusWrap.append(element('span','ufs-task-center-status',
-        job.status==='success'?'历史 · 已完成':copyJobStatusLabel(job)));
+        job.status==='success'?'历史 · '+copyJobStatusLabel(job):copyJobStatusLabel(job)));
       main.append(info,statusWrap);
       main.addEventListener('click',()=>{closeCopyTaskCenter();job.reopen();});
       line.append(main);
@@ -5345,10 +5348,10 @@
     policy.append(element('span','ufs-copy-policy-title','遇到同名项目'));
     for(const [value,label,tip] of [
       ['skip','忽略',isMove?
-        '目标已有同名文件或文件夹时不移动该项目，源文件保留在原位置。':
+        '同名普通文件保留目标和源文件；同名文件夹合并，冲突文件留在源目录。':
         '跳过目标中已存在的同名文件；同名文件夹会合并。'],
       ['overwrite','覆盖',isMove?
-        '明确允许替换目标中的同名普通文件；同名文件夹仍会拒绝移动。':
+        '同名文件夹合并并覆盖内部同名文件；目标独有文件保留。':
         '允许用源文件替换同名文件；同名文件夹会合并。']
     ]) {
       const option=element('label','ufs-copy-policy-choice');
@@ -5408,7 +5411,7 @@
         noticeConflicts.append(row);
       }
       noticeAdvice.textContent=(isMove?
-        '可以更改同名策略或选择其他目标目录。移动覆盖仅适用于普通文件，不能覆盖文件夹。':
+        '可以更改同名策略或选择其他目标目录；同名文件夹允许合并，但文件与文件夹类型冲突仍会拒绝。':
         '请选择其他目标文件夹，或取消后重新选择需要复制的项目。');
       showCopyFields(preflightNotice,summary,location);
       fields.scrollTop=0;
@@ -6133,7 +6136,10 @@
         name.title=row.entry.name;
         const labels={pending:'等待',copying:'进行中',success:'成功',skipped:'忽略',
           failed:'失败',uncertain:'待核实'};
-        const status=element('span','ufs-batch-list-state',labels[row.status] || row.status);
+        const status=element('span','ufs-batch-list-state',
+          row.moveOutcome==='merged-partial'?'部分移动':labels[row.status] || row.status);
+        if(row.moveOutcome==='merged-partial')
+          status.title='同名文件夹已合并，但源目录仍保留未转移的文件';
         if(row.error) {status.title=row.error;item.title=row.error;}
         item.append(index,icon(row.entry.folder?'folder':'file','ufs-folder-icon'),name,status);
         batchScroll.append(item);
@@ -6574,10 +6580,18 @@
           outcome.copyOutcome==='skipped'?'not-submitted':'confirmed');
         if(closed || destroyed) return;
         finalPhase='success';
-        heading.textContent=outcome.copyOutcome==='skipped'?'已忽略同名文件':(isMove?'移动完成':'复制完成');
+        heading.textContent=outcome.copyOutcome==='skipped'?'已忽略同名文件':
+          outcome.moveOutcome==='merged-partial'?'文件夹已部分移动':
+          (isMove?'移动完成':'复制完成');
         renderCopyProgress('success',outcome.copyOutcome==='skipped'?
           (isMove?'目标文件已存在，按「忽略」策略保留原文件，未提交移动请求。':'目标文件已存在，按「忽略」策略保留原文件，未提交复制请求。'):
-          outcome.copyOutcome==='merged'?'同名文件夹已合并；内部文件按所选策略处理。':(isMove?'移动结果已核对。':'复制结果已核对。'));
+          outcome.moveOutcome==='merged-partial'?
+            '同名文件夹已合并，源目录仍有未转移的文件；请检查剩余项目，不会自动重做。':
+          outcome.moveOutcome==='merged'||outcome.copyOutcome==='merged'?
+            '同名文件夹已合并；内部同名文件按所选策略处理，目标独有文件保留。':
+            (isMove?'移动结果已核对。':'复制结果已核对。'));
+        if(outcome.moveOutcome==='merged-partial')
+          progressStateText.textContent='部分移动 · 源目录有剩余';
         if(outcome.copyOutcome==='skipped') {
           progressStateText.textContent='已忽略同名文件';
           progressIndicator.textContent='已忽略';
@@ -6593,7 +6607,10 @@
         if(isMove)state.tree.delete(parentPath(plan.source));
         if(currentPath()===plan.destinationDir || (isMove && currentPath()===parentPath(plan.source))) await refreshDirectory();
         else if(state.expanded.has(plan.destinationDir)) void loadTree(plan.destinationDir,true);
-        notify((outcome.copyOutcome==='skipped'?'已忽略：':(isMove?'移动完成：':'复制完成：'))+fileName(plan.target)+'；点击「完成」关闭结果');
+        notify((outcome.copyOutcome==='skipped'?'已忽略：':
+          outcome.moveOutcome==='merged-partial'?'部分移动，源目录有剩余：':
+          (isMove?'移动完成：':'复制完成：'))+
+          fileName(plan.target)+'；点击「完成」关闭结果');
       } catch(error) {
         if(closed || destroyed) return;
         const message=String(error?.message||error);
@@ -6671,7 +6688,7 @@
       }
       if(copyJob && copyJob.status==='failed') removeCopyJob(copyJob);
       if(isMove && conflictPolicy==='overwrite' &&
-          !window.confirm('覆盖移动将替换目标目录中的同名普通文件，原有目标内容无法撤销。\n\n同名文件夹不会被覆盖或合并。确认按覆盖策略移动？'))
+          !window.confirm('覆盖移动将替换目标中的同名普通文件，旧文件内容无法恢复。\n\n同名文件夹会合并并覆盖内部同名文件；目标独有文件保留。确认继续？'))
         return;
       try {
         const plans=entries.map(item=>planFileOperation({type:operation,
