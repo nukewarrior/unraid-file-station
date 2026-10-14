@@ -2612,7 +2612,7 @@ function movePollingHarness({activeReads=0,done=true,mismatch=false,moveFiles=tr
   const origin={path:plan.source,name:'notes.txt',folder,size:2048};
   const target={path:plan.target,name:'notes.txt',folder,size:2048};
   const context={
-    MOVE_ENABLED:true,isDemo:false,
+    MOVE_ENABLED:true,isDemo:false,activeCopySession:null,
     withNativeWriteLock:async operation=>operation(),
     safeWritePath:()=>true,copyDestinationAllowed:()=>true,
     fileName:path=>path.slice(path.lastIndexOf('/')+1),
@@ -2653,6 +2653,51 @@ function movePollingHarness({activeReads=0,done=true,mismatch=false,moveFiles=tr
     get closed(){return closed;},get time(){return time;}};
 }
 
+test('v0.2.13.5 冲突诊断明确标注忽略、覆盖、目录合并和顶层核验边界',async()=>{
+  const ignored=movePollingHarness({policy:'skip',conflict:true});
+  await ignored.move();
+  const skipPreflight=ignored.diagnostics.find(e=>e.code==='move.preflight')?.details;
+  assert.equal(skipPreflight.conflictPolicy,'skip');
+  assert.equal(skipPreflight.targetExistedBefore,true);
+  assert.equal(skipPreflight.folder,false);
+  const skipAudit=ignored.diagnostics.find(e=>e.code==='move.skipped_conflict')?.details;
+  assert.equal(skipAudit.nativeSubmitted,false);
+  assert.equal(ignored.diagnostics.filter(e=>e.code==='move.intent').length,0);
+  const overwritten=movePollingHarness({policy:'overwrite',conflict:true});
+  await overwritten.move();
+  const intent=overwritten.diagnostics.find(e=>e.code==='move.intent')?.details;
+  assert.equal(intent.conflictPolicy,'overwrite');
+  assert.equal(intent.nativeAction,'9');
+  assert.equal(intent.targetExistedBefore,true);
+  assert.equal(intent.mergeCandidate,false);
+  const verified=overwritten.diagnostics.find(e=>e.code==='move.verified')?.details;
+  assert.equal(verified.conflictPolicy,'overwrite');
+  assert.equal(verified.targetExistedBefore,true);
+  assert.equal(verified.verificationScope,'top-level-size-if-available');
+  assert.equal(verified.moveOutcome,'moved');
+
+  const merged=movePollingHarness({policy:'skip',folder:true,conflict:true,
+    conflictFolder:true,remaining:true});
+  await merged.move();
+  const mergedPreflight=merged.diagnostics.find(e=>e.code==='move.preflight')?.details;
+  assert.equal(mergedPreflight.mergeCandidate,true);
+  assert.equal(mergedPreflight.nativeAction,'4');
+  assert.equal(mergedPreflight.nestedConflictInspection,'not-performed');
+  const mergedVerified=merged.diagnostics.find(e=>e.code==='move.verified')?.details;
+  assert.equal(mergedVerified.moveOutcome,'merged-partial');
+  assert.equal(mergedVerified.sourceRemains,true);
+  assert.equal(mergedVerified.verificationScope,'top-level-only');
+  assert.equal(mergedVerified.nestedConflictInspection,'not-performed');
+});
+
+test('v0.2.13.5 批量冲突审计描述当前事实，不用顶层匹配冒充内部冲突数',()=>{
+  assert.match(script,/move\\.batch_preflight/);
+  assert.match(script,/sameNameFolderCount:topLevelMatches/);
+  assert.match(script,/reason:hasMoveConflict\\?'top-level-name-conflict'/);
+  assert.match(script,/nestedConflictInspection:'not-performed'/);
+  assert.match(script,/copy\\.skipped_conflict/);
+  assert.match(script,/targetExistingCount:topLevelExistingCount/);
+});
 test('v0.2.13.4 移动同名策略：普通文件忽略或覆盖，文件夹合并与剩余源目录提示',async()=>{
   const ignored=movePollingHarness({policy:'skip',conflict:true});
   const outcome=await ignored.move();
