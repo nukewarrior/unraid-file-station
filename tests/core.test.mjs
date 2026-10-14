@@ -2391,11 +2391,19 @@ test('v0.2.12.2 拖动到省略号展开菜单，省略号自身不是有效目�
 });
 
 test('v0.2.12.3 地址栏轻悬浮仅影响面包屑，不改变目录树和文件行的拖放样式',()=>{
-  assert.match(script,/#ufs-app \.ufs-address \.ufs-crumb\.ufs-drop-valid\{background:#fff!important;[^']*transform:translateY\(-3px\) scale\(1\.04\);[^']*box-shadow:/);
-  assert.match(script,/#ufs-app \.ufs-address \.ufs-crumb\.ufs-drop-invalid\{[^']*outline:1px solid #e0a19c!important;[^']*transform:translateY\(-2px\) scale\(1\.025\)/);
+  assert.match(script,/#ufs-app \.ufs-address \.ufs-crumb\.ufs-drop-valid\{background:#fff!important;[^']*transform:translateY\(-2px\) scale\(1\.02\);[^']*box-shadow:/);
+  assert.match(script,/#ufs-app \.ufs-address \.ufs-crumb\.ufs-drop-invalid\{[^']*outline:1px solid #e0a19c!important;[^']*transform:translateY\(-2px\) scale\(1\.02\)/);
   assert.match(script,/#ufs-app \.ufs-address \.ufs-crumb\.ufs-drop-expand\{[^']*transform:translateY\(-2px\) scale\(1\.02\)/);
   assert.match(script,/#ufs-app \.ufs-tree-row\.ufs-drop-valid,#ufs-app \.ufs-entry\.ufs-drop-valid/);
   assert.match(script,/@media\(prefers-reduced-motion:reduce\)/);
+  assert.match(script,/#ufs-app \.ufs-address\{display:flex;align-items:center;gap:2px;flex:1 1 auto;[^']*height:30px;min-height:30px;max-height:30px/);
+});
+
+test('v0.2.12.4 共享根节点和中英文目录统一悬浮框盒模型且不超出地址栏',()=>{
+  assert.match(script,/#ufs-app \.ufs-address \.ufs-crumb\{position:relative;box-sizing:border-box;z-index:1;display:inline-flex;align-items:center;justify-content:flex-start;height:22px;min-height:22px;max-height:22px;line-height:20px;font-family:inherit;font-size:13px;font-weight:400;margin:0;padding:0 6px/);
+  assert.match(script,/#ufs-app \.ufs-address \.ufs-crumb:last-child\{font-weight:600\}/);
+  assert.match(script,/const crumb = element\(path === PREFIX \? 'span' : 'button', 'ufs-crumb'\)/);
+  assert.match(script,/outline-offset:0;transform:translateY\(-2px\) scale\(1\.02\)/);
   assert.match(script,/#ufs-app \.ufs-address\{display:flex;align-items:center;gap:2px;flex:1 1 auto;[^']*height:30px;min-height:30px;max-height:30px/);
 });
 
