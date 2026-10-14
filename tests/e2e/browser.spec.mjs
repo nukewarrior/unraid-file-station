@@ -3354,7 +3354,8 @@ test('v0.2.12.3 真实拖动时地址栏目标轻悬浮，松手恢复且不执�
   await modal.getByRole('button',{name:'取消'}).click();
   await page.waitForTimeout(190);
   const reset=await dest.evaluate(el=>getComputedStyle(el).transform);
-  assert.equal(reset,'matrix(1, 0, 0, 1, 0, 0)','放开拖拽后轻悬浮效果应清除');
+  assert.ok(reset==='none'||reset==='matrix(1, 0, 0, 1, 0, 0)',
+    '放开拖拽后轻悬浮效果应清除：'+reset);
   assert.equal(errors.length,0,errors.join('\n'));
 });
 
