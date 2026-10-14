@@ -3373,7 +3373,7 @@ test('v0.2.12.2 拖动到省略号等待展开，在菜单项释放后预选被�
   assert.ok(destBox,'隐藏目录菜单中的实际目标可见');
   await page.mouse.move(destBox.x+Math.min(35,destBox.width/2),
     destBox.y+destBox.height/2,{steps:10});
-  await hidden.locator('xpath=.',{}).waitFor();
+  await page.locator('.ufs-menu[data-ufs-breadcrumb-menu] button.ufs-drop-valid[data-ufs-drop-path="/mnt/user/downloads"]').waitFor();
   await page.mouse.up();
   const dialog=page.getByRole('dialog',{name:'移动到'});
   await dialog.waitFor();
