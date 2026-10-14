@@ -3319,6 +3319,70 @@ async function breadcrumbDragPage(t,width=1440){
   return session;
 }
 
+test('v0.2.12.3 真实拖动时地址栏目标轻悬浮，松手恢复且不执行原生移动',async t=>{
+  const {page,errors,nativePosts}=await breadcrumbDragPage(t);
+  const from=page.locator('.ufs-entry[data-ufs-file="'+dragBreadcrumbDeep+'/clip-a.mp4"]');
+  const dest=page.locator('.ufs-address .ufs-crumb[data-ufs-drop-path="/mnt/user/downloads"]');
+  const a=await from.boundingBox(),b=await dest.boundingBox();
+  assert.ok(a&&b);
+  await page.mouse.move(a.x+40,a.y+a.height/2);
+  await page.mouse.down();
+  await page.mouse.move(a.x+83,a.y+a.height/2,{steps:4});
+  await page.mouse.move(b.x+b.width/2,b.y+b.height/2,{steps:12});
+  await page.locator('.ufs-address .ufs-crumb.ufs-drop-valid[data-ufs-drop-path="/mnt/user/downloads"]').waitFor();
+  await page.waitForTimeout(230); // CSS transition completes before measuring.
+  const appearance=await dest.evaluate(el=>{
+    const css=getComputedStyle(el),m=new DOMMatrixReadOnly(css.transform);
+    const address=el.closest('.ufs-address');
+    const tree=document.querySelector('.ufs-tree-row[data-ufs-drop-path="/mnt/user/downloads"]');
+    return {scale:m.a,up:m.f,shadow:css.boxShadow,outline:css.outlineStyle,
+      background:css.backgroundColor,addressHeight:address.getBoundingClientRect().height,
+      treeTransform:tree?getComputedStyle(tree).transform:'none'};
+  });
+  assert.ok(appearance.scale>1.025&&appearance.scale<1.055,JSON.stringify(appearance));
+  assert.ok(appearance.up<-2&&appearance.up>-5,JSON.stringify(appearance));
+  assert.notEqual(appearance.shadow,'none',JSON.stringify(appearance));
+  assert.equal(appearance.outline,'solid','悬浮态不再使用旧版虚线框');
+  assert.equal(appearance.background,'rgb(255, 255, 255)');
+  assert.equal(Math.round(appearance.addressHeight),30,'地址栏高度不能变化');
+  assert.equal(appearance.treeTransform,'none','目录树不能被地址栏视觉样式影响');
+  await page.mouse.up();
+  const modal=page.getByRole('dialog',{name:'移动到'});
+  await modal.waitFor();
+  await page.locator('.ufs-copy-destination',{hasText:'/mnt/user/downloads'}).waitFor();
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,0);
+  await modal.getByRole('button',{name:'取消'}).click();
+  await page.waitForTimeout(190);
+  const reset=await dest.evaluate(el=>getComputedStyle(el).transform);
+  assert.equal(reset,'matrix(1, 0, 0, 1, 0, 0)','放开拖拽后轻悬浮效果应清除');
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.12.3 禁止投放时红色轻悬浮，省略号悬停仅作展开提示',async t=>{
+  const {page,errors,nativePosts}=await breadcrumbDragPage(t,760);
+  const from=page.locator('.ufs-entry[data-ufs-file="'+dragBreadcrumbDeep+'/clip-a.mp4"]');
+  const invalid=page.locator('.ufs-address .ufs-crumb[data-ufs-drop-path="'+dragBreadcrumbDeep+'"]');
+  const a=await from.boundingBox(),b=await invalid.boundingBox();
+  assert.ok(a&&b);
+  await page.mouse.move(a.x+40,a.y+a.height/2);
+  await page.mouse.down();
+  await page.mouse.move(a.x+86,a.y+a.height/2,{steps:4});
+  await page.mouse.move(b.x+b.width/2,b.y+b.height/2,{steps:12});
+  await page.locator('.ufs-address .ufs-crumb.ufs-drop-invalid').waitFor();
+  await page.waitForTimeout(220);
+  const style=await invalid.evaluate(el=>{
+    const css=getComputedStyle(el),m=new DOMMatrixReadOnly(css.transform);
+    return {up:m.f,scale:m.a,outline:css.outlineStyle,background:css.backgroundColor};
+  });
+  assert.ok(style.up<-1 && style.scale>1.015,JSON.stringify(style));
+  assert.equal(style.outline,'solid');
+  assert.equal(style.background,'rgb(255, 241, 239)');
+  await page.mouse.up();
+  assert.equal(await page.locator('.ufs-copy-dialog').count(),0);
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
 test('v0.2.12.2 多文件拖拽到地址栏上级目录，只打开移动确认且正确填入目标路径',async t=>{
   const {page,errors,nativePosts}=await breadcrumbDragPage(t);
   const first=page.locator('.ufs-entry[data-ufs-file="'+dragBreadcrumbDeep+'/clip-a.mp4"]');
