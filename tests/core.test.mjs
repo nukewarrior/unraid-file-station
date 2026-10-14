@@ -2133,7 +2133,7 @@ test('v0.2.7 恢复任务仅展示记录，自动暂停，必须手动确认',()
   assert.match(script,/稍后处理/);
   assert.match(script,/if\(copyQueueRunning \|\| copyQueuePaused \|\| copyRecoveryLocked/);
   assert.match(script,/if\(copyRecoveryLocked \|\| !copyQueuePaused/);
-  assert.match(script,/请先逐项核实并排除/);
+  assert.match(script,/先决定是否不再执行该项/);
   assert.match(script,/function executeRecoveredCopyJob\(job\)/);
 });
 
