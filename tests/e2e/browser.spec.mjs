@@ -3319,6 +3319,67 @@ async function breadcrumbDragPage(t,width=1440){
   return session;
 }
 
+test('v0.2.12.4 共享根节点及中英文目录悬浮框等高，顶部完整显示',async t=>{
+  const {page,errors,nativePosts}=await breadcrumbDragPage(t,1440);
+  const nodes=page.locator('.ufs-address .ufs-crumb[data-ufs-drop-path]');
+  const normal=await nodes.evaluateAll(crumbs=>crumbs.map(el=>{
+    const css=getComputedStyle(el),b=el.getBoundingClientRect();
+    return {tag:el.tagName,path:el.dataset.ufsDropPath,height:b.height,cssHeight:css.height,
+      paddingLeft:css.paddingLeft,paddingRight:css.paddingRight,lineHeight:css.lineHeight,
+      fontSize:css.fontSize,fontFamily:css.fontFamily,boxSizing:css.boxSizing};
+  }));
+  assert.ok(normal.length>=5);
+  assert.equal(normal[0].tag,'SPAN','共享根节点当前为 span');
+  assert.equal(normal[1].tag,'BUTTON','普通目录当前为 button');
+  const baseline=normal[0];
+  for(const node of normal){
+    assert.ok(Math.abs(node.height-22)<0.2,JSON.stringify(node));
+    for(const property of ['cssHeight','paddingLeft','paddingRight','lineHeight','fontSize','fontFamily','boxSizing']){
+      assert.equal(node[property],baseline[property],property+' should match: '+JSON.stringify(node));
+    }
+  }
+  const from=page.locator('.ufs-entry[data-ufs-file="'+dragBreadcrumbDeep+'/clip-a.mp4"]');
+  const cases=[
+    ['/mnt/user',false], ['/mnt/user/downloads',true],
+    ['/mnt/user/downloads/新建文件夹',true]
+  ];
+  const dropHeights=[];
+  for(const [path,allowed] of cases){
+    const target=page.locator('.ufs-address .ufs-crumb[data-ufs-drop-path="'+path+'"]');
+    const a=await from.boundingBox(),b=await target.boundingBox();
+    assert.ok(a&&b,'drag source and breadcrumb should be present');
+    await page.mouse.move(a.x+40,a.y+a.height/2);
+    await page.mouse.down();
+    await page.mouse.move(a.x+88,a.y+a.height/2,{steps:4});
+    await page.mouse.move(b.x+b.width/2,b.y+b.height/2,{steps:12});
+    await page.locator('.ufs-address .ufs-crumb.'+(allowed?'ufs-drop-valid':'ufs-drop-invalid')+
+      '[data-ufs-drop-path="'+path+'"]').waitFor();
+    await page.waitForTimeout(210);
+    const rects=await target.evaluate(el=>{
+      const a=el.closest('.ufs-address').getBoundingClientRect();
+      const b=el.getBoundingClientRect(),css=getComputedStyle(el);
+      return {top:b.top,bottom:b.bottom,height:b.height,addressTop:a.top,addressBottom:a.bottom,
+        transform:css.transform,lineHeight:css.lineHeight};
+    });
+    assert.ok(rects.top>=rects.addressTop+0.5,
+      '悬浮框顶部必须完整位于地址栏内：'+JSON.stringify({path,rects}));
+    assert.ok(rects.bottom<=rects.addressBottom-0.5,
+      '悬浮框底部必须完整位于地址栏内：'+JSON.stringify({path,rects}));
+    dropHeights.push(rects.height);
+    await page.mouse.up();
+    if(allowed){
+      const dialog=page.getByRole('dialog',{name:'移动到'});
+      await dialog.waitFor();
+      await page.locator('.ufs-copy-destination',{hasText:path}).waitFor();
+      await dialog.getByRole('button',{name:'取消'}).click();
+    }else assert.equal(await page.locator('.ufs-copy-dialog').count(),0);
+  }
+  assert.ok(Math.max(...dropHeights)-Math.min(...dropHeights)<0.35,
+    '根目录、中英文目录悬浮框应完全等高：'+dropHeights.join(', '));
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
 test('v0.2.12.3 真实拖动时地址栏目标轻悬浮，松手恢复且不执行原生移动',async t=>{
   const {page,errors,nativePosts}=await breadcrumbDragPage(t);
   const from=page.locator('.ufs-entry[data-ufs-file="'+dragBreadcrumbDeep+'/clip-a.mp4"]');
@@ -3339,8 +3400,8 @@ test('v0.2.12.3 真实拖动时地址栏目标轻悬浮，松手恢复且不执�
       background:css.backgroundColor,addressHeight:address.getBoundingClientRect().height,
       treeTransform:tree?getComputedStyle(tree).transform:'none'};
   });
-  assert.ok(appearance.scale>1.025&&appearance.scale<1.055,JSON.stringify(appearance));
-  assert.ok(appearance.up<-2&&appearance.up>-5,JSON.stringify(appearance));
+  assert.ok(appearance.scale>1.015&&appearance.scale<1.025,JSON.stringify(appearance));
+  assert.ok(appearance.up<-1.5&&appearance.up>-2.5,JSON.stringify(appearance));
   assert.notEqual(appearance.shadow,'none',JSON.stringify(appearance));
   assert.equal(appearance.outline,'solid','悬浮态不再使用旧版虚线框');
   assert.equal(appearance.background,'rgb(255, 255, 255)');
