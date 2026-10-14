@@ -2379,7 +2379,8 @@
       // No native POST was possible for a failed task whose remaining items
       // have never saved submission intent. Do not turn it into "uncertain".
       const safelyFailed=task.status==='failed' && items.every(item=>
-        item.submission==='not-submitted' ||
+        (item.submission==='not-submitted' &&
+          ['queued','checking','failed','skipped','excluded'].includes(item.status)) ||
         (item.submission==='confirmed' && ['success','skipped','excluded'].includes(item.status)));
       return {...task,restoreStatus:safelyFailed?'safe-failed':
         items.some(item=>item.restoreStatus==='needs-verification')
@@ -3429,7 +3430,8 @@
   function isRemovableFailedCopyJob(job) {
     return job?.status==='failed' && !!job.record && !job.recoveryMonitoring &&
       job.record.items.every(item=>
-        item.submission==='not-submitted' ||
+        (item.submission==='not-submitted' &&
+          ['queued','checking','failed','skipped','excluded'].includes(item.status)) ||
         (item.submission==='confirmed' && ['success','skipped','excluded'].includes(item.status)));
   }
   async function clearCompletedCopyJobs(job) {
@@ -6657,7 +6659,7 @@
       }
       if(copyJob && copyJob.status==='failed') removeCopyJob(copyJob);
       if(isMove && conflictPolicy==='overwrite' &&
-          !window.confirm('覆盖移动将替换目标目录中的同名普通文件，原有目标内容无法撤销。\\n\\n同名文件夹不会被覆盖或合并。确认按覆盖策略移动？'))
+          !window.confirm('覆盖移动将替换目标目录中的同名普通文件，原有目标内容无法撤销。\n\n同名文件夹不会被覆盖或合并。确认按覆盖策略移动？'))
         return;
       try {
         const plans=entries.map(item=>planFileOperation({type:operation,
