@@ -3160,6 +3160,66 @@ test('v0.2.13.2 完成加待恢复队列在旧租约阻挡后可重试清空，�
   assert.equal(errors.length,0,errors.join('\\n'));
 });
 
+test('v0.2.13.3 刷新后的预检失败任务能移除，关闭面板不再弹出遮挡提示',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t);
+  await seedCopyTaskCenter(page,['queued']);
+  await page.evaluate(async()=>{
+    const db=await new Promise((resolve,reject)=>{
+      const request=indexedDB.open('ufs-copy-queue-v1',1);
+      request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);
+    });
+    const tx=db.transaction('snapshots','readwrite');
+    const table=tx.objectStore('snapshots');
+    const row=await new Promise((resolve,reject)=>{
+      const request=table.get('active');
+      request.onsuccess=()=>resolve(request.result);
+      request.onerror=()=>reject(request.error);
+    });
+    row.snapshot.tasks[0].status='failed';
+    row.snapshot.tasks[0].items[0].status='failed';
+    row.snapshot.tasks[0].items[0].submission='not-submitted';
+    table.put(row);
+    await new Promise((resolve,reject)=>{tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error);});
+    db.close();
+  });
+  page.once('dialog',dialog=>dialog.accept());
+  await page.reload({waitUntil:'domcontentloaded'});
+  const trigger=page.locator('.ufs-copy-task-trigger');
+  await trigger.waitFor();
+  assert.match(await trigger.innerText(),/预检未通过/);
+  await trigger.click();
+  const center=page.getByRole('dialog',{name:'复制任务中心'});
+  assert.equal(await center.getByRole('tooltip').isHidden(),true);
+  assert.equal(await center.locator('.ufs-task-center-row[data-status=failed]').count(),1);
+  await center.getByRole('button',{name:/移除失败记录/}).click();
+  await trigger.waitFor({state:'hidden'});
+  assert.equal((await readCopyTaskCenterSnapshot(page)).tasks.length,0);
+  await page.reload({waitUntil:'domcontentloaded'});
+  await page.locator('.ufs-entry').first().waitFor();
+  assert.equal(await trigger.isVisible(),false);
+  assert.equal(nativePosts.filter(item=>item.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.13.3 移动窗口提供忽略及覆盖并默认忽略，不确认时不提交移动',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t);
+  await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).first().click();
+  await page.locator('.ufs-operations').click();
+  await page.getByRole('menuitem',{name:'移动到…'}).click();
+  const modal=page.getByRole('dialog',{name:'移动到'});
+  await modal.locator('.ufs-copy-policy').waitFor({state:'visible'});
+  assert.equal(await modal.locator('.ufs-copy-policy-radio[value="skip"]').isChecked(),true);
+  await modal.locator('.ufs-copy-policy-radio[value="overwrite"]').check();
+  assert.equal(await modal.locator('.ufs-copy-policy-radio[value="overwrite"]').isChecked(),true);
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  page.once('dialog',dialog=>dialog.dismiss());
+  await modal.getByRole('button',{name:'开始移动'}).click();
+  assert.equal(await modal.locator('.ufs-copy-policy-radio[value="overwrite"]').isChecked(),true);
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,0);
+  await modal.getByRole('button',{name:'取消'}).click();
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
 test('任务中心图标在两主题、窄屏和 Unraid 按钮样式下保持对齐，清空后不再恢复',async t=>{
   const {page,errors,nativePosts}=await pageFor(t);
   await seedCopyTaskCenter(page);
