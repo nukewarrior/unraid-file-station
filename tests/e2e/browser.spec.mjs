@@ -3106,6 +3106,60 @@ async function readCopyTaskCenterSnapshot(page) {
   });
 }
 
+test('v0.2.13.2 完成加待恢复队列在旧租约阻挡后可重试清空，不提交任何原生操作',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t);
+  await seedCopyTaskCenter(page,['success','queued']);
+  const trigger=page.locator('.ufs-copy-task-trigger');
+  await trigger.click();
+  const center=page.getByRole('dialog',{name:'复制任务中心'});
+  await page.evaluate(async()=>{
+    const db=await new Promise((resolve,reject)=>{
+      const request=indexedDB.open('ufs-copy-queue-v1',1);
+      request.onsuccess=()=>resolve(request.result);
+      request.onerror=()=>reject(request.error);
+    });
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction('leases','readwrite');
+      tx.objectStore('leases').put({
+        key:'dispatcher',owner:'ufs_stale_test_owner',expiresAt:Date.now()+15000
+      });
+      tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error);
+    });
+    db.close();
+  });
+  await center.getByRole('button',{name:'移除保存记录'}).click();
+  await page.waitForFunction(()=>
+    document.querySelector('.ufs-task-center-cleanup-error')?.textContent.includes('租约占用'));
+  assert.equal((await readCopyTaskCenterSnapshot(page)).tasks.length,2);
+  assert.equal(await center.getByRole('button',{name:'移除保存记录'}).isDisabled(),false,
+    '租约冲突不能使取消功能永久禁用');
+
+  await page.evaluate(async()=>{
+    const db=await new Promise((resolve,reject)=>{
+      const request=indexedDB.open('ufs-copy-queue-v1',1);
+      request.onsuccess=()=>resolve(request.result);
+      request.onerror=()=>reject(request.error);
+    });
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction('leases','readwrite');
+      tx.objectStore('leases').delete('dispatcher');
+      tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error);
+    });
+    db.close();
+  });
+  await center.getByRole('button',{name:'移除保存记录'}).click();
+  await page.waitForFunction(()=>document.querySelectorAll('.ufs-task-center-row').length===1);
+  assert.deepEqual((await readCopyTaskCenterSnapshot(page)).tasks.map(x=>x.status),['success']);
+  await center.locator('.ufs-task-center-clear').click();
+  await trigger.waitFor({state:'hidden'});
+  assert.equal((await readCopyTaskCenterSnapshot(page)).tasks.length,0);
+  await page.reload({waitUntil:'domcontentloaded'});
+  await page.locator('.ufs-entry').first().waitFor();
+  assert.equal(await trigger.isVisible(),false,'F5 后已移除记录不能重新出现');
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\\n'));
+});
+
 test('任务中心图标在两主题、窄屏和 Unraid 按钮样式下保持对齐，清空后不再恢复',async t=>{
   const {page,errors,nativePosts}=await pageFor(t);
   await seedCopyTaskCenter(page);
