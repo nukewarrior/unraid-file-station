@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.13.2
+// @version      0.2.13.3
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -285,7 +285,7 @@
     }
     const { type, source, parent, name, destinationDir, folder, conflictPolicy = 'fail' } = input;
     if (conflictPolicy !== 'fail' &&
-        !(type==='copy' && ['skip','overwrite'].includes(conflictPolicy)))
+        !(['copy','move'].includes(type) && ['skip','overwrite'].includes(conflictPolicy)))
       throw new Error('当前不允许覆盖目标文件或使用该冲突策略');
     if (!['mkdir', 'rename', 'copy', 'move', 'delete'].includes(type)) {
       throw new Error('不支持的文件操作');
@@ -1789,7 +1789,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.13.2';
+  const DIAGNOSTIC_VERSION='0.2.13.3';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -2305,7 +2305,8 @@
     }
     const operation=task.operation||'copy';
     if(!['copy','move','delete'].includes(operation) ||
-       (operation!=='copy' && (task.conflictPolicy!=='fail' || !safeWritePath(task.destination,true))))
+       (operation!=='copy' && (!safeWritePath(task.destination,true) ||
+         (operation==='delete' && task.conflictPolicy!=='fail'))))
       throw new Error('持久化移动任务格式错误');
     const items=task.items.map(normalizeSavedCopyItem);
     if(operation!=='copy' && items.some(item=>!safeWritePath(item.source)))
@@ -2363,12 +2364,18 @@
           ['success','skipped','excluded'].includes(item.status)?'terminal':
           item.status==='queued'||item.status==='checking'?'waiting':'needs-verification'};
       });
-      return {...task,restoreStatus:items.some(item=>item.restoreStatus==='needs-verification')
-        ?'needs-verification':items.some(item=>item.restoreStatus==='waiting')
-          ?'waiting':'terminal',items};
+      // No native POST was possible for a failed task whose remaining items
+      // have never saved submission intent. Do not turn it into "uncertain".
+      const safelyFailed=task.status==='failed' && items.every(item=>
+        item.submission==='not-submitted' ||
+        (item.submission==='confirmed' && ['success','skipped','excluded'].includes(item.status)));
+      return {...task,restoreStatus:safelyFailed?'safe-failed':
+        items.some(item=>item.restoreStatus==='needs-verification')
+          ?'needs-verification':items.some(item=>item.restoreStatus==='waiting')
+            ?'waiting':'terminal',items};
     });
     return {schema:valid.schema,savedAt:valid.savedAt,tasks,
-      requiresConfirmation:tasks.some(task=>task.restoreStatus!=='terminal')};
+      requiresConfirmation:tasks.some(task=>!['terminal','safe-failed'].includes(task.restoreStatus))};
   }
   function createCopyQueueStore(idb,dbName=COPY_QUEUE_DATABASE) {
     if(!idb || typeof idb.open!=='function')
@@ -2694,8 +2701,12 @@
               name:record.name,destination:record.destination,
               conflictPolicy:record.conflictPolicy,count:record.items.length,
               status:data.restoreStatus==='terminal'?'success':
+                data.restoreStatus==='safe-failed'?'failed':
                 data.restoreStatus==='needs-verification'?'uncertain':'queued',
-              phase:data.restoreStatus==='needs-verification'?'uncertain':'queued',
+              phase:data.restoreStatus==='safe-failed'?'failed':
+                data.restoreStatus==='needs-verification'?'uncertain':'queued',
+              preflightRejected:data.restoreStatus==='safe-failed',
+              recoverable:data.restoreStatus==='safe-failed',
               percent:null,speed:'',speedUpdatedAt:0,
               reopen:()=>showRecoveredCopyDetails(job),
               cancelQueued:()=>void discardRecoveredCopyJob(job),
@@ -3385,9 +3396,19 @@
     updateCopyTaskButton();
     void runCopyQueue();
   }
+  function isRemovableFailedCopyJob(job) {
+    return job?.status==='failed' && !!job.record && !job.recoveryMonitoring &&
+      job.record.items.every(item=>
+        item.submission==='not-submitted' ||
+        (item.submission==='confirmed' && ['success','skipped','excluded'].includes(item.status)));
+  }
   async function clearCompletedCopyJobs(job) {
     if(copyCleanupPending) return;
-    const targets=copyJobs.filter(item=>item.status==='success' && (!job || item===job));
+    // The header eraser only clears successful records. Explicit per-row
+    // deletion can also dismiss a failed task that has no uncertain native POST.
+    const targets=copyJobs.filter(item=>(job ?
+      item===job && (item.status==='success'||isRemovableFailedCopyJob(item)):
+      item.status==='success'));
     if(!targets.length) return;
     copyCleanupPending=true;
     copyCleanupError='';
@@ -3405,6 +3426,10 @@
       for(let index=copyJobs.length-1;index>=0;index--)
         if(targets.includes(copyJobs[index])) copyJobs.splice(index,1);
       await persistCopyQueue();
+      if(copyJobs.every(item=>item.status==='success') && !copyRecoveryLocked)
+        copyQueuePaused=false;
+      diagnosticLog('INFO','queue.terminal_records_cleared',{
+        count:targets.length,remaining:copyJobs.length});
     } catch(error) {
       if(previous) {
         // Restore only removed records; other jobs may have progressed or been cancelled.
@@ -3450,7 +3475,8 @@
     const dismiss=element('button','ufs-task-center-close ufs-task-center-icon');
     dismiss.type='button';
     dismiss.dataset.taskFocus='close';
-    dismiss.dataset.tooltip='收起面板，保留全部任务';
+    // The close control is self-explanatory. Do not open a tooltip when the
+    // panel auto-focuses this button.
     dismiss.setAttribute('aria-label','关闭任务中心');
     dismiss.append(icon('close'));
     dismiss.addEventListener('click',()=>closeCopyTaskCenter(true));
@@ -3478,12 +3504,13 @@
       main.append(info,statusWrap);
       main.addEventListener('click',()=>{closeCopyTaskCenter();job.reopen();});
       line.append(main);
-      if(job.status==='success') {
+      if(job.status==='success' || isRemovableFailedCopyJob(job)) {
         const remove=element('button','ufs-task-center-icon ufs-task-center-dismiss-record');
         remove.type='button';
         remove.dataset.taskFocus='remove-'+job.id;
-        remove.dataset.tooltip='移除记录，保留复制文件';
-        remove.setAttribute('aria-label','移除记录：'+job.name);
+        remove.dataset.tooltip=job.status==='failed'?
+          '移除未提交的失败记录，不会执行文件操作':'移除记录，保留复制文件';
+        remove.setAttribute('aria-label',(job.status==='failed'?'移除失败记录：':'移除记录：')+job.name);
         remove.append(icon('trash'));
         remove.addEventListener('click',()=>void clearCompletedCopyJobs(job));
         line.append(remove);
