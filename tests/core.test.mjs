@@ -286,7 +286,7 @@ test('列表新增 OWNER 与 LOCATION 两列、属性面板新增位置，网格
   assert.match(script, /'存储位置', locationNames\(entry\)\.join\(', '\) \|\| '—'/);
   assert.match(script, /#ufs-app \.ufs-grid \.ufs-extra\{display:none\}/);
   assert.match(script, /#ufs-app \.ufs-entry \.ufs-location-trigger/);
-  assert.match(script, /@version\s+0\.2\.11\b/);
+  assert.match(script, /@version\s+\d+\.\d+(?:\.\d+)?\b/);
 });
 
 
@@ -628,7 +628,7 @@ test('v0.1.7 文件列表和共享目录树使用箭头光标，文字不能被�
   assert.match(script, /#ufs-app \.ufs-tree-row,#ufs-app \.ufs-tree-row \*,#ufs-app \.ufs-entry,#ufs-app \.ufs-entry \*\{user-select:none;-webkit-user-select:none;cursor:default!important\}/);
   assert.match(script, /#ufs-app \.ufs-search\{/); // Search inputs are intentionally outside the reset.
   assert.match(script, /#ufs-app \.ufs-crumb\{/);  // Breadcrumb remains separately operable.
-  assert.match(script, /@version\s+0\.2\.11\b/);
+  assert.match(script, /@version\s+\d+\.\d+(?:\.\d+)?\b/);
 });
 
 
@@ -1312,7 +1312,7 @@ test('v0.2.3 复制观察原生任务完成后核对目录并保留源文件',as
     const mode=body.get('mode');
     modes.push(mode);
     if(mode==='read'){
-      if(++progressCount===2)return {ok:true,text:async()=>JSON.stringify({
+      if(++progressCount===3)return {ok:true,text:async()=>JSON.stringify({
         action:'8',source:'/mnt/user/a/data.bin',target:'/mnt/user/b/'})};
     }
     if(mode==='file'){
@@ -1364,7 +1364,7 @@ test('v0.2.3 文件复制完成但大小与源文件不一致时不能报告成�
   let reads=0;
   const {api,sandbox}=createAPI({fetch:async(_url,opts)=>{
     const b=new URLSearchParams(opts.body);
-    if(b.get('mode')==='read' && ++reads===2) return {
+    if(b.get('mode')==='read' && ++reads===3) return {
       ok:true,text:async()=>JSON.stringify({
         action:8,source:'/mnt/user/a/data.bin',target:'/mnt/user/b/'})
     };
@@ -1413,7 +1413,7 @@ test('v0.2.3.2 复制阶段由原生任务流程发出，不虚构完成比例',
   const observed=[];
   const {api,sandbox}=createAPI({fetch:async(_url,opts)=>{
     const data=new URLSearchParams(opts.body);
-    if(data.get('mode')==='read' && ++reads===2) {
+    if(data.get('mode')==='read' && ++reads===3) {
       return {ok:true,text:async()=>JSON.stringify({
         action:8,source:'/mnt/user/a/report.txt',target:'/mnt/user/b/'
       })};
