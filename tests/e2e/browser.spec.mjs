@@ -3447,6 +3447,7 @@ test('v0.2.13.4 同名文件夹移动直接调用原生 action 4 合并，不跳
   assert.equal(submits[0].exist,'','空 exist 由原生 Control.php 解释为忽略同名文件');
   assert.equal(moved.length,1);
   assert.match(await dialog.innerText(),/移动完成|文件夹已合并/);
+  await dialog.getByRole('button',{name:'完成'}).click();
   await page.locator('.ufs-diagnostic-button').click();
   const exported=page.waitForEvent('download');
   await page.getByRole('dialog',{name:'File Station 诊断中心'})
