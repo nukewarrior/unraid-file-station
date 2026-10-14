@@ -3637,7 +3637,10 @@ test('v0.2.11.6 移动完成诊断提供可归因的分段耗时，不重复提�
   await center.getByRole('button',{name:'导出 JSON'}).click();
   const file=await pending;
   const report=JSON.parse(readFileSync(await file.path(),'utf8'));
-  assert.equal(report.version,'0.2.11.8');
+  const currentVersion=readFileSync(new URL('../../src/unraid-file-station.user.js',import.meta.url),'utf8')
+    .match(/^\\/\\/ @version\\s+(\\S+)/m)?.[1];
+  assert.ok(currentVersion,'诊断回归应读取最新 UserScript 版本');
+  assert.equal(report.version,currentVersion);
   const moves=report.events.filter(e=>e.code==='move.verified');
   assert.equal(moves.length,1);
   const details=moves[0].details;
