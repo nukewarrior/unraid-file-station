@@ -2757,7 +2757,7 @@ test('v0.2.13.3 同名选项在复制与移动窗口中统一呈现并保留原�
     assert.equal(plan.conflictPolicy,conflictPolicy);
   }
   assert.doesNotMatch(script,/if\(isMove\)policy\.hidden=true/);
-  assert.match(script,/const hasMoveConflict=isMove && plans\.some/);
+  assert.ok(script.includes('const hasMoveConflict=isMove && topLevelExistingCount>0'));
   assert.match(script,/const batchMoveMode=isMove && !hasMoveConflict/);
   assert.match(script,/move\.skipped_conflict/);
   assert.match(script,/移动同名文件夹|同名文件夹会合并/);
