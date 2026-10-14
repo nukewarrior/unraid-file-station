@@ -376,15 +376,27 @@ test('列宽边界、安全读取历史值、默认宽度与列布局统一', ()
   assert.match(script, /localStorage\.removeItem\(STORE \+ 'columns'\)/);
 });
 
-test('深路径折叠中间目录但保留每层导航能力', () => {
+test('面包屑按可用宽度折叠而非按路径层数折叠，保留所有目录跳转路径', () => {
   const { api } = createAPI();
   const paths = ['/mnt/user','/mnt/user/a','/mnt/user/a/b','/mnt/user/a/b/c','/mnt/user/a/b/c/d'];
-  const shortened = api.breadcrumbDisplayPaths(paths);
-  assert.deepEqual([...shortened.visible], ['/mnt/user',null,'/mnt/user/a/b/c','/mnt/user/a/b/c/d']);
-  assert.deepEqual([...shortened.hidden], ['/mnt/user/a','/mnt/user/a/b']);
-  assert.equal(api.breadcrumbDisplayPaths(paths.slice(0,3)).hidden.length, 0);
+  const widths = new Map(paths.map((path,index)=>[path,[90,110,100,80,120][index]]));
+  const measure = (visible) => 20 + Math.max(0,visible.length-1)*12 +
+    visible.reduce((total,path)=>total+(path===null ? 22 : widths.get(path)),0);
+  assert.deepEqual([...api.breadcrumbDisplayPaths(paths,1000,measure).visible],paths,
+    '即使超过四层，只要测量后放得下就完整显示');
+  const folded = api.breadcrumbDisplayPaths(paths,390,measure);
+  assert.deepEqual([...folded.visible],['/mnt/user',null,'/mnt/user/a/b/c','/mnt/user/a/b/c/d']);
+  assert.deepEqual([...folded.hidden],['/mnt/user/a','/mnt/user/a/b']);
+  const smallest = api.breadcrumbDisplayPaths(paths,290,measure);
+  assert.deepEqual([...smallest.visible],['/mnt/user',null,'/mnt/user/a/b/c/d']);
+  assert.deepEqual([...smallest.hidden],paths.slice(1,-1));
+  assert.equal(api.breadcrumbDisplayPaths(paths.slice(0,2),30,measure).hidden.length,0,
+    '根目录和当前目录不折叠为省略号，由 CSS 处理超长文件夹名');
+  assert.equal(api.breadcrumbDisplayPaths(paths.slice(0,3)).hidden.length,0);
   assert.match(script, /flex:1 1 auto;width:auto;min-width:0;max-width:none;height:30px/);
+  assert.match(script, /new ResizeObserver\(scheduleBreadcrumbLayout\)/);
   assert.match(script, /ufs-crumb-more/);
+  assert.match(script, /ufs-crumb-label\{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis/);
 });
 
 test('非 Unraid 页面不执行目录读取或插入 UI', () => {
