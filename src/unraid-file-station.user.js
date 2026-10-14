@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.11.8
+// @version      0.2.12
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -424,6 +424,20 @@
   async function readNativeActive() {
     return parseNativeActive(await postNativeControl({ mode: 'read' }));
   }
+  async function ensureNativeSlotFreeAfterIntent(operation) {
+    // The Unraid global active-task slot has no atomic reservation API.
+    // Check once more after the durable checkpoint and before native POST.
+    let active;
+    try { active=await readNativeActive(); }
+    catch(error) {
+      diagnosticLog('WARN','native.pre_submit_read_failed',{operation,message:error?.message});
+      throw new Error('保存提交意图后无法再次确认原生任务状态；本次请求未发送，持久化记录结果不确定。详情：'+String(error?.message||error));
+    }
+    if(!active)return;
+    diagnosticLog('WARN','native.pre_submit_busy',{operation,activeAction:Number(active.action),
+      taskId:activeCopySession?.taskId});
+    throw new Error('保存提交意图后发现其他 Unraid 原生任务占用；本次请求未发送，持久化记录结果不确定，请先核实队列');
+  }
   function matchesCreateTask(active, plan) {
     return active && Number(active.action) === 0 &&
       active.source === plan.source && active.target === plan.name;
@@ -772,6 +786,7 @@
       nativeCsrfToken();
       // Durable intent must be committed before any native file action.
       if(beforeSubmit) await beforeSubmit();
+      await ensureNativeSlotFreeAfterIntent('copy');
       diagnosticLog('INFO','copy.submission_intent',{taskId:activeCopySession?.taskId,source:plan.source});
       let submitted = false;
       let eventError = '';
@@ -1100,6 +1115,7 @@
       if(await readNativeActive())throw new Error('Unraid 原生任务正在运行');
       nativeCsrfToken();
       if(beforeSubmit)await beforeSubmit(); // Durable intent BEFORE native POST.
+      await ensureNativeSlotFreeAfterIntent('move');
       diagnosticLog('INFO','move.intent',{source:plan.source,target:plan.target});
       let submitted=false,seen=false,done=false,remoteError='';
       const stop=observeNativeProgress(data=>{
@@ -1186,6 +1202,7 @@
       if(await readNativeActive())throw new Error('Unraid 原生文件任务正在运行');
       nativeCsrfToken();
       if(beforeSubmit)await beforeSubmit();
+      await ensureNativeSlotFreeAfterIntent('delete');
       diagnosticLog('WARN','delete.intent',{source:plan.source,folder:plan.folder});
       let submitted=false,seen=false,done=false,remoteError='';
       const unwatch=observeNativeProgress(data=>{
@@ -1762,7 +1779,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.11.8';
+  const DIAGNOSTIC_VERSION='0.2.12';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;

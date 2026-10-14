@@ -2508,6 +2508,7 @@ function movePollingHarness({activeReads=0,done=true,mismatch=false,moveFiles=tr
       }:null;
     },
     nativeCsrfToken:()=>{},
+    ensureNativeSlotFreeAfterIntent:async()=>{},
     observeNativeProgress:listener=>{subscriber=listener;return()=>{closed=true;};},
     nativeCopyProgressPayload:()=>null,
     parseRsyncProgress:()=>({}),stripNativeStatusHtml:x=>x,
@@ -2759,4 +2760,55 @@ test('v0.2.11.8 混合批次恢复签名和持久化模式校验严格配对',()
   assert.equal(h.context.savedMoveBatchPlans({...record,batchMode:'native-move-files'}),null);
   assert.equal(h.context.savedMoveBatchPlans({...record,items:record.items.map(p=>({...p,folder:true}))}),null);
   assert.equal(h.context.savedMoveBatchPlans({...record,batchMode:'unknown'}),null);
+});
+
+test('v0.2.12 提交意图落盘后原生任务占用或读取失败：复制、移动、删除均零写入',async()=>{
+  const source='/mnt/user/TimeMachine/notes.txt',destination='/mnt/user/downloads';
+  const origin={path:source,name:'notes.txt',folder:false,size:2048,copyPathVerified:true};
+  const helperStart=script.indexOf('  async function ensureNativeSlotFreeAfterIntent(');
+  const helperEnd=script.indexOf('  function matchesCreateTask(',helperStart);
+  assert.ok(helperStart>=0 && helperEnd>helperStart);
+  const helper=script.slice(helperStart,helperEnd);
+  const cases=[
+    {op:'copy',fn:'copyNativeEntry',from:'  async function copyNativeEntry(',
+      to:'  function matchesMoveTask(',plan:{type:'copy',source,folder:false,
+        destinationDir:destination,target:destination+'/notes.txt',conflictPolicy:'fail',previewOnly:true}},
+    {op:'move',fn:'moveNativeEntry',from:'  async function moveNativeEntry(',
+      to:'  function matchesDeleteTask(',plan:{type:'move',source,folder:false,
+        destinationDir:destination,target:destination+'/notes.txt',conflictPolicy:'fail'}},
+    {op:'delete',fn:'deleteNativeEntry',from:'  async function deleteNativeEntry(',
+      to:'  async function requestCancelNativeCopy(',plan:{type:'delete',source,
+        folder:false,target:'',conflictPolicy:'fail'}}
+  ];
+  for(const item of cases)for(const failedRead of [false,true]){
+    const begin=script.indexOf(item.from),end=script.indexOf(item.to,begin);
+    assert.ok(begin>=0 && end>begin);
+    let readCount=0,postCount=0,intentCount=0;
+    const events=[];
+    const ctx={
+      COPY_ENABLED:true,MOVE_ENABLED:true,DELETE_ENABLED:true,isDemo:false,
+      activeCopySession:{taskId:'pre-post-check'},
+      withNativeWriteLock:async fn=>fn(),
+      safeCopyPath:()=>true,safeWritePath:()=>true,copyDestinationAllowed:()=>true,
+      fileName:path=>path.slice(path.lastIndexOf('/')+1),
+      parentPath:path=>path.slice(0,path.lastIndexOf('/')),
+      listDirectory:async path=>path==='/mnt/user/TimeMachine'?[origin]:[],
+      readNativeActive:async()=>{
+        readCount++;
+        if(readCount===1)return null;
+        if(failedRead)throw new Error('模拟原生状态读取失败');
+        return {action:8,source:'/mnt/user/other/a.txt',target:'/mnt/user/other/'};
+      },
+      nativeCsrfToken:()=>{},
+      diagnosticLog:(level,code)=>events.push(code),
+      postNativeControl:async()=>{postCount++;return '';},
+    };
+    vm.runInNewContext(helper+'\n'+script.slice(begin,end),ctx);
+    await assert.rejects(ctx[item.fn](item.plan,()=>{},{},async()=>{intentCount++;}),
+      /保存提交意图后.*结果不确定/);
+    assert.equal(readCount,2,item.op+' 应在意图落盘后再读一次');
+    assert.equal(intentCount,1,item.op+' 意图应先保存');
+    assert.equal(postCount,0,item.op+' 不得发送原生写入');
+    assert.ok(events.includes(failedRead?'native.pre_submit_read_failed':'native.pre_submit_busy'));
+  }
 });
