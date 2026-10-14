@@ -125,7 +125,10 @@
   }
 
   function startTopEntry() {
-    if (isDemo || topEntryStarted) return;
+    // Real Unraid pages render #menu server-side. Leave all other websites
+    // untouched rather than installing a document-wide mutation observer.
+    if (isDemo || topEntryStarted || typeof document.querySelector !== 'function' ||
+        !document.querySelector('#menu') || typeof MutationObserver !== 'function') return;
     topEntryStarted = true;
     mountTopEntry();
     // Some WebGUI themes replace navigation nodes after scripts start.
@@ -1865,7 +1868,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.11.8';
+  const DIAGNOSTIC_VERSION='0.2.11.9';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
