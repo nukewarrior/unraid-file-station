@@ -3621,15 +3621,17 @@
       const uncertain=copyJobs.filter(job=>job.recovered&&job.status==='uncertain').length;
       const waiting=copyJobs.filter(job=>job.recovered&&job.status==='queued').length;
       const monitoring=copyJobs.some(job=>job.recovered&&(job.recoveryMonitoring||job.recoveryVerifying));
-      panel.append(element('div','',monitoring?
-        '正在恢复原生任务或自动核验文件内容；后续队列保持暂停。':
+        const verifying=copyJobs.some(job=>job.recovered&&job.recoveryVerifying);
+      panel.append(element('div','',monitoring?(verifying?
+        '正在自动核验源文件与目标文件内容；后续队列保持暂停。':
+        '已重新连接 Unraid 正在复制的原生任务；后续队列仍暂停，原生任务结束并核实后才能手动恢复。'):
         uncertain?'上次复制有 '+uncertain+' 项待核实。请打开任务详情，核实后选择跳过；不能自动重试。':
         '检测到上次保存的 '+waiting+' 项待恢复任务，当前队列已暂停。'));
       const later=element('button','','稍后处理');
       later.type='button';later.dataset.taskFocus='later';
       later.addEventListener('click',()=>closeCopyTaskCenter(true));
       panel.append(later);
-      const confirm=element('button','',monitoring?'等待核验完成':
+      const confirm=element('button','',monitoring?(verifying?'等待核验完成':'等待当前复制完成'):
         uncertain?'请先核实任务':'确认恢复队列');
       confirm.type='button';confirm.disabled=monitoring || uncertain>0 || waiting===0;
       confirm.dataset.taskFocus='recover';
