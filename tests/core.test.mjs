@@ -2691,11 +2691,11 @@ test('v0.2.13.5 冲突诊断明确标注忽略、覆盖、目录合并和顶层�
 });
 
 test('v0.2.13.5 批量冲突审计描述当前事实，不用顶层匹配冒充内部冲突数',()=>{
-  assert.match(script,/move\\.batch_preflight/);
+  assert.ok(script.includes("'move.batch_preflight'"));
   assert.match(script,/sameNameFolderCount:topLevelMatches/);
-  assert.match(script,/reason:hasMoveConflict\\?'top-level-name-conflict'/);
+  assert.ok(script.includes("reason:hasMoveConflict?'top-level-name-conflict'"));
   assert.match(script,/nestedConflictInspection:'not-performed'/);
-  assert.match(script,/copy\\.skipped_conflict/);
+  assert.ok(script.includes("'copy.skipped_conflict'"));
   assert.match(script,/targetExistingCount:topLevelExistingCount/);
 });
 test('v0.2.13.4 移动同名策略：普通文件忽略或覆盖，文件夹合并与剩余源目录提示',async()=>{
