@@ -2483,6 +2483,24 @@
   const copyOwnerId='ufs_'+Date.now().toString(36)+'_'+
     Math.random().toString(36).slice(2,16);
   const COPY_LEASE_TTL=30000;
+  // taskId identifies one persisted record. An identical unfinished operation
+  // is a collision, whereas completed historical records remain separate.
+  function copyTaskSignature(record) {
+    if(!record || !Array.isArray(record.items))return '';
+    const items=record.items.map(item=>JSON.stringify([item.source,Boolean(item.folder)])).sort();
+    return JSON.stringify([record.operation||'copy',record.destination,
+      record.conflictPolicy,items]);
+  }
+  function findUnfinishedDuplicate(record,jobs=copyJobs) {
+    const signature=copyTaskSignature(record);
+    if(!signature)return null;
+    return jobs.find(job=>job.record && (
+      ['queued','running','uncertain','stopped'].includes(job.status) ||
+      job.record.items.some(item=>
+        ['intent-saved','unknown'].includes(item.submission) &&
+        !['success','skipped','excluded'].includes(item.status))) &&
+      copyTaskSignature(job.record)===signature) || null;
+  }
   function copySavedSnapshot() {
     return validateCopyQueueSnapshot({schema:COPY_QUEUE_SCHEMA,savedAt:Date.now(),
       tasks:copyJobs.filter(job=>job.record).map(job=>job.record)});
@@ -2685,6 +2703,9 @@
               execute:()=>executeRecoveredCopyJob(job)
             };
             copyJobs.push(job);
+            diagnosticLog('INFO','queue.restored_task',{
+              taskId:job.taskId,operation:record.operation||'copy',
+              items:record.items.length,status:job.status,originalStatus:record.status});
           }
           updateCopyTaskButton();
           // Reconnect only the already-running native rsync. No file writes,
@@ -3191,6 +3212,12 @@
       diagnosticLog('WARN','queue.snapshot_conflict',{operation:job.record?.operation||'copy'});
       throw new Error('队列记录已由其他页面实例更新，请刷新页面并核实任务，禁止覆盖旧记录');
     }
+    const duplicate=findUnfinishedDuplicate(job.record);
+    if(duplicate){
+      diagnosticLog('WARN','queue.duplicate_blocked',{
+        existingTaskId:duplicate.taskId,newTaskId:job.taskId});
+      throw new Error('相同来源、目标与操作的任务仍在队列中，请先处理已有任务，避免重复执行');
+    }
     job.id=++copyJobCounter;
     job.status='queued';
     job.phase='queued';
@@ -3395,6 +3422,7 @@
     const body=element('div','ufs-task-center-body');
     for(const job of copyJobs) {
       const row=element('div','ufs-task-center-row');
+      row.dataset.taskId=job.taskId||'';
       row.dataset.status=job.status;
       row.dataset.phase=job.phase||'';
       const line=element('div','ufs-task-center-line');
@@ -3402,12 +3430,13 @@
       main.type='button';
       main.dataset.taskFocus='open-'+job.id;
       const info=element('span','ufs-task-center-name',job.name);
-      info.title=job.name;
+      info.title=job.name+' · 任务 '+String(job.taskId||job.id).slice(-8);
       const statusWrap=element('span','ufs-task-center-state');
       if(job.status==='running') statusWrap.append(copySpinner());
       else statusWrap.append(icon(job.status==='queued'?'clock-3':
         job.status==='success'?'check-circle':'alert-circle'));
-      statusWrap.append(element('span','ufs-task-center-status',copyJobStatusLabel(job)));
+      statusWrap.append(element('span','ufs-task-center-status',
+        job.status==='success'?'历史 · 已完成':copyJobStatusLabel(job)));
       main.append(info,statusWrap);
       main.addEventListener('click',()=>{closeCopyTaskCenter();job.reopen();});
       line.append(main);
@@ -7462,7 +7491,7 @@
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
     window.__UFS_TEST_API__ = { diagnosticSanitize, diagnosticScrub, diagnosticLog,
     diagnosticReadAll, diagnosticSnapshot, diagnosticMarkIssue, diagnosticSetVerbose,
-    diagnosticIsVerbose, normalizeSavedCopyItem, normalizeSavedCopyTask, validateCopyQueueSnapshot, copyRecoveryAssessment, createCopyQueueStore, currentCopySpeed, copyJobPhaseLabel, copyJobStatusLabel, copyJobMeta, findBatchCopyConflicts, findBatchCopyTypeConflicts, batchCopyOverallProgress, safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, COPY_ENABLED, MOVE_ENABLED, DELETE_ENABLED, matchesMoveTask, matchesDeleteTask, deleteNativeEntry, moveNativeEntry, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, nativeCopyTarget, matchesCopyTask, copyDestinationAllowed, copyNativeEntry, decodeRsyncFilename, parseRsyncProgress, shortenCopyName, requestCancelNativeCopy, takeOverNativeFileMonitor, availableHeight, visibleEntries, sortedCopyFolders, safeCopyName, safeCopyPath, copyBlockedReason, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
+    diagnosticIsVerbose, normalizeSavedCopyItem, normalizeSavedCopyTask, validateCopyQueueSnapshot, copyRecoveryAssessment, createCopyQueueStore, currentCopySpeed, copyJobPhaseLabel, copyJobStatusLabel, copyJobMeta, findBatchCopyConflicts, findBatchCopyTypeConflicts, batchCopyOverallProgress, safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, COPY_ENABLED, MOVE_ENABLED, DELETE_ENABLED, matchesMoveTask, matchesDeleteTask, deleteNativeEntry, moveNativeEntry, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, nativeCopyTarget, matchesCopyTask, copyDestinationAllowed, copyNativeEntry, copyTaskSignature, findUnfinishedDuplicate, decodeRsyncFilename, parseRsyncProgress, shortenCopyName, requestCancelNativeCopy, takeOverNativeFileMonitor, availableHeight, visibleEntries, sortedCopyFolders, safeCopyName, safeCopyPath, copyBlockedReason, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();
