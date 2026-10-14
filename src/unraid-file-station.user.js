@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.12.4
-// @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
-// @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
+// @version      0.2.13.0
+// @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/v0.2.13-recovery-verification/src/unraid-file-station.user.js
+// @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/v0.2.13-recovery-verification/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -733,6 +733,68 @@
   // entry (including a folder's name), not only the folder's contents.
   // Copy target is the existing destination directory WITH a trailing slash.
   function nativeCopyTarget(plan) { return plan.destinationDir + '/'; }
+
+  // Read-only recovery verification. No file writes, copies or native restarts.
+  const RECOVERY_AUTO_CHECK_BYTES=1024*1024*1024;
+  async function compareRecoveryFileStreams(source,target,expectedBytes,onProgress=()=>{}) {
+    if(!safeCopyPath(source) || !safeCopyPath(target) ||
+       !Number.isSafeInteger(expectedBytes) || expectedBytes<0)
+      throw new Error('不安全的恢复核验路径或文件大小');
+    // Treat redirect-to-login, HTML responses and changed lengths as failures.
+    const responses=await Promise.all([source,target].map(path=>fetch(encodeFileUrl(path),{
+      method:'GET',credentials:'same-origin',cache:'no-store',signal:lifecycle.signal
+    })));
+    const streams=[];
+    try {
+      for(const response of responses) {
+        if(response.redirected || !response.ok || response.status!==200)
+          throw new Error('文件下载接口未提供可读取的数据流');
+        if(/text\/html/i.test(response.headers.get('content-type')||''))
+          throw new Error('文件读取返回了网页而不是文件内容');
+        const encoding=response.headers.get('content-encoding');
+        if(encoding && encoding.toLowerCase()!=='identity')
+          throw new Error('文件下载启用了内容编码，无法逐字节核对');
+        const length=response.headers.get('content-length');
+        if(length!==null && (!/^\d+$/.test(length)||Number(length)!==expectedBytes))
+          throw new Error('文件下载长度与目录记录不一致');
+        if(!response.body || typeof response.body.getReader!=='function')
+          throw new Error('当前浏览器或文件接口不支持流式读取');
+        streams.push({reader:response.body.getReader(),bytes:new Uint8Array(0),offset:0,done:false});
+      }
+      let checked=0,lastReport=0;
+      async function refill(stream) {
+        while(!stream.done && stream.offset>=stream.bytes.length) {
+          const next=await stream.reader.read();
+          if(next.done){stream.done=true;break;}
+          if(next.value?.length){stream.bytes=next.value;stream.offset=0;}
+        }
+      }
+      while(true) {
+        await Promise.all(streams.map(refill));
+        if(streams.some(stream=>stream.done)) {
+          if(!streams.every(stream=>stream.done)||checked!==expectedBytes)
+            throw new Error('源文件与目标文件长度不一致');
+          onProgress(checked,expectedBytes);
+          return true;
+        }
+        const count=Math.min(...streams.map(stream=>stream.bytes.length-stream.offset));
+        if(checked+count>expectedBytes)throw new Error('读取量超过预期文件大小');
+        const [a,b]=streams;
+        for(let i=0;i<count;i++)if(a.bytes[a.offset+i]!==b.bytes[b.offset+i]) {
+          onProgress(checked+i,expectedBytes);
+          return false;
+        }
+        for(const stream of streams)stream.offset+=count;
+        checked+=count;
+        if(Date.now()-lastReport>400){lastReport=Date.now();onProgress(checked,expectedBytes);}
+      }
+    } finally {
+      await Promise.allSettled(streams.map(stream=>stream.reader.cancel()));
+      await Promise.allSettled(responses.map(async response=>{
+        try {if(response.body&&!response.body.locked)await response.body.cancel();}catch(_){}
+      }));
+    }
+  }
   function matchesCopyTask(active, plan) {
     return active && Number(active.action) === (plan.folder ? 3 : 8) &&
       active.source === plan.source && active.target === nativeCopyTarget(plan);
@@ -1788,7 +1850,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.12.4';
+  const DIAGNOSTIC_VERSION='0.2.13.0';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -7441,7 +7503,7 @@
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
     window.__UFS_TEST_API__ = { diagnosticSanitize, diagnosticScrub, diagnosticLog,
     diagnosticReadAll, diagnosticSnapshot, diagnosticMarkIssue, diagnosticSetVerbose,
-    diagnosticIsVerbose, normalizeSavedCopyItem, normalizeSavedCopyTask, validateCopyQueueSnapshot, copyRecoveryAssessment, createCopyQueueStore, currentCopySpeed, copyJobPhaseLabel, copyJobStatusLabel, copyJobMeta, findBatchCopyConflicts, findBatchCopyTypeConflicts, batchCopyOverallProgress, safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, COPY_ENABLED, MOVE_ENABLED, DELETE_ENABLED, matchesMoveTask, matchesDeleteTask, deleteNativeEntry, moveNativeEntry, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, nativeCopyTarget, matchesCopyTask, copyDestinationAllowed, copyNativeEntry, decodeRsyncFilename, parseRsyncProgress, shortenCopyName, requestCancelNativeCopy, takeOverNativeFileMonitor, availableHeight, visibleEntries, sortedCopyFolders, safeCopyName, safeCopyPath, copyBlockedReason, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
+    diagnosticIsVerbose, normalizeSavedCopyItem, normalizeSavedCopyTask, validateCopyQueueSnapshot, copyRecoveryAssessment, createCopyQueueStore, currentCopySpeed, copyJobPhaseLabel, copyJobStatusLabel, copyJobMeta, findBatchCopyConflicts, findBatchCopyTypeConflicts, batchCopyOverallProgress, safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, COPY_ENABLED, MOVE_ENABLED, DELETE_ENABLED, matchesMoveTask, matchesDeleteTask, deleteNativeEntry, moveNativeEntry, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, nativeCopyTarget, matchesCopyTask, copyDestinationAllowed, copyNativeEntry, compareRecoveryFileStreams, decodeRsyncFilename, parseRsyncProgress, shortenCopyName, requestCancelNativeCopy, takeOverNativeFileMonitor, availableHeight, visibleEntries, sortedCopyFolders, safeCopyName, safeCopyPath, copyBlockedReason, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();
