@@ -2864,3 +2864,60 @@ test('v0.2.12 提交意图落盘后原生任务占用或读取失败：复制、
     assert.ok(events.includes(failedRead?'native.pre_submit_read_failed':'native.pre_submit_busy'));
   }
 });
+
+
+test('v0.2.13 只读流式核验支持不同分块大小，内容完全一致才成功',async()=>{
+  const chunksFor=(values,chunkSizes)=>{
+    let offset=0;
+    return new ReadableStream({pull(controller){
+      if(offset>=values.length){controller.close();return;}
+      const count=chunkSizes.shift()||values.length;
+      controller.enqueue(Uint8Array.from(values.slice(offset,offset+count)));
+      offset+=count;
+    }});
+  };
+  const content=[0,1,2,3,4,255,129,0,99,42];
+  const calls=[];
+  const {api}=createAPI({fetch:async(url,options)=>{
+    calls.push({url,method:options.method});
+    const first=url.includes('source');
+    const bytes=first?[1,3,2,4]:[2,1,5,2];
+    return new Response(chunksFor(content,bytes),{
+      headers:{'content-type':'application/octet-stream','content-length':String(content.length)}
+    });
+  }});
+  const progress=[];
+  assert.equal(await api.compareRecoveryFileStreams(
+    '/mnt/user/verify/source.bin','/mnt/user/verify/target.bin',content.length,
+    (done,total)=>progress.push([done,total])),true);
+  assert.equal(calls.length,2);
+  assert.ok(calls.every(call=>call.method==='GET'));
+  assert.deepEqual(progress.at(-1),[10,10]);
+});
+
+test('v0.2.13 相同文件大小但不同内容不得误认完整',async()=>{
+  const {api}=createAPI({fetch:async url=>new Response(
+    Uint8Array.from(url.includes('source')?[1,2,3,4]:[1,2,9,4]),{
+      headers:{'content-type':'application/octet-stream','content-length':'4'}
+    })
+  });
+  assert.equal(await api.compareRecoveryFileStreams(
+    '/mnt/user/verify/source.bin','/mnt/user/verify/target.bin',4),false);
+});
+
+test('v0.2.13 长度错误、登录页面、禁区路径必须拒绝自动核验',async()=>{
+  let calls=0;
+  const {api}=createAPI({fetch:async url=>{
+    calls++;
+    if(url.includes('source'))return new Response('<html>登录</html>',{
+      headers:{'content-type':'text/html'}});
+    return new Response(new Uint8Array([1,2,3,4]),{
+      headers:{'content-length':'4','content-type':'application/octet-stream'}
+    });
+  }});
+  await assert.rejects(api.compareRecoveryFileStreams(
+    '/mnt/user/verify/source.bin','/mnt/user/verify/target.bin',4),/网页/);
+  await assert.rejects(api.compareRecoveryFileStreams(
+    '/mnt/disk1/secret.bin','/mnt/user/verify/target.bin',4),/不安全/);
+  assert.equal(calls,2);
+});
