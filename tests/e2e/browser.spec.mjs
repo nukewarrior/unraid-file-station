@@ -70,7 +70,7 @@ function responseFor(path, extra = [], list = contents[path] || []) {
 const html = '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'+
   '<style>body{margin:0;font-family:Arial,sans-serif}#header{height:75px;background:#1e1e1e;color:white;padding:8px}'+
   '#menu{background:#1e1e1e;height:52px}.nav-tile.right{height:100%;display:flex;justify-content:flex-end;align-items:center}'+
-  '.nav-item{position:relative;display:flex;align-items:center;height:48px;padding:0 8px}.nav-item a{color:white;text-decoration:none}.nav-item a span{display:none}'+
+  '.nav-item{position:relative;display:flex;align-items:center;height:48px;padding:0 8px}.nav-item a{color:white;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;min-width:32px;min-height:40px}.nav-item a span{display:none}'+
   '.nav-item::after{content:"";position:absolute;bottom:0;left:25%;width:50%;height:3px;border-radius:3px;background:transparent}'+
   '#footer{position:fixed;bottom:0;height:24px;background:#ddd;width:100%}</style>'+
   '</head><body><div id="header">UNRAID SHARES</div>'+
