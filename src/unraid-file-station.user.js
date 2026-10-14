@@ -6205,6 +6205,7 @@
         visualPhase==='verifying'?2:1);
       const done=batch.rows.filter(row=>['success','skipped'].includes(row.status)).length;
       const skipped=batch.rows.filter(row=>row.status==='skipped').length;
+      const partial=batch.rows.filter(row=>row.moveOutcome==='merged-partial').length;
       const waiting=batch.rows.filter(row=>row.status==='pending').length;
       const current=batch.rows[batch.currentIndex];
       const result=batchCopyOverallProgress(batch.rows,batch.currentIndex,isMove?null:batch.currentPercent);
@@ -6215,7 +6216,8 @@
       batchTrack.setAttribute('aria-valuenow',String(batch.percent));
       batchDone.textContent='已完成 '+done+' / '+batch.rows.length+' 项';
       batchBasis.textContent=batch.mode==='bytes'?'按文件大小计算':'按项目计算 · 非字节进度';
-      batchStatsDone.textContent='成功 '+(done-skipped)+(skipped?' · 忽略 '+skipped:'');
+      batchStatsDone.textContent='成功 '+(done-skipped-partial)+
+        (partial?' · 部分移动 '+partial:'')+(skipped?' · 忽略 '+skipped:'');
       batchStatsPending.textContent=batch.finished
         ?'未执行 '+waiting
         :'等待 '+waiting;
@@ -6226,14 +6228,17 @@
         batchCurrentType.textContent=batch.phase==='success'?'已完成':'需核实';
         batchCurrentFile.textContent='';
         batchCurrentName.textContent=batch.phase==='success'?
-          '已处理 '+done+' 项（忽略 '+skipped+' 项）':batch.phase==='stopped'?
+          '已处理 '+done+' 项（忽略 '+skipped+' 项'+
+            (partial?'，部分移动 '+partial+' 项':'')+'）':batch.phase==='stopped'?
           '队列已停止，后续任务未执行':
           (isMove?'移动任务已暂停，需检查失败或待核实项目':'复制任务已暂停，需检查失败或待核实项目');
-        batchCurrentInfo.textContent='成功 '+(done-skipped)+' · 忽略 '+skipped+' · 问题 '+problems+' · 未执行 '+waiting;
+        batchCurrentInfo.textContent='成功 '+(done-skipped-partial)+
+          ' · 部分移动 '+partial+' · 忽略 '+skipped+' · 问题 '+problems+' · 未执行 '+waiting;
         batchCurrentMetrics.hidden=true;
         batchCurrentInfo.title=batch.error||'';
         batchNote.textContent=batch.error || (batch.phase==='success'?
-          (batch.nativeGroup && copyJob?.record?.batchMode==='native-move-mixed'?
+          (partial?'同名文件夹已合并，源目录仍保留部分文件；请检查源目录剩余项目。':
+          batch.nativeGroup && copyJob?.record?.batchMode==='native-move-mixed'?
             '顶层移动结果已核对；文件夹内部内容并未递归校验，请在 NAS 上确认。':
             (isMove?'移动结果已核对。':'复制结果已核对。')):
           '请核实未完成项目，切勿直接重试。');
