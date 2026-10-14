@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.12
+// @version      0.2.12.1
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -1348,6 +1348,7 @@
     '#ufs-app .ufs-tab-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#ufs-app .ufs-tab-close{display:flex;align-items:center;border:0;background:transparent;color:var(--ufs-muted);height:19px;width:19px;padding:0;justify-content:center}#ufs-app .ufs-tab-close:hover{background:var(--ufs-hover)}',
     '#ufs-app .ufs-navigation{height:42px;min-height:42px;max-height:42px;width:100%;max-width:100%;margin:0;padding:0 11px;overflow:hidden;gap:5px;align-items:center;border-radius:0;background:var(--ufs-bg)}#ufs-app .ufs-navigation>.ufs-ico{flex:0 0 auto;min-height:0;height:30px}#ufs-app .ufs-address{display:flex;align-items:center;gap:2px;flex:1 1 auto;width:auto;min-width:0;max-width:none;height:30px;min-height:30px;max-height:30px;align-self:center;padding:0 10px;margin:0;border:1px solid var(--ufs-border);border-radius:4px;background:var(--ufs-bg);box-shadow:none;line-height:28px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;white-space:nowrap}#ufs-app .ufs-address::-webkit-scrollbar{display:none}',
     '#ufs-app .ufs-crumb{border:0;background:none;color:var(--ufs-muted);display:inline-flex;align-items:center;justify-content:flex-start;width:auto;min-width:0;max-width:none;min-height:0;height:auto;margin:0;padding:0 2px;white-space:nowrap;flex:0 0 auto}#ufs-app .ufs-crumb:hover{color:var(--ufs-accent)}#ufs-app .ufs-crumb:last-child{color:var(--ufs-text);font-weight:600}#ufs-app .ufs-search{height:29px;border:1px solid var(--ufs-border);background:var(--ufs-bg);color:var(--ufs-text);border-radius:4px;padding:4px 9px;width:150px;min-width:0;max-width:none}',
+    '#ufs-app .ufs-crumb:last-child{flex:0 1 auto;overflow:hidden}#ufs-app .ufs-crumb-label{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#ufs-app .ufs-address-measure>.ufs-crumb:last-child{flex:0 0 auto;overflow:visible}#ufs-app .ufs-address-measure .ufs-crumb-label{overflow:visible}',
     '#ufs-app .ufs-address>.ufs-svg{width:12px;height:12px;min-width:12px;flex:0 0 12px}',
     '#ufs-app .ufs-workspace{display:flex;flex:1;min-height:0;overflow:hidden}#ufs-app .ufs-sidebar{background:var(--ufs-panel);width:var(--ufs-sidebar-width);flex:0 0 var(--ufs-sidebar-width);min-width:0;overflow:auto;padding:8px 7px}#ufs-app .ufs-resizer{width:5px;flex:0 0 5px;background:var(--ufs-border);cursor:col-resize;touch-action:none;opacity:.7}#ufs-app .ufs-resizer:hover{background:var(--ufs-accent)}',
     '#ufs-app .ufs-tree-label{padding:7px 8px;color:var(--ufs-muted);font-size:12px;font-weight:600;letter-spacing:0}#ufs-app .ufs-tree-row{display:flex;align-items:center;gap:7px;width:100%;height:31px;min-height:31px;padding:0 7px;border:0;background:transparent;text-align:left;color:var(--ufs-text);border-radius:5px;min-width:0}',
@@ -4157,9 +4158,20 @@
     }
     appendNode(PREFIX, 0);
   }
-  function breadcrumbDisplayPaths(paths) {
-    if (paths.length <= 4) return { visible: paths, hidden: [] };
-    return { visible: [paths[0], null, ...paths.slice(-2)], hidden: paths.slice(1, -2) };
+  function breadcrumbDisplayPaths(paths, availableWidth = Infinity, measureWidth = () => 0) {
+    // Path depth alone never causes folding: show everything when it actually fits.
+    if (paths.length <= 2 || measureWidth(paths) <= availableWidth) {
+      return { visible: paths, hidden: [] };
+    }
+    // Fold the oldest middle directories first, keeping the current directory
+    // and as many nearest ancestors as the measured container can accommodate.
+    for (let count = 1; count <= paths.length - 2; count++) {
+      const visible = [paths[0], null, ...paths.slice(count + 1)];
+      if (measureWidth(visible) <= availableWidth || count === paths.length - 2) {
+        return { visible, hidden: paths.slice(1, count + 1) };
+      }
+    }
+    return { visible: paths, hidden: [] };
   }
   function showBreadcrumbMenu(trigger, hiddenPaths) {
     if (currentMenu && currentMenu._ufsTrigger === trigger) {
@@ -4188,37 +4200,83 @@
     currentMenu = menu;
     trigger.setAttribute('aria-expanded', 'true');
   }
-  function renderNavigation() {
+  function fillBreadcrumb(container, visible, hidden, interactive) {
+    container.replaceChildren();
+    visible.forEach((path, index) => {
+      if (index) container.append(icon('chevron-right', 'ufs-muted'));
+      if (path === null) {
+        const ellipsis = element('button', 'ufs-crumb ufs-crumb-more', '…');
+        ellipsis.type = 'button';
+        if (interactive) {
+          ellipsis.title = hidden.map((hiddenPath) => hiddenPath.split('/').pop()).join(' / ');
+          ellipsis.setAttribute('aria-label', '选择中间目录');
+          ellipsis.setAttribute('aria-haspopup', 'menu');
+          ellipsis.setAttribute('aria-expanded', 'false');
+          ellipsis.addEventListener('click', (event) => {
+            event.stopPropagation();
+            showBreadcrumbMenu(ellipsis, hidden);
+          });
+        }
+        container.append(ellipsis);
+      } else {
+        const crumb = element(path === PREFIX ? 'span' : 'button', 'ufs-crumb');
+        crumb.append(element('span', 'ufs-crumb-label',
+          path === PREFIX ? '共享文件夹' : path.split('/').pop()));
+        crumb.title = path;
+        if (path !== PREFIX) {
+          crumb.type = 'button';
+          if (interactive) crumb.addEventListener('click', () => navigate(path));
+        }
+        container.append(crumb);
+      }
+    });
+  }
+  function renderBreadcrumbs() {
+    if (!app || !app.isConnected) return;
     const address = $('.ufs-address', app);
-    address.replaceChildren();
+    if (!address) return;
     const parts = currentPath().split('/').filter(Boolean);
     const paths = [PREFIX];
     for (let i = 3; i <= parts.length; i++) paths.push('/' + parts.slice(0, i).join('/'));
-    const { visible, hidden } = breadcrumbDisplayPaths([...new Set(paths)]);
-    visible.forEach((path, index) => {
-      if (index) address.append(icon('chevron-right', 'ufs-muted'));
-      if (path === null) {
-        const ellipsis = element('button', 'ufs-crumb ufs-crumb-more', '…');
-        ellipsis.title = hidden.map((hiddenPath) => hiddenPath.split('/').pop()).join(' / ');
-        ellipsis.setAttribute('aria-label', '选择中间目录');
-        ellipsis.setAttribute('aria-haspopup', 'menu');
-        ellipsis.setAttribute('aria-expanded', 'false');
-        ellipsis.addEventListener('click', (event) => {
-          event.stopPropagation();
-          showBreadcrumbMenu(ellipsis, hidden);
-        });
-        address.append(ellipsis);
-      } else {
-        // The top group is a location label, not a clickable directory.
-        const crumb = element(path === PREFIX ? 'span' : 'button', 'ufs-crumb',
-          path === PREFIX ? '共享文件夹' : path.split('/').pop());
-        crumb.title = path;
-        if (path !== PREFIX) crumb.addEventListener('click', () => navigate(path));
-        address.append(crumb);
+    const uniquePaths = [...new Set(paths)];
+    const width = address.getBoundingClientRect().width;
+    let display = { visible: uniquePaths, hidden: [] };
+    if (width > 0 && uniquePaths.length > 2) {
+      // Measure real rendered buttons, separators, Chinese glyphs, gaps and
+      // padding in a natural-width hidden copy of the existing address bar.
+      const probe = address.cloneNode(false);
+      probe.classList.add('ufs-address-measure');
+      probe.removeAttribute('aria-label');
+      probe.setAttribute('aria-hidden', 'true');
+      probe.style.cssText = 'position:absolute;left:0;top:0;visibility:hidden;pointer-events:none;width:max-content;max-width:none;flex:0 0 auto;overflow:visible;';
+      address.parentElement.append(probe);
+      try {
+        const measureWidth = (visible) => {
+          fillBreadcrumb(probe, visible, [], false);
+          return probe.getBoundingClientRect().width;
+        };
+        display = breadcrumbDisplayPaths(uniquePaths, width - 1, measureWidth);
+      } finally {
+        probe.remove();
       }
-    });
-    // Long names still scroll horizontally inside the compact breadcrumb.
+    }
+    if (currentMenu?._ufsTrigger?.classList.contains('ufs-crumb-more')) closeMenu();
+    fillBreadcrumb(address, display.visible, display.hidden, true);
+    // The last directory can ellipsize only after all middle directories
+    // have been folded. Preserve full names in title attributes.
     address.scrollLeft = address.scrollWidth;
+  }
+  let breadcrumbLayoutPending = false;
+  function scheduleBreadcrumbLayout() {
+    if (breadcrumbLayoutPending || destroyed || !app) return;
+    breadcrumbLayoutPending = true;
+    requestAnimationFrame(() => {
+      breadcrumbLayoutPending = false;
+      if (!destroyed && app?.isConnected) renderBreadcrumbs();
+    });
+  }
+  function renderNavigation() {
+    renderBreadcrumbs();
     const tab = activeTab();
     $('.ufs-back', app).disabled = !tab || state.initializing || tab.cursor <= 0;
     $('.ufs-next', app).disabled = !tab || state.initializing || tab.cursor >= tab.history.length - 1;
@@ -6930,6 +6988,14 @@
       showCreateFolderDialog();
     });
     setupSidebarResizer();
+    // Address width changes when the viewport, sidebar, or search area changes.
+    const breadcrumbAddress = $('.ufs-address', app);
+    if (typeof ResizeObserver !== 'undefined') {
+      const breadcrumbObserver = new ResizeObserver(scheduleBreadcrumbLayout);
+      breadcrumbObserver.observe(breadcrumbAddress);
+      onCleanup(() => breadcrumbObserver.disconnect());
+    }
+    window.addEventListener('resize', scheduleBreadcrumbLayout, { signal: lifecycle.signal });
     installDragMove();
     onCleanup(setupListScrollbars($('.ufs-list', app)));
     onCleanup(()=>closeCopyTaskCenter());
