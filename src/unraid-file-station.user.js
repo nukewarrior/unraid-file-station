@@ -912,7 +912,7 @@
     const seen=new Set();
     for(const plan of plans) {
       if(!plan || plan.type!=='move' || plan.folder!==false ||
-         plan.conflictPolicy!=='fail' || plan.destinationDir!==first.destinationDir ||
+         !['fail','skip'].includes(plan.conflictPolicy) || plan.destinationDir!==first.destinationDir ||
          parentPath(plan.source)!==parent || !safeWritePath(plan.source) ||
          plan.target!==plan.destinationDir+'/'+fileName(plan.source) ||
          !copyDestinationAllowed(plan,first.destinationDir) || seen.has(plan.source))
@@ -938,7 +938,7 @@
     const seen=new Set();
     for(const plan of plans) {
       if(!plan || plan.type!=='move' || typeof plan.folder!=='boolean' ||
-         plan.conflictPolicy!=='fail' || plan.destinationDir!==first.destinationDir ||
+         !['fail','skip'].includes(plan.conflictPolicy) || plan.destinationDir!==first.destinationDir ||
          parentPath(plan.source)!==parent || !safeWritePath(plan.source) ||
          plan.target!==plan.destinationDir+'/'+fileName(plan.source) ||
          !copyDestinationAllowed(plan,first.destinationDir) || seen.has(plan.source))
@@ -3404,9 +3404,27 @@
     if(!window.confirm(pendingDeletion?
       '确认继续执行后续永久删除？\n\n删除不可撤销；不会重发已提交或待核实项目。':
       '确认已核实失败或不确定的原生文件任务？\n\n仅执行尚未提交的排队项目。')) return;
-    copyQueuePaused=false;
-    updateCopyTaskButton();
-    void runCopyQueue();
+    // A reopened browser tab does not necessarily own its old queue lease.
+    // Reacquire and verify the durable snapshot BEFORE scheduling any work.
+    void (async()=>{
+      try {
+        await initializeCopyPersistence();
+        await ensureCopyOwnership();
+        await copyPersistTail;
+        const fresh=await persistentCopyStore.read();
+        if(!fresh || JSON.stringify(fresh.tasks)!==lastPersistedTasks)
+          throw new Error('队列记录已更新，请刷新后核实');
+        if(await readNativeActive())
+          throw new Error('Unraid 仍有原生文件操作运行');
+        copyQueuePaused=false;
+        updateCopyTaskButton();
+        void runCopyQueue();
+      } catch(error) {
+        copyQueuePaused=true;
+        notify('队列未继续：'+String(error?.message||error));
+        updateCopyTaskButton();
+      }
+    })();
   }
   function isRemovableFailedCopyJob(job) {
     return job?.status==='failed' && !!job.record && !job.recoveryMonitoring &&
@@ -6243,6 +6261,7 @@
       }
       if(await readNativeActive()) throw new Error('Unraid 正在执行其他原生文件任务，请稍后重试');
       nativeCsrfToken();
+      return destinationItems;
     }
     async function startBatchCopy() {
       if(!multi || batch.started || batch.preflighting || batch.finished || busy || inlineDraft ||
@@ -6273,8 +6292,9 @@
         '正在核验 '+entries.length+' 项源文件、目标目录及同名冲突，请稍候。';
       showCopyFields(checkingPanel);
       focusDialog();
+      let destinationItems;
       try {
-        await preflightBatchCopy(plans);
+        destinationItems=await preflightBatchCopy(plans);
         if(destroyed || closed) return;
       } catch(error) {
         batch.phase='failed';
@@ -6302,7 +6322,13 @@
       if(destroyed || closed) return;
       // Unraid itself supports CR-joined sources. Only the narrow, verified
       // all-regular-file shape opts in; all other jobs keep the serial path.
-      const batchMoveMode=isMove?nativeMoveBatchMode(plans):null;
+      // Preserve fast native batch for ordinary moves with no conflicts.
+      // If "skip" meets an existing target, switch to safe per-item checks.
+      const hasMoveConflict=isMove && plans.some(plan=>
+        destinationItems?.some(item=>item.path===plan.target ||
+          item.name===fileName(plan.source)));
+      const batchMoveMode=isMove && !hasMoveConflict?
+        nativeMoveBatchMode(plans):null;
       const groupedMove=!!batchMoveMode;
       batch.nativeGroup=groupedMove;
       if(isMove)diagnosticLog('INFO','move.batch_strategy',{
