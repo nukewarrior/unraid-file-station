@@ -2072,6 +2072,16 @@
         meaning:'任务持久化失败，操作状态可能待核实',
         checks:'先核对 IndexedDB 与 Unraid 原生任务结果，再决定是否恢复'
       },
+      'queue.recovery_readback_inconclusive':{
+        issue:'RECOVERY_VERIFICATION_BLOCKED',severity:'warning',
+        meaning:'刷新后自动内容核验未能确认复制完整性，原任务仍保留',
+        checks:'查看详情中的核验原因和原生任务状态，切勿清空队列或重发已提交项'
+      },
+      'queue.recovery_native_read_failed':{
+        issue:'RECOVERY_NATIVE_READ_FAILED',severity:'warning',
+        meaning:'刷新恢复时未能读取原生任务状态',
+        checks:'核对 Control.php mode=read 是否正常，保留已提交项，不自动重发'
+      },
       'queue.restore_failed':{
         issue:'QUEUE_RESTORE_FAILURE',severity:'critical',
         meaning:'已保存的队列无法读取',
@@ -2891,10 +2901,11 @@
     if(!allowLarge&&Number.isFinite(item.size)&&item.size>RECOVERY_AUTO_CHECK_BYTES) {
       diagnosticLog('INFO','queue.recovery_readback_deferred',{taskId:job.taskId,itemIndex:index,
         bytes:item.size,reason:'large-file'});
+      job.recoveryVerifyMessage='文件较大，点击「自动核验文件」即可检查，无需命令行；此操作会读取源文件与目标文件。';
       return;
     }
     job.recoveryVerifying=true;job.status='running';job.phase='verifying';
-    job.verifyProgress=null;updateCopyTaskButton();
+    job.verifyProgress=null;job.recoveryVerifyMessage='';updateCopyTaskButton();
     let verified=false;
     try {
       if(await readNativeActive())throw new Error('原生任务仍在运行，不允许开始核验');
@@ -2937,8 +2948,11 @@
       diagnosticLog('INFO','queue.recovery_readback_verified',{taskId:job.taskId,itemIndex:index,
         bytes:origin.size,method:'stream-byte-equality'});
     } catch(error) {
-      if(!destroyed)diagnosticLog('WARN','queue.recovery_readback_inconclusive',
-        {taskId:job.taskId,itemIndex:index,message:error?.message});
+      if(!destroyed){
+        job.recoveryVerifyMessage=String(error?.message||error);
+        diagnosticLog('WARN','queue.recovery_readback_inconclusive',
+          {taskId:job.taskId,itemIndex:index,message:job.recoveryVerifyMessage});
+      }
     } finally {
       job.recoveryVerifying=false;job.verifyProgress=null;
       if(!destroyed&&!verified){
@@ -3254,6 +3268,8 @@
       }
       body.append(row);
     }
+    if(job.recoveryVerifyMessage)body.append(element('div','ufs-error',
+      '自动核验尚未完成：'+job.recoveryVerifyMessage));
     const footer=element('div','ufs-create-buttons');
     const done=element('button','ufs-create-submit','关闭');
     done.type='button';done.addEventListener('click',()=>overlay.remove());
@@ -3702,7 +3718,7 @@
     const waitingRestore=copyJobs.filter(job=>job.recovered&&job.status==='queued').length;
     const needsCheck=copyJobs.filter(job=>job.recovered&&job.status==='uncertain').length;
     const text=copyRecoveryLocked?
-      (active?.recoveryVerifying?'正在核验文件 · 队列暂停':
+      (active?.recoveryVerifying?'正在核验文件'+(Number.isFinite(active.verifyProgress)?' '+active.verifyProgress+'%':'')+' · 队列暂停':
         active?.recoveryMonitoring?'原生文件操作中 · 队列暂停':
         needsCheck?'有 '+needsCheck+' 项任务待核实':'有 '+waitingRestore+' 项任务待恢复'):
       copyQueuePaused&&queued?'文件任务已暂停':
@@ -3741,7 +3757,8 @@
       const percent=button.querySelector('.ufs-task-badge-percent');
       const speed=button.querySelector('.ufs-task-badge-speed');
       if(percent) {
-        percent.textContent=active.phase==='copying' && Number.isFinite(active.percent)?
+        percent.textContent=active.recoveryVerifying?'':
+          active.phase==='copying' && Number.isFinite(active.percent)?
           ' '+Math.floor(active.percent)+'%':'';
         percent.hidden=!percent.textContent;
       }
