@@ -169,7 +169,8 @@ async function pageFor(t, options = {}) {
       ...(options.extraEntries?.[sourcePath] || [])];
     const mappedRows=originalRows.filter(([name])=>
       !deleted.some(item=>item.source===sourcePath+'/'+name) &&
-      !moved.some(item=>item.source===sourcePath+'/'+name)).map(([name,folder])=>{
+      !moved.some(item=>item.source===sourcePath+'/'+name &&
+        !(options.movePartialSource && item.folder))).map(([name,folder])=>{
       const oldEntry=oldPath+'/'+name;
       const changed=renamed.find(item=>item.source===oldEntry);
       return [changed ? changed.target.split('/').pop() : name,folder];
@@ -3446,6 +3447,32 @@ test('v0.2.13.4 同名文件夹移动直接调用原生 action 4 合并，不跳
   assert.equal(submits[0].exist,'','空 exist 由原生 Control.php 解释为忽略同名文件');
   assert.equal(moved.length,1);
   assert.match(await dialog.innerText(),/移动完成|文件夹已合并/);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.13.4 同名文件夹忽略后源目录保留部分文件，F5 不误报失败或重发',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t,{
+    copyConflictDest:'/mnt/user/downloads',
+    copyConflictNames:[['Photos',true]],movePartialSource:true
+  });
+  await page.locator('.ufs-entry').filter({hasText:'Photos'}).first().click();
+  await page.locator('.ufs-operations').click();
+  await page.getByRole('menuitem',{name:'移动到…'}).click();
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await page.getByRole('button',{name:'开始移动'}).click();
+  await page.locator('.ufs-copy-progress-panel[data-phase="success"]').waitFor({timeout:20000});
+  await page.locator('.ufs-copy-progress-state-text',{hasText:'部分移动 · 源目录有剩余'}).waitFor();
+  assert.equal(nativePosts.filter(item=>item.mode==='file' && item.action==='4').length,1);
+  const snapshot=await readCopyTaskCenterSnapshot(page);
+  assert.equal(snapshot.tasks[0].items[0].moveOutcome,'merged-partial');
+  await page.reload({waitUntil:'domcontentloaded'});
+  const badge=page.locator('.ufs-copy-task-trigger');
+  await badge.getByText('部分移动 · 源目录有剩余').waitFor();
+  await badge.click();
+  const center=page.getByRole('dialog',{name:'文件任务中心'});
+  assert.match(await center.locator('.ufs-task-center-status').first().innerText(),/部分移动/);
+  assert.equal(nativePosts.filter(item=>item.mode==='file' && item.action==='4').length,1,
+    '刷新不允许重复执行原生移动');
   assert.equal(errors.length,0,errors.join('\n'));
 });
 
