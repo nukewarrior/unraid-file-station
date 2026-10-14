@@ -2600,7 +2600,7 @@ test('v0.2.11.5 页面卸载不提前释放正在运行或待核实队列的租�
 
 
 function movePollingHarness({activeReads=0,done=true,mismatch=false,moveFiles=true,
-  conflict=false,conflictFolder=false,folder=false,policy='fail'}={}){
+  conflict=false,conflictFolder=false,folder=false,policy='fail',remaining=false}={}){
   const start=script.indexOf('  function matchesMoveTask(');
   const end=script.indexOf('  function matchesDeleteTask(',start);
   assert.ok(start>=0 && end>start);
@@ -2618,7 +2618,8 @@ function movePollingHarness({activeReads=0,done=true,mismatch=false,moveFiles=tr
     fileName:path=>path.slice(path.lastIndexOf('/')+1),
     parentPath:path=>path.slice(0,path.lastIndexOf('/')),
     listDirectory:async path=>path==='/mnt/user/TimeMachine'?
-      (moved?[]:[origin]):(moved?[target]:conflict?[{...target,folder:conflictFolder}]:[]),
+      (moved?(remaining?[origin]:[]):[origin]):
+      (moved?[target]:conflict?[{...target,folder:conflictFolder}]:[]),
     readNativeActive:async()=>{
       if(!submitted)return null;
       reads++;
@@ -2652,7 +2653,7 @@ function movePollingHarness({activeReads=0,done=true,mismatch=false,moveFiles=tr
     get closed(){return closed;},get time(){return time;}};
 }
 
-test('v0.2.13.3 移动同名策略：忽略不提交，覆盖普通文件需显式原生标志，文件夹冲突拒绝',async()=>{
+test('v0.2.13.4 移动同名策略：普通文件忽略或覆盖，文件夹合并与剩余源目录提示',async()=>{
   const ignored=movePollingHarness({policy:'skip',conflict:true});
   const outcome=await ignored.move();
   assert.equal(outcome.copyOutcome,'skipped');
@@ -2662,10 +2663,20 @@ test('v0.2.13.3 移动同名策略：忽略不提交，覆盖普通文件需显�
   assert.equal((await replace.move()).moveOutcome,'moved');
   assert.equal(replace.requestExist,'1');
   assert.equal(replace.submitted,1);
-  const folderConflict=movePollingHarness({policy:'overwrite',folder:true,
+  const folderIgnored=movePollingHarness({policy:'skip',folder:true,remaining:true,
     conflict:true,conflictFolder:true});
-  await assert.rejects(folderConflict.move(),/同名普通文件|不允许覆盖或合并文件夹/);
-  assert.equal(folderConflict.submitted,0);
+  assert.equal((await folderIgnored.move()).moveOutcome,'merged-partial');
+  assert.equal(folderIgnored.submitted,1,'同名文件夹必须交给原生 rsync 合并');
+  assert.equal(folderIgnored.requestExist,'','忽略策略由 Control.php 转换为 --ignore-existing');
+  assert.equal(folderIgnored.diagnostics.find(event=>event.code==='move.verified').details.partial,true);
+  const folderOverwritten=movePollingHarness({policy:'overwrite',folder:true,
+    conflict:true,conflictFolder:true});
+  assert.equal((await folderOverwritten.move()).moveOutcome,'merged');
+  assert.equal(folderOverwritten.requestExist,'1');
+  const typeMismatch=movePollingHarness({policy:'overwrite',folder:true,
+    conflict:true,conflictFolder:false});
+  await assert.rejects(typeMismatch.move(),/类型不同/);
+  assert.equal(typeMismatch.submitted,0);
   const plain=movePollingHarness({policy:'fail',conflict:true});
   await assert.rejects(plain.move(),/目标存在同名项目/);
   assert.equal(plain.submitted,0);
@@ -2704,7 +2715,9 @@ test('v0.2.13.3 同名选项在复制与移动窗口中统一呈现并保留原�
   assert.match(script,/const hasMoveConflict=isMove && plans\.some/);
   assert.match(script,/const batchMoveMode=isMove && !hasMoveConflict/);
   assert.match(script,/move\.skipped_conflict/);
-  assert.match(script,/移动覆盖仅支持同名普通文件/);
+  assert.match(script,/移动同名文件夹|同名文件夹会合并/);
+  assert.match(script,/partiallyMerged=sourceRemains/);
+  assert.match(script,/moveOutcome==='merged-partial'/);
   assert.match(script,/queue\.terminal_records_cleared/);
   assert.match(script,/isRemovableFailedCopyJob\(job\)/);
   const close=script.slice(script.indexOf("const dismiss=element('button','ufs-task-center-close"),
@@ -2713,6 +2726,32 @@ test('v0.2.13.3 同名选项在复制与移动窗口中统一呈现并保留原�
   assert.doesNotMatch(close,/dismiss\.dataset\.tooltip/);
 });
 
+test('v0.2.13.4 忽略合并后源目录残留允许部分成功，覆盖残留仍视为未核实',async()=>{
+  const allowed=movePollingHarness({policy:'skip',folder:true,remaining:true});
+  assert.equal((await allowed.move()).moveOutcome,'merged-partial');
+  const blocked=movePollingHarness({policy:'overwrite',folder:true,remaining:true});
+  await assert.rejects(blocked.move(),/结果不确定/);
+  const mismatch=movePollingHarness({policy:'skip',folder:false,remaining:true});
+  await assert.rejects(mismatch.move(),/结果不确定/);
+});
+
+test('v0.2.13.4 部分移动结果在持久化中保持，刷新后能区分并展示源目录剩余',()=>{
+  const {api}=createAPI();
+  const task={taskId:'copy_partial_move_1234',name:'Photos',
+    destination:'/mnt/user/downloads',conflictPolicy:'skip',
+    operation:'move',status:'success',createdAt:100,updatedAt:200,
+    items:[{source:'/mnt/user/TimeMachine/Photos',folder:true,
+      status:'success',submission:'confirmed',moveOutcome:'merged-partial',updatedAt:200}]};
+  const restored=api.copyRecoveryAssessment({schema:1,savedAt:200,tasks:[task]});
+  assert.equal(restored.requiresConfirmation,false);
+  assert.equal(restored.tasks[0].items[0].moveOutcome,'merged-partial');
+  assert.equal(restored.tasks[0].restoreStatus,'terminal');
+  const invalid={...task,items:[{...task.items[0],moveOutcome:'untrusted-value'}]};
+  assert.throws(()=>api.validateCopyQueueSnapshot({schema:1,tasks:[invalid]}),/格式错误/);
+  assert.match(script,/job\.record\?\.items\?\.some\(item=>item\.moveOutcome==='merged-partial'\)/);
+  assert.match(script,/部分移动 · 源目录有剩余/);
+  assert.match(script,/部分移动，源目录有剩余/);
+});
 test('v0.2.11.6 快速移动轮询：仍需两次空闲和 done 证据，缩短固定等待',async()=>{
   const harness=movePollingHarness();
   const result=await harness.move();
