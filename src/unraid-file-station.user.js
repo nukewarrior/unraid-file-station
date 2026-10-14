@@ -2764,7 +2764,11 @@
       diagnosticLog('WARN','queue.recovery_native_read_failed',{message:error?.message});
       return;
     } // Network errors preserve the existing "待核实" state.
-    if(destroyed || !active) return;
+    if(destroyed)return;
+    if(!active){
+      diagnosticLog('INFO','queue.recovery_native_initial_idle',{});
+      void checkIdleRecoveredNativeCopy();return;
+    }
     const matches=[];
     for(const job of copyJobs) {
       if(!job.recovered)continue;
@@ -2876,6 +2880,101 @@
         updateCopyTaskButton();
       }
     }
+  }
+
+  async function verifyIdleRecoveredCopy(job,index,allowLarge=false) {
+    const item=job?.record?.items?.[index];
+    if(destroyed||!job?.recovered||!copyRecoveryLocked||job.recoveryVerifying||
+       job.recoveryMonitoring||job.status==='running'||!item||item.folder||
+       (job.record.operation&&job.record.operation!=='copy')||
+       !['intent-saved','unknown'].includes(item.submission))return;
+    if(!allowLarge&&Number.isFinite(item.size)&&item.size>RECOVERY_AUTO_CHECK_BYTES) {
+      diagnosticLog('INFO','queue.recovery_readback_deferred',{taskId:job.taskId,itemIndex:index,
+        bytes:item.size,reason:'large-file'});
+      return;
+    }
+    job.recoveryVerifying=true;job.status='running';job.phase='verifying';
+    job.verifyProgress=null;updateCopyTaskButton();
+    let verified=false;
+    try {
+      if(await readNativeActive())throw new Error('原生任务仍在运行，不允许开始核验');
+      const target=job.destination+'/'+fileName(item.source);
+      const inspect=async()=>{
+        const [sources,targets]=await Promise.all([
+          listDirectory(parentPath(item.source)),listDirectory(job.destination)]);
+        return {origin:sources.find(e=>e.path===item.source),
+          dest:targets.find(e=>e.path===target)};
+      };
+      const before=await inspect(),origin=before.origin,dest=before.dest;
+      if(!origin||!dest||origin.folder||dest.folder||
+         origin.copyPathVerified===false||dest.copyPathVerified===false||
+         !Number.isSafeInteger(origin.size)||!Number.isSafeInteger(dest.size))
+        throw new Error('源文件或目标文件不存在，或元信息不可信');
+      if(Number.isFinite(item.size)&&origin.size!==item.size)
+        throw new Error('源文件大小与最初记录不一致');
+      if(origin.size!==dest.size)
+        throw new Error('源文件与目标文件长度不同，疑似部分复制');
+      if(!allowLarge&&origin.size>RECOVERY_AUTO_CHECK_BYTES) {
+        diagnosticLog('INFO','queue.recovery_readback_deferred',{taskId:job.taskId,itemIndex:index,
+          bytes:origin.size,reason:'large-file'});
+        return;
+      }
+      diagnosticLog('INFO','queue.recovery_readback_started',{taskId:job.taskId,itemIndex:index,
+        bytes:origin.size});
+      const identical=await compareRecoveryFileStreams(item.source,target,origin.size,(done,total)=>{
+        if(destroyed)return;
+        job.verifyProgress=total?Math.floor(done/total*100):100;updateCopyTaskButton();
+      });
+      if(!identical)throw new Error('源文件与目标文件内容不一致');
+      const after=await inspect();
+      if(!after.origin||!after.dest||origin.size!==after.origin.size||
+         origin.mtime!==after.origin.mtime||dest.size!==after.dest.size||
+         dest.mtime!==after.dest.mtime)
+        throw new Error('文件在核验过程中发生变化');
+      if(await readNativeActive())throw new Error('核验结束时原生任务占用');
+      await verifyRecoveredNativeCopy(job,index);
+      verified=true;
+      diagnosticLog('INFO','queue.recovery_readback_verified',{taskId:job.taskId,itemIndex:index,
+        bytes:origin.size,method:'stream-byte-equality'});
+    } catch(error) {
+      if(!destroyed)diagnosticLog('WARN','queue.recovery_readback_inconclusive',
+        {taskId:job.taskId,itemIndex:index,message:error?.message});
+    } finally {
+      job.recoveryVerifying=false;job.verifyProgress=null;
+      if(!destroyed&&!verified){
+        job.status='uncertain';job.phase='uncertain';copyQueuePaused=true;copyRecoveryLocked=true;
+      }
+      if(!destroyed)updateCopyTaskButton();
+    }
+  }
+  async function checkIdleRecoveredNativeCopy() {
+    // Never infer native completion from a single empty global task read.
+    await waitNative(750);
+    if(destroyed)return;
+    let active;
+    try {active=await readNativeActive();}
+    catch(error){
+      diagnosticLog('WARN','queue.recovery_native_read_failed',
+        {message:error?.message,probe:'second'});
+      return;
+    }
+    if(active){
+      diagnosticLog('INFO','queue.recovery_native_reappeared',{action:Number(active.action)});
+      void monitorRecoveredNativeTask();return;
+    }
+    const candidates=[];
+    for(const job of copyJobs)if(job.recovered)
+      for(let i=0;i<job.record.items.length;i++){
+        const item=job.record.items[i];
+        if(['intent-saved','unknown'].includes(item.submission)&&
+           ['submission-intent','copying','verifying','uncertain'].includes(item.status))
+          candidates.push({job,index:i});
+      }
+    diagnosticLog('INFO','queue.recovery_native_idle',{candidates:candidates.length});
+    if(candidates.length!==1)return;
+    const {job,index}=candidates[0];
+    if((job.record.operation||'copy')==='copy'&&!job.record.items[index].folder)
+      await verifyIdleRecoveredCopy(job,index);
   }
   async function verifyRecoveredNativeBatch(job) {
     const plans=savedMoveBatchPlans(job.record);
@@ -3121,6 +3220,13 @@
       row.append(element('span','',item.name+' · '+label));
       if(['原生复制中','原生移动中','原生删除中'].includes(label)) row.append(element('span','ufs-batch-meta',
         copyJobMeta(job)+(Number.isFinite(job.percent)?' · '+Math.floor(job.percent)+'%':'')));
+      if(label==='待核实'&&(job.record.operation||'copy')==='copy'&&
+         !item.folder&&job.status!=='running'){
+        const verify=element('button','ufs-task-center-remove','自动核验文件');
+        verify.type='button';
+        verify.addEventListener('click',()=>{overlay.remove();void verifyIdleRecoveredCopy(job,i,true);});
+        row.append(verify);
+      }
       if((label==='待核实'||label==='需要检查') && job.status!=='running') {
         const skip=element('button','ufs-task-center-remove','已人工核实，跳过此项');
         skip.type='button';
@@ -3498,16 +3604,16 @@
       const panel=element('div','ufs-task-center-paused ufs-task-recovery');
       const uncertain=copyJobs.filter(job=>job.recovered&&job.status==='uncertain').length;
       const waiting=copyJobs.filter(job=>job.recovered&&job.status==='queued').length;
-      const monitoring=copyJobs.some(job=>job.recovered&&job.recoveryMonitoring);
+      const monitoring=copyJobs.some(job=>job.recovered&&(job.recoveryMonitoring||job.recoveryVerifying));
       panel.append(element('div','',monitoring?
-        '已重新连接 Unraid 正在复制的原生任务；后续队列仍暂停，原生任务结束并核实后才能手动恢复。':
+        '正在恢复原生任务或自动核验文件内容；后续队列保持暂停。':
         uncertain?'上次复制有 '+uncertain+' 项待核实。请打开任务详情，核实后选择跳过；不能自动重试。':
         '检测到上次保存的 '+waiting+' 项待恢复任务，当前队列已暂停。'));
       const later=element('button','','稍后处理');
       later.type='button';later.dataset.taskFocus='later';
       later.addEventListener('click',()=>closeCopyTaskCenter(true));
       panel.append(later);
-      const confirm=element('button','',monitoring?'等待当前复制完成':
+      const confirm=element('button','',monitoring?'等待核验完成':
         uncertain?'请先核实任务':'确认恢复队列');
       confirm.type='button';confirm.disabled=monitoring || uncertain>0 || waiting===0;
       confirm.dataset.taskFocus='recover';
@@ -3596,7 +3702,8 @@
     const waitingRestore=copyJobs.filter(job=>job.recovered&&job.status==='queued').length;
     const needsCheck=copyJobs.filter(job=>job.recovered&&job.status==='uncertain').length;
     const text=copyRecoveryLocked?
-      (active?.recoveryMonitoring?'原生文件操作中 · 队列暂停':
+      (active?.recoveryVerifying?'正在核验文件 · 队列暂停':
+        active?.recoveryMonitoring?'原生文件操作中 · 队列暂停':
         needsCheck?'有 '+needsCheck+' 项任务待核实':'有 '+waitingRestore+' 项任务待恢复'):
       copyQueuePaused&&queued?'文件任务已暂停':
       active?copyJobPhaseLabel(active):
