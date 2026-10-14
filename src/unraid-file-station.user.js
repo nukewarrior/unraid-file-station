@@ -1097,7 +1097,8 @@
 
   async function moveNativeEntry(plan,progress=()=>{},control={},beforeSubmit=null) {
     return withNativeWriteLock(async()=>{
-      if(!MOVE_ENABLED || !plan || plan.type!=='move' || plan.conflictPolicy!=='fail' ||
+      if(!MOVE_ENABLED || !plan || plan.type!=='move' ||
+         !['fail','skip','overwrite'].includes(plan.conflictPolicy) ||
          !safeWritePath(plan.source) || !safeWritePath(plan.destinationDir,true) ||
          !copyDestinationAllowed(plan,plan.destinationDir) ||
          plan.target!==plan.destinationDir+'/'+fileName(plan.source) ||
@@ -1111,8 +1112,19 @@
       const origin=sources.find(x=>x.path===plan.source);
       if(!origin || origin.folder!==plan.folder || origin.copyPathVerified===false)
         throw new Error('源路径已经变化或无法安全校验');
-      if(destinations.some(x=>x.path===plan.target || x.name===fileName(plan.source)))
+      const existing=destinations.find(x=>x.path===plan.target || x.name===fileName(plan.source));
+      if(existing?.copyPathVerified===false)
+        throw new Error('同名目标路径无法核实，拒绝移动');
+      if(existing && plan.conflictPolicy==='fail')
         throw new Error('目标存在同名项目，禁止移动或合并');
+      if(existing && plan.conflictPolicy==='skip') {
+        diagnosticLog('INFO','move.skipped_conflict',{source:plan.source,target:plan.target});
+        // Keep the original source untouched, even when the conflict is a folder.
+        return {...origin,copyOutcome:'skipped',moveOutcome:'skipped'};
+      }
+      // A folder collision is never treated as an implicit replace/merge.
+      if(existing && (existing.folder || plan.folder || existing.folder!==plan.folder))
+        throw new Error('移动覆盖仅支持同名普通文件，不允许覆盖或合并文件夹');
       if(await readNativeActive())throw new Error('Unraid 原生任务正在运行');
       nativeCsrfToken();
       if(beforeSubmit)await beforeSubmit(); // Durable intent BEFORE native POST.
@@ -1131,7 +1143,7 @@
         const response=await postNativeControl({mode:'file',
           action:plan.folder?'4':'9',title:encodeURIComponent('移动'),
           source:encodeURIComponent(plan.source),target:encodeURIComponent(plan.destinationDir+'/'),
-          hdlink:'',sparse:'',exist:'',zfs:''});
+          hdlink:'',sparse:'',exist:plan.conflictPolicy==='overwrite'?'1':'',zfs:''});
         const requestMs=Date.now()-requestStartedAt;
         if(response.trim())throw new Error('原生接口返回非预期内容');
         progress('Unraid 正在移动文件…','copying');
@@ -5294,14 +5306,18 @@
     picker.setAttribute('aria-label',(isMove?'选择移动目标文件夹':'选择复制目标文件夹'));
     const destinationText=element('div','ufs-copy-destination','请选择目标文件夹');
     location.append(picker);
-    let conflictPolicy=isMove?'fail':'skip';
+    let conflictPolicy='skip';
     const policy=element('div','ufs-copy-policy');
     policy.setAttribute('role','group');
     policy.setAttribute('aria-label','遇到同名项目');
     policy.append(element('span','ufs-copy-policy-title','遇到同名项目'));
     for(const [value,label,tip] of [
-      ['skip','忽略','跳过目标中已存在的同名文件；同名文件夹会合并。'],
-      ['overwrite','覆盖','允许用源文件替换同名文件；同名文件夹会合并。']
+      ['skip','忽略',isMove?
+        '目标已有同名文件或文件夹时不移动该项目，源文件保留在原位置。':
+        '跳过目标中已存在的同名文件；同名文件夹会合并。'],
+      ['overwrite','覆盖',isMove?
+        '明确允许替换目标中的同名普通文件；同名文件夹仍会拒绝移动。':
+        '允许用源文件替换同名文件；同名文件夹会合并。']
     ]) {
       const option=element('label','ufs-copy-policy-choice');
       option.dataset.tooltip=tip;
@@ -5343,14 +5359,13 @@
     location.append(feedback);
     const fixedOptions=element('div','ufs-copy-fixed-options');
     fixedOptions.append(destinationText,policy);
-    if(isMove)policy.hidden=true;
     fields.append(summary,location);
     function showPreflightError(error,conflicts=[]) {
       preflightNotice.hidden=false;
       const heading=preflightNotice.querySelector('.ufs-preflight-title');
       heading.textContent=conflicts.length?'发现 '+conflicts.length+' 项同名冲突':(isMove?'移动预检未通过':'复制预检未通过');
       noticeDetail.textContent=conflicts.length?
-        '所选 '+entries.length+(isMove?' 项均未开始移动，目标目录的已有文件不会被覆盖。':' 项均未开始复制，目标目录的已有文件不会被覆盖。'):
+        '所选 '+entries.length+(isMove?' 项均未开始移动，本次预检没有修改目标文件。':' 项均未开始复制，目标目录的已有文件不会被覆盖。'):
         (isMove?'本次未开始移动：':'本次未开始复制：')+String(error?.message||error);
       noticeConflicts.replaceChildren();
       noticeConflicts.hidden=!conflicts.length;
@@ -5360,7 +5375,9 @@
         row.title=name;
         noticeConflicts.append(row);
       }
-      noticeAdvice.textContent=(isMove?'请选择其他目标文件夹，或取消后重新选择需要移动的项目。':'请选择其他目标文件夹，或取消后重新选择需要复制的项目。');
+      noticeAdvice.textContent=(isMove?
+        '可以更改同名策略或选择其他目标目录。移动覆盖仅适用于普通文件，不能覆盖文件夹。':
+        '请选择其他目标文件夹，或取消后重新选择需要复制的项目。');
       showCopyFields(preflightNotice,summary,location);
       fields.scrollTop=0;
       // Keep the original status text for compatibility with screen readers
@@ -6201,9 +6218,15 @@
         throw new Error((isMove?'有多个项目对应同一个目标文件名，拒绝批量移动':'有多个项目对应同一个目标文件名，拒绝批量复制'));
       const sourceItems=await listDirectory(parentPath(plans[0].source));
       const destinationItems=await listDirectory(plans[0].destinationDir);
-      const typeConflicts=findBatchCopyTypeConflicts(plans,destinationItems);
-      const conflicts=typeConflicts.length?typeConflicts:
-        plans[0].conflictPolicy==='fail'?findBatchCopyConflicts(plans,destinationItems):[];
+      const typeConflicts=isMove && plans[0].conflictPolicy==='skip'?[]:
+        findBatchCopyTypeConflicts(plans,destinationItems);
+      const folderOverwrite=isMove && plans[0].conflictPolicy==='overwrite'?
+        plans.filter(plan=>plan.folder && destinationItems.some(item=>
+          item.path===plan.target || item.name===fileName(plan.source)))
+          .map(plan=>fileName(plan.source)):[];
+      const conflicts=typeConflicts.length?typeConflicts:folderOverwrite.length?
+        folderOverwrite:plans[0].conflictPolicy==='fail'?
+          findBatchCopyConflicts(plans,destinationItems):[];
       if(conflicts.length) {
         const error=new Error('发现 '+conflicts.length+
           (typeConflicts.length?' 项文件/文件夹类型冲突':' 项同名冲突')+(isMove?'，整批未开始移动':'，整批未开始复制'));
@@ -6607,6 +6630,9 @@
         return;
       }
       if(copyJob && copyJob.status==='failed') removeCopyJob(copyJob);
+      if(isMove && conflictPolicy==='overwrite' &&
+          !window.confirm('覆盖移动将替换目标目录中的同名普通文件，原有目标内容无法撤销。\\n\\n同名文件夹不会被覆盖或合并。确认按覆盖策略移动？'))
+        return;
       try {
         const plans=entries.map(item=>planFileOperation({type:operation,
           source:item.path,destinationDir:selected,folder:item.folder,conflictPolicy}));
