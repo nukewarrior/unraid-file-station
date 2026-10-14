@@ -4423,7 +4423,7 @@
     dragMoveSession=null;
     session.ghost?.remove();
     app?.classList.remove('ufs-drag-active');
-    for(const node of $('[data-ufs-drop-path],.ufs-drag-source,.ufs-drop-expand',app))
+    for(const node of $$('[data-ufs-drop-path],.ufs-drag-source,.ufs-drop-expand',app))
       node.classList.remove('ufs-drop-valid','ufs-drop-invalid','ufs-drag-source','ufs-drop-expand');
     if (currentMenu?._ufsTrigger?.classList.contains('ufs-crumb-more')) closeMenu();
     try { if(app.hasPointerCapture(session.pointerId))app.releasePointerCapture(session.pointerId); }
