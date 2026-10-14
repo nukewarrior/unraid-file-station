@@ -3303,6 +3303,101 @@ async function dragRowsTo(page, source, target, hover=0){
   await page.mouse.up();
 }
 
+// The duplicated folder names intentionally ensure drop targets use full paths,
+ // not the displayed Chinese breadcrumb labels.
+const dragBreadcrumbDeep='/mnt/user/downloads/新建文件夹/新建文件夹/新建文件夹2';
+const dragBreadcrumbFixture={
+  '/mnt/user/downloads':[['新建文件夹',true]],
+  '/mnt/user/downloads/新建文件夹':[['新建文件夹',true]],
+  '/mnt/user/downloads/新建文件夹/新建文件夹':[['新建文件夹2',true]],
+  [dragBreadcrumbDeep]:[['clip-a.mp4',false],['clip-b.mp4',false],['素材集',true]],
+};
+async function breadcrumbDragPage(t,width=1440){
+  const session=await pageFor(t,{width,extraEntries:dragBreadcrumbFixture});
+  await session.page.goto(base+'/Shares/Browse?dir='+encodeURIComponent(dragBreadcrumbDeep));
+  await session.page.locator('.ufs-entry[data-ufs-file="'+dragBreadcrumbDeep+'/clip-a.mp4"]').waitFor();
+  return session;
+}
+
+test('v0.2.12.2 多文件拖拽到地址栏上级目录，只打开移动确认且正确填入目标路径',async t=>{
+  const {page,errors,nativePosts}=await breadcrumbDragPage(t);
+  const first=page.locator('.ufs-entry[data-ufs-file="'+dragBreadcrumbDeep+'/clip-a.mp4"]');
+  const second=page.locator('.ufs-entry[data-ufs-file="'+dragBreadcrumbDeep+'/clip-b.mp4"]');
+  await first.click();
+  await second.click({modifiers:['Control']});
+  assert.equal(await page.locator('.ufs-entry.ufs-selected').count(),2);
+  const dest='/mnt/user/downloads';
+  const crumb=page.locator('.ufs-address .ufs-crumb[data-ufs-drop-path="'+dest+'"]');
+  await crumb.waitFor();
+  await dragRowsTo(page,first,crumb);
+  const dialog=page.getByRole('dialog',{name:'移动到'});
+  await dialog.waitFor();
+  await page.locator('.ufs-copy-destination',{hasText:'目标：'+dest}).waitFor();
+  assert.match(await dialog.innerText(),/已选择 2 项/);
+  assert.equal(await page.locator('.ufs-crumb-more').count(),0,'宽屏不应强制折叠路径');
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,0,'松开鼠标不执行原生 Move');
+  await dialog.getByRole('button',{name:'取消'}).click();
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.12.2 地址栏根分组和当前目录均显示禁止拖入，不弹窗不写入',async t=>{
+  const {page,errors,nativePosts}=await breadcrumbDragPage(t);
+  const from=page.locator('.ufs-entry[data-ufs-file="'+dragBreadcrumbDeep+'/素材集"]');
+  const root=page.locator('.ufs-address .ufs-crumb[data-ufs-drop-path="/mnt/user"]');
+  await dragRowsTo(page,from,root);
+  assert.equal(await page.locator('.ufs-copy-dialog').count(),0);
+  const current=page.locator('.ufs-address .ufs-crumb[data-ufs-drop-path="'+dragBreadcrumbDeep+'"]');
+  await dragRowsTo(page,from,current);
+  assert.equal(await page.locator('.ufs-copy-dialog').count(),0);
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.12.2 拖动到省略号等待展开，在菜单项释放后预选被隐藏的真实路径',async t=>{
+  const {page,errors,nativePosts}=await breadcrumbDragPage(t,760);
+  const more=page.locator('.ufs-address .ufs-crumb-more');
+  await more.waitFor();
+  const from=page.locator('.ufs-entry[data-ufs-file="'+dragBreadcrumbDeep+'/clip-a.mp4"]');
+  const a=await from.boundingBox(),b=await more.boundingBox();
+  assert.ok(a&&b);
+  await page.mouse.move(a.x+40,a.y+a.height/2);await page.mouse.down();
+  await page.mouse.move(a.x+85,a.y+a.height/2,{steps:4});
+  await page.mouse.move(b.x+b.width/2,b.y+b.height/2,{steps:12});
+  await page.locator('.ufs-crumb-more.ufs-drop-expand').waitFor();
+  const popup=page.locator('.ufs-menu[data-ufs-breadcrumb-menu]');
+  await popup.waitFor({timeout:5000});
+  const hidden=popup.locator('button[data-ufs-drop-path="/mnt/user/downloads"]');
+  await hidden.waitFor();
+  const destBox=await hidden.boundingBox();
+  assert.ok(destBox,'隐藏目录菜单中的实际目标可见');
+  await page.mouse.move(destBox.x+Math.min(35,destBox.width/2),
+    destBox.y+destBox.height/2,{steps:10});
+  await hidden.locator('xpath=.',{}).waitFor();
+  await page.mouse.up();
+  const dialog=page.getByRole('dialog',{name:'移动到'});
+  await dialog.waitFor();
+  await page.locator('.ufs-copy-destination',{hasText:'目标：/mnt/user/downloads'}).waitFor();
+  assert.equal(await popup.count(),0,'完成拖放后收起省略号菜单');
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,0);
+  await dialog.getByRole('button',{name:'取消'}).click();
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.12.2 在省略号或地址栏分隔箭头直接松开不触发移动',async t=>{
+  const {page,errors,nativePosts}=await breadcrumbDragPage(t,760);
+  const more=page.locator('.ufs-address .ufs-crumb-more');
+  await more.waitFor();
+  const from=page.locator('.ufs-entry[data-ufs-file="'+dragBreadcrumbDeep+'/clip-a.mp4"]');
+  await dragRowsTo(page,from,more);
+  assert.equal(await page.locator('.ufs-copy-dialog').count(),0);
+  const arrow=page.locator('.ufs-address > .ufs-svg').first();
+  await dragRowsTo(page,from,arrow);
+  assert.equal(await page.locator('.ufs-copy-dialog').count(),0);
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
 test('v0.2.11 拖动多个选中项目到左侧 Share：仅预选目标，不直接提交写入',async t=>{
   const {page,errors,nativePosts,moved}=await pageFor(t);
   await page.locator('.ufs-entry[data-ufs-file="/mnt/user/TimeMachine/notes.txt"]').waitFor();
