@@ -2357,7 +2357,7 @@ test('v0.2.11 Pointer 拖动冻结多选，不在松手时直接执行原生写�
   assert.match(script,/showCopyDialog\(items,'move',\{initialDestination:destination\}\)/);
   assert.match(script,/function showCopyDialog\(entryOrEntries,operation='copy',options=\{\}\)/);
   assert.match(script,/await loadChildren\(PREFIX\);\s*for\(const child of parents\)/);
-  assert.match(script,/\$\$\('\.ufs-tree-row\[data-ufs-drop-path\]',app\)\.some/);
+  assert.match(script,/hit\?\.classList\.contains\('ufs-tree-row'\)/);
   assert.equal((script.match(/for\(const node of \$\$\('\[data-ufs-drop-path\]',app\)\)/g)||[]).length,2);
   assert.match(script,/for\(const node of \$\$\('\[data-ufs-drop-path\],\.ufs-drag-source,\.ufs-drop-expand',app\)\)/);
   assert.match(script,/pointercancel',dragMoveReset/);
