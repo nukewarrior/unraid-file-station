@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.13.1
+// @version      0.2.13.2
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -1789,7 +1789,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.13.1';
+  const DIAGNOSTIC_VERSION='0.2.13.2';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -2978,19 +2978,57 @@
   }
 
   async function discardRecoveredCopyJob(job) {
-    if(!job?.recovered || job.status==='running') return;
+    if(!job?.recovered || job.status!=='queued' || job.recoveryMonitoring || copyCleanupPending)return;
+    // Removing a saved queue record NEVER resumes native work. Submitted or
+    // uncertain items must first be resolved explicitly, not silently dropped.
+    if(job.record?.items?.some(item=>
+      !['success','skipped','excluded'].includes(item.status) &&
+      !(item.status==='queued' && item.submission==='not-submitted'))) {
+      copyCleanupError='未移除保存任务：仍包含已提交或待核实项目';
+      notify(copyCleanupError);
+      updateCopyTaskButton();
+      return;
+    }
+    copyCleanupPending=true;
+    copyCleanupError='';
+    updateCopyTaskButton();
     try {
+      await initializeCopyPersistence();
       await ensureCopyOwnership();
+      await copyPersistTail;
+      const fresh=await persistentCopyStore.read();
+      if(JSON.stringify(fresh?.tasks||[])!==lastPersistedTasks)
+        throw new Error('队列内容已在其他标签页发生变化，请重新加载后核实');
+      if(destroyed)return;
       const index=copyJobs.indexOf(job);
       if(index<0)return;
       copyJobs.splice(index,1);
-      await persistCopyQueue();
+      try {await persistCopyQueue();}
+      catch(error) {
+        // A failed checkpoint must leave the original record available.
+        copyJobs.splice(index,0,job);
+        throw error;
+      }
       copyRecoveryLocked=copyJobs.some(x=>x.recovered&&
-        (x.status==='queued'||x.status==='uncertain'));
-      updateCopyTaskButton();
+        ['queued','uncertain','running'].includes(x.status));
+      // A completed-only (or empty) queue is not a paused writer.
+      if(copyJobs.every(x=>x.status==='success'))copyQueuePaused=false;
+      diagnosticLog('INFO','queue.recovered_record_removed',{
+        taskId:job.taskId,remaining:copyJobs.length});
       closeCopyTaskCenter();
-      showCopyTaskCenter();
-    } catch(error){copyPersistenceFailure(error);}
+      showCopyTaskCenter(false);
+    } catch(error) {
+      // A denied lease is transient contention, not broken IndexedDB.
+      // Do NOT call copyPersistenceFailure here: it permanently poisons retries.
+      copyCleanupError='未移除保存任务记录：'+String(error?.message||error);
+      diagnosticLog('WARN','queue.recovered_record_removal_failed',{
+        taskId:job.taskId,message:String(error?.message||error)});
+      notify(copyCleanupError);
+    } finally {
+      copyCleanupPending=false;
+      if(!destroyed)updateCopyTaskButton();
+      void releaseIdleCopyOwnership('recovered-record-removed');
+    }
   }
   async function executeRecoveredCopyJob(job) {
     if(['native-move-files','native-move-mixed'].includes(job.record.batchMode)) {
@@ -3473,6 +3511,10 @@
         cancel.type='button';
         cancel.dataset.taskFocus='cancel-'+job.id;
         cancel.addEventListener('click',()=>{
+          if(job.recovered) {
+            void discardRecoveredCopyJob(job);
+            return;
+          }
           job.cancelQueued();
           closeCopyTaskCenter();
           updateCopyTaskButton();
@@ -3649,7 +3691,7 @@
       clear.dataset.tooltip=copyCleanupPending?'正在保存清理结果':completed?
         '清理 '+completed+' 项已完成记录，保留文件':'没有可清理的已完成记录';
       clear.setAttribute('aria-label','清理已完成任务记录：'+clear.dataset.tooltip);
-      for(const control of open.querySelectorAll('.ufs-task-center-dismiss-record,.ufs-task-center-row[data-status=success] .ufs-task-center-open'))
+      for(const control of open.querySelectorAll('.ufs-task-center-dismiss-record,.ufs-task-center-row[data-status=success] .ufs-task-center-open,.ufs-task-center-row[data-status=queued] .ufs-task-center-remove'))
         control.disabled=copyCleanupPending;
       if(open.contains(focusedControl) && focusedControl.disabled)
         open.querySelector('.ufs-task-center-close').focus({preventScroll:true});
