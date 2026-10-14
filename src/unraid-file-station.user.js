@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.13.4
+// @version      0.2.13.5
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -774,15 +774,21 @@
         throw new Error('目标已有同名但类型不一致或路径不可信的项目，未执行复制');
       diagnosticLog('INFO','copy.preflight',{taskId:activeCopySession?.taskId,
         source:plan.source,destination:plan.destinationDir,folder:plan.folder,
-        conflictPolicy:plan.conflictPolicy,existing:!!existing});
+        conflictPolicy:plan.conflictPolicy,existing:!!existing,
+        targetType:existing?(existing.folder?'folder':'file'):'absent',
+        nestedConflictInspection:plan.folder?'not-performed':'not-applicable'});
       if(existing && plan.conflictPolicy==='fail') {
         diagnosticLog('WARN','copy.conflict_blocked',{taskId:activeCopySession?.taskId,source:plan.source});
         throw new Error('目标文件夹中已有同名项目，未执行复制');
       }
       // A top-level file can be skipped without submitting a native task.
       // A folder must still be merged by the native rsync task.
-      if(existing && !plan.folder && plan.conflictPolicy==='skip')
+      if(existing && !plan.folder && plan.conflictPolicy==='skip') {
+        diagnosticLog('INFO','copy.skipped_conflict',{taskId:activeCopySession?.taskId,
+          folder:false,conflictPolicy:'skip',targetExistedBefore:true,
+          nativeSubmitted:false});
         return {...existing,copyOutcome:'skipped'};
+      }
       if (await readNativeActive()) throw new Error('Unraid 正在执行其他原生文件任务，请稍后重试');
       nativeCsrfToken();
       // Durable intent must be committed before any native file action.
@@ -872,9 +878,14 @@
         }
         // A directory appearing proves only its top-level presence. The native
         // job's completion is required; we do not claim checksum verification.
-        diagnosticLog('INFO','copy.verified',{taskId:activeCopySession?.taskId,source:plan.source});
-        return {...result,copyOutcome:existing && plan.folder?'merged':
-          existing && plan.conflictPolicy==='overwrite'?'overwrite-allowed':'copied'};
+        const copyOutcome=existing && plan.folder?'merged':
+          existing && plan.conflictPolicy==='overwrite'?'overwrite-allowed':'copied';
+        diagnosticLog('INFO','copy.verified',{taskId:activeCopySession?.taskId,
+          source:plan.source,folder:plan.folder,conflictPolicy:plan.conflictPolicy,
+          targetExistedBefore:!!existing,copyOutcome,
+          verificationScope:plan.folder?'top-level-only':'top-level-size-if-available',
+          nestedConflictInspection:plan.folder?'not-performed':'not-applicable'});
+        return {...result,copyOutcome};
       } catch (error) {
         diagnosticLog('ERROR','copy.native_failed',{taskId:activeCopySession?.taskId,
           submitted,cancelRequested:!!control.cancelRequested,message:error?.message});
@@ -1016,8 +1027,10 @@
       const rawSources=plans.map(plan=>plan.source).join('\r');
       diagnosticLog('INFO','move.batch_intent',{taskId:activeCopySession?.taskId,
         count:plans.length,sourceDir,destination:plans[0].destinationDir,
+        conflictPolicy:plans[0].conflictPolicy,targetExistingCount:0,
         strategy:'native-cr-source',batchMode,folderCount:plans.filter(p=>p.folder).length,
-        overwriteGuard:'preflight-only'});
+        overwriteGuard:'preflight-only',verificationScope:'top-level-only',
+        nestedConflictInspection:'not-performed'});
       let submitted=false,seen=false,done=false,remoteError='';
       const stop=observeNativeProgress(data=>{
         const payload=nativeCopyProgressPayload(data);
@@ -1082,7 +1095,8 @@
           verifyMs:Date.now()-verifyAt,totalMs:Date.now()-startedAt,
           polls,observedOwnTask:seen,observedDone:done,
           strategy:'native-cr-source',batchMode,folderCount:plans.filter(p=>p.folder).length,
-          folderVerification:'top-level-only'});
+          conflictPolicy:plans[0].conflictPolicy,targetExistingCount:0,
+          folderVerification:'top-level-only',nestedConflictInspection:'not-performed'});
         return results;
       }catch(error) {
         diagnosticLog('ERROR','move.batch_failed',{
@@ -1113,6 +1127,14 @@
       if(!origin || origin.folder!==plan.folder || origin.copyPathVerified===false)
         throw new Error('源路径已经变化或无法安全校验');
       const existing=destinations.find(x=>x.path===plan.target || x.name===fileName(plan.source));
+      diagnosticLog('INFO','move.preflight',{taskId:activeCopySession?.taskId,
+        source:plan.source,target:plan.target,folder:plan.folder,
+        conflictPolicy:plan.conflictPolicy,targetExistedBefore:!!existing,
+        targetType:existing?(existing.folder?'folder':'file'):'absent',
+        typeMatches:existing?existing.folder===plan.folder:null,
+        mergeCandidate:!!existing&&plan.folder&&existing.folder===true,
+        nativeAction:plan.folder?'4':'9',
+        nestedConflictInspection:plan.folder?'not-performed':'not-applicable'});
       if(existing?.copyPathVerified===false)
         throw new Error('同名目标路径无法核实，拒绝移动');
       if(existing && plan.conflictPolicy==='fail')
@@ -1122,14 +1144,20 @@
       // For a directory, let native rsync merge descendants. With
       // --ignore-existing only conflicting *files* remain in source.
       if(existing && plan.conflictPolicy==='skip' && !plan.folder) {
-        diagnosticLog('INFO','move.skipped_conflict',{source:plan.source,target:plan.target});
+        diagnosticLog('INFO','move.skipped_conflict',{taskId:activeCopySession?.taskId,
+          source:plan.source,target:plan.target,folder:false,
+          conflictPolicy:'skip',targetExistedBefore:true,nativeSubmitted:false});
         return {...origin,copyOutcome:'skipped',moveOutcome:'skipped'};
       }
       if(await readNativeActive())throw new Error('Unraid 原生任务正在运行');
       nativeCsrfToken();
       if(beforeSubmit)await beforeSubmit(); // Durable intent BEFORE native POST.
       await ensureNativeSlotFreeAfterIntent('move');
-      diagnosticLog('INFO','move.intent',{source:plan.source,target:plan.target});
+      diagnosticLog('INFO','move.intent',{taskId:activeCopySession?.taskId,
+        source:plan.source,target:plan.target,folder:plan.folder,
+        conflictPolicy:plan.conflictPolicy,targetExistedBefore:!!existing,
+        mergeCandidate:!!existing&&plan.folder,nativeAction:plan.folder?'4':'9',
+        nestedConflictInspection:plan.folder?'not-performed':'not-applicable'});
       let submitted=false,seen=false,done=false,remoteError='';
       const stop=observeNativeProgress(data=>{
         const payload=nativeCopyProgressPayload(data);
@@ -1188,14 +1216,21 @@
           throw new Error('源仍存在或目标未核实，移动可能不完整');
         if(!plan.folder && Number.isFinite(origin.size)&&Number.isFinite(target.size)&&
            origin.size!==target.size)throw new Error('移动前后文件大小不同');
-        diagnosticLog('INFO','move.verified',{source:plan.source,target:plan.target,
-          partial:partiallyMerged,merged:!!existing&&plan.folder,
+        diagnosticLog('INFO','move.verified',{taskId:activeCopySession?.taskId,
+          source:plan.source,target:plan.target,folder:plan.folder,
+          conflictPolicy:plan.conflictPolicy,targetExistedBefore:!!existing,
+          partial:partiallyMerged,merged:!!existing&&plan.folder,sourceRemains,
+          moveOutcome:partiallyMerged?'merged-partial':existing&&plan.folder?'merged':'moved',
+          verificationScope:plan.folder?'top-level-only':'top-level-size-if-available',
+          nestedConflictInspection:plan.folder?'not-performed':'not-applicable',
           requestMs,monitorMs,verifyMs:Date.now()-verificationStartedAt,
           totalMs:Date.now()-startedAt,polls,observedOwnTask:seen,observedDone:done});
         return {...target,moveOutcome:partiallyMerged?'merged-partial':
           existing&&plan.folder?'merged':'moved'};
       }catch(error){
-        diagnosticLog('ERROR','move.failed',{submitted,message:error?.message});
+        diagnosticLog('ERROR','move.failed',{taskId:activeCopySession?.taskId,
+          folder:plan.folder,conflictPolicy:plan.conflictPolicy,
+          targetExistedBefore:!!existing,submitted,message:error?.message});
         if(submitted)throw new Error('移动请求可能已提交；结果不确定，源目录可能部分删除。请检查两处目录，切勿直接重试。详情：'+String(error?.message||error));
         throw error;
       }finally{stop();}
@@ -1809,7 +1844,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.13.4';
+  const DIAGNOSTIC_VERSION='0.2.13.5';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -6269,6 +6304,19 @@
       const sourceItems=await listDirectory(parentPath(plans[0].source));
       const destinationItems=await listDirectory(plans[0].destinationDir);
       const typeConflicts=findBatchCopyTypeConflicts(plans,destinationItems);
+      const topLevelMatches=plans.map(plan=>({
+        plan,match:destinationItems.find(item=>item.path===plan.target ||
+          item.name===fileName(plan.source))
+      })).filter(item=>!!item.match);
+      if(isMove)diagnosticLog('INFO','move.batch_preflight',{
+        taskId:copyJob.taskId,count:plans.length,
+        conflictPolicy:plans[0].conflictPolicy,
+        targetExistingCount:topLevelMatches.length,
+        sameNameFolderCount:topLevelMatches.filter(({plan,match})=>
+          plan.folder&&match.folder===true).length,
+        typeConflictCount:typeConflicts.length,
+        folderCount:plans.filter(plan=>plan.folder).length,
+        nestedConflictInspection:'not-performed'});
       const conflicts=typeConflicts.length?typeConflicts:
         plans[0].conflictPolicy==='fail'?
           findBatchCopyConflicts(plans,destinationItems):[];
@@ -6351,18 +6399,23 @@
       // all-regular-file shape opts in; all other jobs keep the serial path.
       // Preserve fast native batch for ordinary moves with no conflicts.
       // If "skip" meets an existing target, switch to safe per-item checks.
-      const hasMoveConflict=isMove && plans.some(plan=>
+      const topLevelExistingCount=plans.filter(plan=>
         destinationItems?.some(item=>item.path===plan.target ||
-          item.name===fileName(plan.source)));
+          item.name===fileName(plan.source))).length;
+      const hasMoveConflict=isMove && topLevelExistingCount>0;
       const batchMoveMode=isMove && !hasMoveConflict?
         nativeMoveBatchMode(plans):null;
       const groupedMove=!!batchMoveMode;
       batch.nativeGroup=groupedMove;
       if(isMove)diagnosticLog('INFO','move.batch_strategy',{
         taskId:copyJob.taskId,count:plans.length,
+        conflictPolicy:plans[0].conflictPolicy,
+        targetExistingCount:topLevelExistingCount,
         strategy:groupedMove?'native-cr-source':'serial',batchMode:batchMoveMode,
         folderCount:plans.filter(p=>p.folder).length,
-        reason:batchMoveMode||nativeMoveFallbackReason(plans)});
+        reason:hasMoveConflict?'top-level-name-conflict':
+          batchMoveMode||nativeMoveFallbackReason(plans),
+        nestedConflictInspection:'not-performed'});
       batch.started=true;
       batch.phase='copying';
       busy=true;
