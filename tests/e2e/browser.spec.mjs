@@ -319,7 +319,14 @@ test('v0.2.11.9 从普通页面进入 File Station 时覆盖先前原生模式�
   await page.locator('#ufs-top-entry a').click();
   await page.locator('#ufs-app').waitFor({state:'visible'});
   assert.equal(await page.locator('#ufs-top-entry.ufs-selected').count(),1);
+  assert.equal(new URL(page.url()).searchParams.has('ufs'),false,'入口意图必须使用一次后清除');
   assert.equal(await page.evaluate(()=>localStorage.getItem('unraid-file-station:v1:native')),null);
+  await page.locator('.nav-item.BrowseButton a').click();
+  await page.locator('#ufs-app').waitFor({state:'hidden'});
+  await page.reload();
+  await page.locator('#ufs-app').waitFor({state:'hidden'});
+  assert.equal(await page.evaluate(()=>localStorage.getItem('unraid-file-station:v1:native')),'1',
+    '手动切回原生后 F5 应维持原生模式');
   assert.equal(errors.length,0,errors.join('\n'));
 });
 

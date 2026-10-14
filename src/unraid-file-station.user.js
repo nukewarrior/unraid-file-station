@@ -7216,6 +7216,13 @@
     const initialNative = !isDemo && !requestedStation && localStorage.getItem(STORE+'native')==='1';
     const start = isDemo ? '/mnt/user/downloads' : new URLSearchParams(location.search).get('dir') || PREFIX;
     if (!safePath(start)) return false;
+    if (requestedStation) {
+      // This flag is a one-shot navigation intent, not a persistent mode.
+      // Otherwise switching back to native and pressing F5 would reactivate UFS.
+      const url = new URL(location.href);
+      url.searchParams.delete('ufs');
+      history.replaceState(history.state, '', url);
+    }
     const style = element('style');
     style.textContent = css;
     document.head.append(style);
