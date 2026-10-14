@@ -16,10 +16,10 @@ function createCopyCleanupHarness(statuses, overrides = {}) {
     persistentCopyStore:{read:async()=>({tasks:[]})},
     persistCopyQueue:async()=>{writes.push(jobs.map(job=>job.id));},
     updateCopyTaskButton:()=>{},releaseIdleCopyOwnership:async()=>false,
-    notify:message=>messages.push(message),
+    diagnosticLog:()=>{},notify:message=>messages.push(message),
     ...overrides
   };
-  const begin = script.indexOf('  async function clearCompletedCopyJobs(');
+  const begin = script.indexOf('  function isRemovableFailedCopyJob(');
   const end = script.indexOf('  function closeCopyTaskCenter(',begin);
   assert.ok(begin>=0 && end>begin);
   vm.runInNewContext(script.slice(begin,end),context);
