@@ -2727,17 +2727,17 @@ test('v0.2.7 恢复前原生已提交项目必须先人工核实并跳过，不�
   });
   await page.reload({waitUntil:'domcontentloaded'});
   const badge=page.locator('.ufs-status .ufs-copy-task-trigger');
-  await badge.getByText('有 1 项任务待核实').waitFor();
+  await badge.getByText('有 1 项原生任务待处理').waitFor();
   await badge.click();
   const center=page.locator('.ufs-copy-task-center');
-  assert.equal(await center.getByRole('button',{name:'请先核实任务'}).isDisabled(),true);
+  assert.equal(await center.getByRole('button',{name:'请先处理上次任务'}).isDisabled(),true);
   assert.equal(nativePosts.filter(x=>x.mode==='file').length,0);
   await center.locator('.ufs-task-center-open').first().click();
   const details=page.getByRole('dialog',{name:'恢复复制任务详情'});
   await details.waitFor();
-  assert.match(await details.innerText(),/notes.txt · 待核实/);
+  assert.match(await details.innerText(),/notes.txt · 结果未确认/);
   page.once('dialog',dialog=>dialog.accept());
-  await details.getByRole('button',{name:'已人工核实，跳过此项'}).click();
+  await details.getByRole('button',{name:'不再执行此项'}).click();
   await details.getByRole('button',{name:'关闭'}).click();
   await badge.click();
   const refreshed=page.locator('.ufs-copy-task-center');
@@ -2868,7 +2868,8 @@ async function mockRecoveredNativeRead(page, options={}) {
 }
 
 
-test('v0.2.13 原生任务已结束：自动逐字节核验相同文件，不重发复制并暂停后续队列',async t=>{
+
+test('v0.2.13.1 F5 后原生任务已消失：保留原记录，不读取视频，不重发复制',async t=>{
   const {page,nativePosts,errors}=await pageFor(t,{
     simulateNativeMonitor:true,extraEntries:{'/mnt/user/downloads':[['notes.txt',false]]}
   });
@@ -2876,46 +2877,46 @@ test('v0.2.13 原生任务已结束：自动逐字节核验相同文件，不重
   await seedInterruptedNativeCopy(page);
   const native=await mockRecoveredNativeRead(page);
   native.setActive(false);
-  const bytes=Buffer.alloc(2048,37);
-  await page.route('**/mnt/user/TimeMachine/notes.txt',route=>route.fulfill({
-    status:200,body:bytes,contentType:'application/octet-stream'
-  }));
-  await page.route('**/mnt/user/downloads/notes.txt',route=>route.fulfill({
-    status:200,body:bytes,contentType:'application/octet-stream'
-  }));
+  let readbacks=0;
+  await page.route('**/mnt/user/**',async route=>{
+    readbacks++;
+    await route.fulfill({status:500,body:'Browser should not re-read files'});
+  });
   await page.reload({waitUntil:'domcontentloaded'});
   const badge=page.locator('.ufs-status .ufs-copy-task-trigger');
-  await badge.getByText('有 1 项任务待恢复').waitFor({timeout:20000});
+  await badge.getByText('有 1 项原生任务待处理').waitFor({timeout:15000});
+  await page.waitForTimeout(1500);
+  assert.equal(readbacks,0,'不对 NAS 视频执行任何浏览器全量读取');
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,0);
   await badge.click();
   const center=page.locator('.ufs-copy-task-center');
-  assert.equal(await center.locator('.ufs-task-center-row[data-status="success"]').count(),1);
+  assert.equal(await center.locator('.ufs-task-center-row[data-status="uncertain"]').count(),1);
   assert.equal(await center.locator('.ufs-task-center-row[data-status="queued"]').count(),1);
-  assert.equal(nativePosts.filter(post=>post.mode==='file').length,0);
+  assert.equal(await center.locator('.ufs-task-center-row').count(),2);
   assert.equal(errors.length,0,errors.join('\n'));
   await native.dispose();
 });
 
-test('v0.2.13 原生任务消失且目标内容不同：绝不自动判成功或重发复制',async t=>{
+test('v0.2.13.1 已结束但无原生回执时可决定不重做第一项，其余队列仍需确认',async t=>{
   const {page,nativePosts,errors}=await pageFor(t,{
     simulateNativeMonitor:true,extraEntries:{'/mnt/user/downloads':[['notes.txt',false]]}
   });
   await page.locator('.ufs-entry').first().waitFor();
-  await seedInterruptedNativeCopy(page,false);
+  await seedInterruptedNativeCopy(page);
   const native=await mockRecoveredNativeRead(page);
   native.setActive(false);
-  await page.route('**/mnt/user/TimeMachine/notes.txt',route=>route.fulfill({
-    status:200,body:Buffer.alloc(2048,1),contentType:'application/octet-stream'
-  }));
-  await page.route('**/mnt/user/downloads/notes.txt',route=>route.fulfill({
-    status:200,body:Buffer.alloc(2048,2),contentType:'application/octet-stream'
-  }));
   await page.reload({waitUntil:'domcontentloaded'});
   const badge=page.locator('.ufs-status .ufs-copy-task-trigger');
-  await badge.getByText('有 1 项任务待核实').waitFor({timeout:15000});
-  await page.waitForTimeout(1900);
-  assert.equal(nativePosts.filter(post=>post.mode==='file').length,0);
+  await badge.getByText('有 1 项原生任务待处理').waitFor({timeout:15000});
   await badge.click();
-  await page.locator('.ufs-task-center-row[data-status="uncertain"]').waitFor();
+  const center=page.locator('.ufs-copy-task-center');
+  await center.locator('.ufs-task-center-row[data-status="uncertain"] .ufs-task-center-open').click();
+  const details=page.getByRole('dialog',{name:'恢复复制任务详情'});
+  await details.getByText('notes.txt · 结果未确认').waitFor();
+  page.once('dialog',dialog=>dialog.accept());
+  await details.getByRole('button',{name:'不再执行此项'}).click();
+  await details.getByText('notes.txt · 已排除，不重复执行').waitFor();
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,0);
   assert.equal(errors.length,0,errors.join('\n'));
   await native.dispose();
 });
@@ -2947,7 +2948,7 @@ test('v0.2.7.1 F5 重连已提交的原生复制，显示实时进度且后续�
   const details=page.getByRole('dialog',{name:'恢复复制任务详情'});
   await details.waitFor();
   assert.match(await details.innerText(),/notes.txt · 原生复制中/);
-  assert.equal(await details.getByRole('button',{name:'已人工核实，跳过此项'}).count(),0);
+  assert.equal(await details.getByRole('button',{name:'不再执行此项'}).count(),0);
   assert.equal(errors.length,0,errors.join('\n'));
   await native.dispose();
 });
@@ -2959,7 +2960,7 @@ test('v0.2.7.1 不匹配的 Unraid 原生任务绝不能冒充旧复制任务',a
   const native=await mockRecoveredNativeRead(page,{wrong:true});
   await page.reload({waitUntil:'domcontentloaded'});
   const badge=page.locator('.ufs-status .ufs-copy-task-trigger');
-  await badge.getByText('有 1 项任务待核实').waitFor();
+  await badge.getByText('有 1 项原生任务待处理').waitFor();
   await page.evaluate(()=>window.__ufsMonitorTest.emitFileManager({
     status:'Copying unrelated\n  4,194,304  29%  91.24MB/s  0:01:38',done:1
   }));
@@ -3021,7 +3022,7 @@ test('v0.2.7.1 原生任务消失但未收到 done 完成事件，必须恢复�
   const badge=page.locator('.ufs-status .ufs-copy-task-trigger');
   await badge.getByText('原生文件操作中 · 队列暂停').waitFor({timeout:15000});
   native.setActive(false);
-  await badge.getByText('有 1 项任务待核实').waitFor({timeout:15000});
+  await badge.getByText('有 1 项原生任务待处理').waitFor({timeout:15000});
   assert.equal(nativePosts.filter(x=>x.mode==='file').length,0);
   await badge.click();
   assert.equal(await page.locator('.ufs-task-center-row[data-status="uncertain"]').count(),1);
@@ -3193,7 +3194,7 @@ test('任务中心批量清理保留排队和待核实记录，保存失败保�
   assert.equal(await center.locator('[data-status="uncertain"]').count(),1);
   assert.equal(await center.locator('.ufs-task-center-clear').isDisabled(),true);
   assert.deepEqual((await readCopyTaskCenterSnapshot(page)).tasks.map(task=>task.status),['queued','uncertain']);
-  assert.equal(await center.getByRole('button',{name:'请先核实任务'}).isDisabled(),true);
+  assert.equal(await center.getByRole('button',{name:'请先处理上次任务'}).isDisabled(),true);
   const allowReload=dialog=>dialog.accept();
   page.once('dialog',allowReload);
   await page.reload({waitUntil:'domcontentloaded'});
