@@ -2359,13 +2359,36 @@ test('v0.2.11 Pointer 拖动冻结多选，不在松手时直接执行原生写�
   assert.match(script,/await loadChildren\(PREFIX\);\s*for\(const child of parents\)/);
   assert.match(script,/\$\$\('\.ufs-tree-row\[data-ufs-drop-path\]',app\)\.some/);
   assert.equal((script.match(/for\(const node of \$\$\('\[data-ufs-drop-path\]',app\)\)/g)||[]).length,2);
-  assert.match(script,/for\(const node of \$\$\('\[data-ufs-drop-path\],\.ufs-drag-source',app\)\)/);
+  assert.match(script,/for\(const node of \$\$\('\[data-ufs-drop-path\],\.ufs-drag-source,\.ufs-drop-expand',app\)\)/);
   assert.match(script,/pointercancel',dragMoveReset/);
   assert.match(script,/suppressDragMoveClick=true/);
   assert.match(script,/row\.dataset\.ufsDropPath=path/);
   assert.match(script,/if\(entry\.folder\)row\.dataset\.ufsDropPath=entry\.path/);
 });
 
+
+test('v0.2.12.2 地址栏与隐藏面包屑均可作为拖拽目标，复用现有安全校验',()=>{
+  assert.match(script,/if \(interactive\) crumb\.dataset\.ufsDropPath = path/);
+  assert.match(script,/item\.dataset\.ufsDropPath = path/);
+  assert.match(script,/menu\.dataset\.ufsBreadcrumbMenu = 'true'/);
+  assert.match(script,/\.ufs-address \.ufs-crumb\[data-ufs-drop-path\]/);
+  assert.match(script,/\.ufs-menu\[data-ufs-breadcrumb-menu\] button\[data-ufs-drop-path\]/);
+  assert.match(script,/const valid=active && destination && canDropMoveAt\(destination,session\)/);
+  assert.match(script,/destination===session\.sourceDir/);
+  assert.match(script,/copyDestinationAllowed\(\{source:item\.path,folder:item\.folder\},destination\)/);
+  assert.match(script,/showCopyDialog\(items,'move',\{initialDestination:destination\}\)/);
+  assert.match(script,/if \(currentMenu\?\._ufsTrigger\?\.classList\.contains\('ufs-crumb-more'\)\) closeMenu\(\)/);
+});
+
+test('v0.2.12.2 拖动到省略号展开菜单，省略号自身不是有效目标',()=>{
+  assert.match(script,/ellipsis\._ufsHiddenPaths = \[\.\.\.hidden\]/);
+  assert.match(script,/const moreTrigger=hit\?\.classList\.contains\('ufs-crumb-more'\) \? hit : null/);
+  assert.match(script,/session\.moreTrigger!==moreTrigger/);
+  assert.match(script,/moreTrigger\.classList\.add\('ufs-drop-expand'\)/);
+  assert.match(script,/\},600\);/);
+  assert.match(script,/return dragMoveHitAt\(clientX,clientY\)\?\.dataset\.ufsDropPath\|\|null/);
+  assert.match(script,/surface:dropKind/);
+});
 
 test('v0.2.11.4 拖放点击穿透保护与弹窗生命周期诊断',()=>{
   assert.match(script,/let pendingDragMoveDialogTimer=null/);
