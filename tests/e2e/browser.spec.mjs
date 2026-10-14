@@ -69,8 +69,14 @@ function responseFor(path, extra = [], list = contents[path] || []) {
 
 const html = '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'+
   '<style>body{margin:0;font-family:Arial,sans-serif}#header{height:75px;background:#1e1e1e;color:white;padding:8px}'+
+  '#menu{background:#1e1e1e;height:52px}.nav-tile.right{height:100%;display:flex;justify-content:flex-end;align-items:center}'+
+  '.nav-item{position:relative;display:flex;align-items:center;height:48px;padding:0 8px}.nav-item a{color:white;text-decoration:none}.nav-item a span{display:none}'+
+  '.nav-item::after{content:"";position:absolute;bottom:0;left:25%;width:50%;height:3px;border-radius:3px;background:transparent}'+
   '#footer{position:fixed;bottom:0;height:24px;background:#ddd;width:100%}</style>'+
-  '</head><body><div id="header">UNRAID SHARES</div><div class="autoheight">'+
+  '</head><body><div id="header">UNRAID SHARES</div>'+
+  '<div id="menu"><div class="nav-tile right"><div class="nav-item BrowseButton util"><a href="#" title="File Manager" onclick="BrowseButton();return false;"><b class="icon-u-duplicate system"></b><span>File Manager</span></a></div><div class="nav-item FeedbackButton util"><a href="#" title="Feedback">Feedback</a></div></div></div>'+
+  '<script>function BrowseButton(){window.__ufsNativeBrowseCalls=(window.__ufsNativeBrowseCalls||0)+1}</script>'+
+  '<div class="autoheight">'+
   '<table class="indexer"><thead><tr><th>NAME</th></tr></thead>'+
   '<tbody><tr><td>原生文件管理器</td></tr></tbody></table></div>'+
   '<div id="footer">Array Started</div>'+
@@ -147,6 +153,7 @@ async function pageFor(t, options = {}) {
   let copyStopped = false;
   page.on('pageerror', error => errors.push(error.message));
   await page.route('**/Shares/Browse?*',route=>route.fulfill({status:200,contentType:'text/html',body:html}));
+  await page.route('**/Main',route=>route.fulfill({status:200,contentType:'text/html',body:html}));
   let rootFailures = options.rootFailures || 0;
   await page.route('**/webGui/include/Browse.php?*', async route => {
     const query = new URL(route.request().url()).searchParams;
@@ -275,6 +282,61 @@ const rows = page => page.locator('.ufs-entry');
 
 before(async()=> { browser = await chromium.launch({headless:true}); });
 after(async()=> { await browser?.close(); });
+
+
+test('v0.2.11.9 顶栏方案 E 位于原生按钮右侧，点击原生入口无刷新切换并保持任务不重建',async t=>{
+  const {page,errors,nativePosts}=await pageFor(t);
+  await page.locator('#ufs-app').waitFor();
+  const entry=page.locator('#ufs-top-entry');
+  await entry.waitFor();
+  assert.equal(await page.locator('#ufs-top-entry').count(),1);
+  assert.equal(await entry.evaluate(el=>el.previousElementSibling?.classList.contains('BrowseButton')),true);
+  assert.deepEqual(await entry.locator('svg path').evaluateAll(paths=>paths.map(p=>p.getAttribute('d'))),
+    ['M3 7h7l2 2h9v10H3z','M7 12h10']);
+  assert.equal(await entry.getAttribute('title'),null);
+  assert.equal(await entry.locator('a').getAttribute('title'),'File Station');
+  assert.equal(await entry.evaluate(el=>el.classList.contains('ufs-selected')),true);
+  const firstApp=await page.locator('#ufs-app').evaluate(el=>{el.__testToken=123;return el.__testToken;});
+  assert.equal(firstApp,123);
+  await page.locator('.nav-item.BrowseButton a').click();
+  await page.locator('#ufs-app').waitFor({state:'hidden'});
+  assert.equal(await page.evaluate(()=>window.__ufsNativeBrowseCalls||0),0,'切换原生模式不应该执行 Unraid 的跳页逻辑');
+  assert.equal(await page.locator('.BrowseButton.ufs-top-native-selected').count(),1);
+  await entry.locator('a').click();
+  await page.locator('#ufs-app').waitFor({state:'visible'});
+  assert.equal(await entry.evaluate(el=>el.classList.contains('ufs-selected')),true);
+  assert.equal(await page.locator('#ufs-app').evaluate(el=>el.__testToken),123,'无刷新切换不会销毁已有应用及队列');
+  assert.equal(nativePosts.filter(post=>post.mode==='file').length,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.11.9 从普通页面进入 File Station 时覆盖先前原生模式记忆',async t=>{
+  const {page,errors}=await pageFor(t,{nativeMode:true});
+  await page.locator('#ufs-native-controls').waitFor();
+  await page.locator('#ufs-app').waitFor({state:'hidden'});
+  await page.goto(base+'/Main');
+  assert.equal(await page.locator('#ufs-app').count(),0,'Main 不得初始化 File Station 的文件操作组件');
+  await page.locator('#ufs-top-entry a').click();
+  await page.locator('#ufs-app').waitFor({state:'visible'});
+  assert.equal(await page.locator('#ufs-top-entry.ufs-selected').count(),1);
+  assert.equal(await page.evaluate(()=>localStorage.getItem('unraid-file-station:v1:native')),null);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.11.9 顶栏重新渲染后只注入一个入口，按钮仍可用',async t=>{
+  const {page,errors}=await pageFor(t);
+  await page.locator('#ufs-top-entry').waitFor();
+  await page.evaluate(()=>{
+    const tile=document.querySelector('#menu .nav-tile.right');
+    tile.replaceWith(tile.cloneNode(true));
+  });
+  await page.waitForFunction(()=>document.querySelectorAll('#ufs-top-entry').length===1);
+  assert.equal(await page.locator('#ufs-top-entry').count(),1);
+  assert.equal(await page.locator('#ufs-top-entry').evaluate(el=>el.previousElementSibling?.classList.contains('BrowseButton')),true);
+  await page.locator('#ufs-top-entry a').click();
+  await page.locator('#ufs-app').waitFor({state:'visible'});
+  assert.equal(errors.length,0,errors.join('\n'));
+});
 
 test('首次根路径进入首个共享目录；根分组不可选；展开箭头不会导航', async t => {
   const {page,errors} = await pageFor(t);
