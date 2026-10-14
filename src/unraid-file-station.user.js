@@ -2,8 +2,8 @@
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
 // @version      0.2.13.0
-// @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/v0.2.13-recovery-verification/src/unraid-file-station.user.js
-// @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/v0.2.13-recovery-verification/src/unraid-file-station.user.js
+// @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
+// @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
 // @match        *://*/Shares*
 // @match        *://*/Main/Browse*
@@ -2750,7 +2750,8 @@
           updateCopyTaskButton();
           // Reconnect only the already-running native rsync. No file writes,
           // queue resumption, or progress claims happen during this lookup.
-          if(assessed.requiresConfirmation)
+          if(assessed.requiresConfirmation && assessed.tasks.some(task=>
+            task.items?.some(item=>item.restoreStatus==='needs-verification')))
             void monitorRecoveredNativeTask();
         }
       } catch(error) {
@@ -2983,9 +2984,11 @@
     }
   }
   async function checkIdleRecoveredNativeCopy() {
-    // Never infer native completion from a single empty global task read.
+    // Probe only while the restored queue is still locked. A user may have
+    // already resolved the item and resumed normal writes in another tick.
+    if(!copyRecoveryLocked || copyQueueRunning)return;
     await waitNative(750);
-    if(destroyed)return;
+    if(destroyed || !copyRecoveryLocked || copyQueueRunning)return;
     let active;
     try {active=await readNativeActive();}
     catch(error){
@@ -2993,6 +2996,7 @@
         {message:error?.message,probe:'second'});
       return;
     }
+    if(destroyed || !copyRecoveryLocked || copyQueueRunning)return;
     if(active){
       diagnosticLog('INFO','queue.recovery_native_reappeared',{action:Number(active.action)});
       void monitorRecoveredNativeTask();return;
