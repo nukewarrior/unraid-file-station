@@ -376,6 +376,56 @@ test('浏览器历史恢复到另一已有标签的相同路径时仍正确刷�
 });
 
 
+test('v0.2.12.1 地址栏有空间时完整显示，窄屏动态折叠并保留省略号跳转', async t => {
+  const {page,errors}=await pageFor(t,{width:1440});
+  const path='/mnt/user/downloads/新建文件夹/新建文件夹/新建文件夹2';
+  await page.goto(base+'/Shares/Browse?dir='+encodeURIComponent(path));
+  await page.locator('.ufs-crumb:last-child',{hasText:'新建文件夹2'}).waitFor();
+  await page.waitForFunction(()=>document.querySelectorAll('.ufs-address .ufs-crumb').length===5);
+  assert.deepEqual(await page.locator('.ufs-address .ufs-crumb-label').allTextContents(),[
+    '共享文件夹','downloads','新建文件夹','新建文件夹','新建文件夹2'
+  ],'宽屏完整显示所有五层路径，不应因为超过四层提前折叠');
+  assert.equal(await page.locator('.ufs-crumb-more').count(),0);
+  await page.setViewportSize({width:760,height:900});
+  await page.locator('.ufs-crumb-more').waitFor();
+  assert.equal(await page.locator('.ufs-crumb-label').last().innerText(),'新建文件夹2');
+  assert.equal(await page.locator('.ufs-crumb-label').first().innerText(),'共享文件夹');
+  await page.locator('.ufs-crumb-more').click();
+  const hidden=page.locator('.ufs-menu button');
+  assert.ok(await hidden.count()>0,'折叠菜单包含隐藏目录');
+  const target=await hidden.first().getAttribute('title');
+  assert.ok(target?.startsWith('/mnt/user/downloads'),'隐藏目录保存真实路径');
+  await hidden.first().click();
+  await page.waitForFunction(target=>new URL(location.href).searchParams.get('dir')===target,target);
+  await page.goto(base+'/Shares/Browse?dir='+encodeURIComponent(path));
+  await page.locator('.ufs-crumb-more').waitFor();
+  await page.setViewportSize({width:1440,height:900});
+  await page.locator('.ufs-crumb-more').waitFor({state:'detached'});
+  assert.equal(await page.locator('.ufs-address .ufs-crumb-label').count(),5,
+    '扩大窗口后自动还原完整路径，不依赖再次导航');
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
+test('v0.2.12.1 侧边栏宽度变化重新测量地址栏，不改变布局和高度',async t=>{
+  const {page,errors}=await pageFor(t,{width:980});
+  const path='/mnt/user/downloads/新建文件夹/新建文件夹/新建文件夹2';
+  await page.goto(base+'/Shares/Browse?dir='+encodeURIComponent(path));
+  const app=page.locator('#ufs-app');
+  await page.locator('.ufs-address').waitFor();
+  await app.evaluate(el=>el.style.setProperty('--ufs-sidebar-width','170px'));
+  await page.waitForFunction(()=>document.querySelector('.ufs-sidebar')?.getBoundingClientRect().width<180);
+  await page.locator('.ufs-crumb-more').waitFor({state:'detached'});
+  const initial=await page.locator('.ufs-address').evaluate(el=>el.getBoundingClientRect().width);
+  await app.evaluate(el=>el.style.setProperty('--ufs-sidebar-width','420px'));
+  await page.waitForFunction(initial=>
+    document.querySelector('.ufs-address')?.getBoundingClientRect().width<initial-180,initial);
+  await page.locator('.ufs-crumb-more').waitFor();
+  assert.equal(await page.locator('.ufs-address').evaluate(el=>Math.round(el.getBoundingClientRect().height)),30);
+  await app.evaluate(el=>el.style.setProperty('--ufs-sidebar-width','170px'));
+  await page.locator('.ufs-crumb-more').waitFor({state:'detached'});
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
 test('1200 文件列表只挂载可视行；滚动与 Shift 连选跨窗口保持绝对索引', async t => {
   const {page,errors}=await pageFor(t,{bulkCount:1200});
   await page.locator('.ufs-count', {hasText:'1200 个项目'}).waitFor();
