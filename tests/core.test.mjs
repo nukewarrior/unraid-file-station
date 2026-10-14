@@ -11,6 +11,7 @@ function createCopyCleanupHarness(statuses, overrides = {}) {
   const messages = [];
   const context = {
     copyJobs:jobs,copyCleanupPending:false,copyCleanupError:'',destroyed:false,
+    copyRecoveryLocked:false,copyQueuePaused:false,
     copyPersistTail:Promise.resolve(),lastPersistedTasks:'[]',
     initializeCopyPersistence:async()=>{},ensureCopyOwnership:async()=>{},
     persistentCopyStore:{read:async()=>({tasks:[]})},
