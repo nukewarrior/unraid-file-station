@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.12.1
+// @version      0.2.12.2
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -1370,7 +1370,7 @@
     '#ufs-app .ufs-list.ufs-virtualized{overflow-anchor:none}',
     // Pointer-based drag state: never replace the dragged virtual row or alter native files on drop.
     '#ufs-app .ufs-entry.ufs-drag-source,#ufs-app .ufs-entry.ufs-drag-source *{cursor:grabbing!important}#ufs-app .ufs-entry.ufs-drag-ready,#ufs-app .ufs-entry.ufs-drag-ready *{cursor:grab!important}',
-    '#ufs-app .ufs-tree-row.ufs-drop-valid,#ufs-app .ufs-entry.ufs-drop-valid{background:rgba(65,148,220,.14)!important;outline:2px dashed #338bce;outline-offset:-2px;border-radius:4px}#ufs-app .ufs-tree-row.ufs-drop-invalid,#ufs-app .ufs-entry.ufs-drop-invalid{background:rgba(215,74,65,.09)!important;outline:2px dashed #c64b40;outline-offset:-2px;border-radius:4px}',
+    '#ufs-app .ufs-tree-row.ufs-drop-valid,#ufs-app .ufs-entry.ufs-drop-valid,#ufs-app .ufs-address .ufs-crumb.ufs-drop-valid,#ufs-app .ufs-menu[data-ufs-breadcrumb-menu] button.ufs-drop-valid{background:rgba(65,148,220,.14)!important;outline:2px dashed #338bce;outline-offset:-2px;border-radius:4px}#ufs-app .ufs-tree-row.ufs-drop-invalid,#ufs-app .ufs-entry.ufs-drop-invalid,#ufs-app .ufs-address .ufs-crumb.ufs-drop-invalid,#ufs-app .ufs-menu[data-ufs-breadcrumb-menu] button.ufs-drop-invalid{background:rgba(215,74,65,.09)!important;outline:2px dashed #c64b40;outline-offset:-2px;border-radius:4px}#ufs-app .ufs-address .ufs-crumb.ufs-drop-expand{background:rgba(65,148,220,.14)!important;outline:2px dashed #338bce;outline-offset:-2px;border-radius:4px}',
     '#ufs-app .ufs-drag-ghost{position:absolute;z-index:2147483630;pointer-events:none;display:flex;align-items:center;gap:8px;padding:8px 11px;border-radius:6px;background:#293a4cee;color:#fff;box-shadow:0 5px 18px #0003;font-size:12px;white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis}#ufs-app.ufs-drag-active .ufs-entry{user-select:none;cursor:grabbing!important}',
     '#ufs-app .ufs-virtual-spacer{height:0;min-width:var(--ufs-table-min-width);pointer-events:none}#ufs-app .ufs-virtual-body{min-width:var(--ufs-table-min-width)}#ufs-app .ufs-grid.ufs-virtualized{display:block;padding:14px}#ufs-app .ufs-grid.ufs-virtualized .ufs-virtual-spacer,#ufs-app .ufs-grid.ufs-virtualized .ufs-virtual-body{min-width:0;width:100%}#ufs-app .ufs-virtual-grid{display:grid;grid-template-columns:repeat(var(--ufs-grid-cols,4),minmax(0,1fr));gap:10px;grid-auto-rows:122px;padding-bottom:10px}#ufs-app .ufs-grid .ufs-virtual-grid .ufs-entry{height:122px;min-height:0;box-sizing:border-box;overflow:hidden}',
     '#ufs-app .ufs-grid .ufs-file-name{flex-direction:column;max-width:100%;gap:7px}#ufs-app .ufs-grid .ufs-file-name .ufs-svg{width:34px;height:34px}#ufs-app .ufs-grid .ufs-extra{display:none}',
@@ -1780,7 +1780,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.12.1';
+  const DIAGNOSTIC_VERSION='0.2.12.2';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -4182,10 +4182,12 @@
     const menu = element('div', 'ufs-menu');
     menu.setAttribute('role', 'menu');
     menu._ufsTrigger = trigger;
+    menu.dataset.ufsBreadcrumbMenu = 'true';
     hiddenPaths.forEach((path) => {
       const item = element('button', '', path.split('/').pop());
       item.type = 'button';
       item.title = path;
+      item.dataset.ufsDropPath = path;
       item.addEventListener('click', (event) => {
         event.stopPropagation();
         closeMenu();
@@ -4208,6 +4210,7 @@
         const ellipsis = element('button', 'ufs-crumb ufs-crumb-more', '…');
         ellipsis.type = 'button';
         if (interactive) {
+          ellipsis._ufsHiddenPaths = [...hidden];
           ellipsis.title = hidden.map((hiddenPath) => hiddenPath.split('/').pop()).join(' / ');
           ellipsis.setAttribute('aria-label', '选择中间目录');
           ellipsis.setAttribute('aria-haspopup', 'menu');
@@ -4223,6 +4226,7 @@
         crumb.append(element('span', 'ufs-crumb-label',
           path === PREFIX ? '共享文件夹' : path.split('/').pop()));
         crumb.title = path;
+        if (interactive) crumb.dataset.ufsDropPath = path;
         if (path !== PREFIX) {
           crumb.type = 'button';
           if (interactive) crumb.addEventListener('click', () => navigate(path));
@@ -4262,6 +4266,12 @@
     }
     if (currentMenu?._ufsTrigger?.classList.contains('ufs-crumb-more')) closeMenu();
     fillBreadcrumb(address, display.visible, display.hidden, true);
+    // Preserve the drop indicator across an address-bar reflow while dragging.
+    if (dragMoveSession?.active) {
+      dragMoveHover(dragMoveSession.target);
+      if (dragMoveSession.moreTrigger?.isConnected)
+        dragMoveSession.moreTrigger.classList.add('ufs-drop-expand');
+    }
     // The last directory can ellipsize only after all middle directories
     // have been folded. Preserve full names in title attributes.
     address.scrollLeft = address.scrollWidth;
@@ -4413,15 +4423,19 @@
     dragMoveSession=null;
     session.ghost?.remove();
     app?.classList.remove('ufs-drag-active');
-    for(const node of $$('[data-ufs-drop-path],.ufs-drag-source',app))
-      node.classList.remove('ufs-drop-valid','ufs-drop-invalid','ufs-drag-source');
+    for(const node of $('[data-ufs-drop-path],.ufs-drag-source,.ufs-drop-expand',app))
+      node.classList.remove('ufs-drop-valid','ufs-drop-invalid','ufs-drag-source','ufs-drop-expand');
+    if (currentMenu?._ufsTrigger?.classList.contains('ufs-crumb-more')) closeMenu();
     try { if(app.hasPointerCapture(session.pointerId))app.releasePointerCapture(session.pointerId); }
     catch (_) { /* Pointer may already have been released by the browser. */ }
   }
-  function dragMoveTargetAt(clientX,clientY) {
+  function dragMoveHitAt(clientX,clientY) {
     const hit=document.elementFromPoint(clientX,clientY);
     if(!hit || !app.contains(hit))return null;
-    return hit.closest('.ufs-tree-row[data-ufs-drop-path],.ufs-entry[data-ufs-drop-path]')?.dataset.ufsDropPath||null;
+    return hit.closest('.ufs-tree-row[data-ufs-drop-path],.ufs-entry[data-ufs-drop-path],.ufs-address .ufs-crumb[data-ufs-drop-path],.ufs-address .ufs-crumb-more,.ufs-menu[data-ufs-breadcrumb-menu] button[data-ufs-drop-path]');
+  }
+  function dragMoveTargetAt(clientX,clientY) {
+    return dragMoveHitAt(clientX,clientY)?.dataset.ufsDropPath||null;
   }
   function dragMoveBeginPointer(event) {
     if(event.button!==0 || (event.pointerType!=='mouse' && event.pointerType!=='pen') ||
@@ -4439,7 +4453,7 @@
     const sourceDir=currentPath();
     dragMoveSession={
       pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,
-      sourceDir,items,sourcePath:entry.path,active:false,target:null,
+      sourceDir,items,sourcePath:entry.path,active:false,target:null,moreTrigger:null,
       expandTimer:null,ghost:null
     };
     // Do not capture at pointerdown: that would redirect ordinary click/dblclick
@@ -4474,14 +4488,30 @@
     const bounds=app.getBoundingClientRect();
     session.ghost.style.left=Math.max(4,Math.min(bounds.width-145,event.clientX-bounds.left+12))+'px';
     session.ghost.style.top=Math.max(4,Math.min(bounds.height-42,event.clientY-bounds.top+12))+'px';
-    const target=dragMoveTargetAt(event.clientX,event.clientY);
-    if(target!==session.target) {
+    const hit=dragMoveHitAt(event.clientX,event.clientY);
+    const target=hit?.dataset.ufsDropPath||null;
+    const moreTrigger=hit?.classList.contains('ufs-crumb-more') ? hit : null;
+    if(target!==session.target || moreTrigger!==session.moreTrigger) {
       clearTimeout(session.expandTimer);
+      if(session.moreTrigger) session.moreTrigger.classList.remove('ufs-drop-expand');
       session.target=target;
+      session.moreTrigger=moreTrigger;
       dragMoveHover(target);
-      if(target && canDropMoveAt(target,session) &&
+      if(moreTrigger && moreTrigger._ufsHiddenPaths?.length) {
+        moreTrigger.classList.add('ufs-drop-expand');
+        // "…" is a menu trigger, never a drop destination by itself.
+        session.expandTimer=setTimeout(()=>{
+          if(dragMoveSession!==session || !session.active ||
+             session.moreTrigger!==moreTrigger || !moreTrigger.isConnected)return;
+          if(currentMenu?._ufsTrigger!==moreTrigger) {
+            showBreadcrumbMenu(moreTrigger,moreTrigger._ufsHiddenPaths);
+            diagnosticLog('INFO','drag.breadcrumb_menu_expanded',
+              {hiddenCount:moreTrigger._ufsHiddenPaths.length});
+          }
+        },600);
+      } else if(target && canDropMoveAt(target,session) &&
          !state.expanded.has(target) &&
-         $$('.ufs-tree-row[data-ufs-drop-path]',app).some(node=>node.dataset.ufsDropPath===target)){
+         $('.ufs-tree-row[data-ufs-drop-path]',app).some(node=>node.dataset.ufsDropPath===target)){
         session.expandTimer=setTimeout(()=>{
           if(dragMoveSession!==session || !session.active || session.target!==target)return;
           state.expanded.add(target);
@@ -4503,7 +4533,11 @@
     const active=session.active;
     const destination=dragMoveTargetAt(event.clientX,event.clientY);
     const sourceDir=session.sourceDir,items=session.items;
+    const dropSurface=dragMoveHitAt(event.clientX,event.clientY);
     const valid=active && destination && canDropMoveAt(destination,session);
+    const dropKind=dropSurface?.closest('.ufs-menu[data-ufs-breadcrumb-menu]')?'breadcrumb-menu':
+      dropSurface?.closest('.ufs-address')?'breadcrumb':
+      dropSurface?.closest('.ufs-tree-row')?'tree':'list';
     dragMoveReset();
     if(!active)return; // Existing click/Ctrl/Shift selection behavior is preserved.
     // Pointer capture may synthesize a click after pointerup. Suppress that
@@ -4514,7 +4548,7 @@
     dragMoveClickTimer=setTimeout(()=>{suppressDragMoveClick=false;dragMoveClickTimer=null;},250);
     if(currentPath()!==sourceDir)return;
     if(valid) {
-      diagnosticLog('INFO','drag.move_target',{target:destination,count:items.length});
+      diagnosticLog('INFO','drag.move_target',{target:destination,count:items.length,surface:dropKind});
       // Do not attach a modal backdrop before the pointerup-generated click.
       clearTimeout(pendingDragMoveDialogTimer);
       pendingDragMoveDialogTimer=setTimeout(()=>{
