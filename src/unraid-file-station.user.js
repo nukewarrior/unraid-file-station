@@ -1564,7 +1564,7 @@
     // v0.2.6.2: task-center rate, phase icons and persistent spinner nodes.
     "#ufs-app .ufs-task-live-spinner{box-sizing:border-box;display:inline-block;flex:0 0 14px;width:14px;height:14px;border:2px solid rgba(235,120,37,.22);border-top-color:var(--ufs-accent);border-radius:50%;animation:ufs-copy-spin .9s linear infinite}",
     "#ufs-app .ufs-task-center-state{display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;white-space:nowrap}#ufs-app .ufs-task-center-state>.ufs-svg{height:13px;width:13px;flex:0 0 13px;color:var(--ufs-muted)}",
-    "#ufs-app .ufs-task-center-row[data-status=success] .ufs-task-center-state>.ufs-svg{color:#258755}#ufs-app .ufs-task-center-row[data-status=failed] .ufs-task-center-state>.ufs-svg,#ufs-app .ufs-task-center-row[data-status=uncertain] .ufs-task-center-state>.ufs-svg{color:#c13d37}",
+    "#ufs-app .ufs-task-center-row[data-status=success] .ufs-task-center-state>.ufs-svg{color:#258755}#ufs-app .ufs-task-center-row[data-partial=true] .ufs-task-center-state>.ufs-svg{color:#b16b23}#ufs-app .ufs-task-center-row[data-status=failed] .ufs-task-center-state>.ufs-svg,#ufs-app .ufs-task-center-row[data-status=uncertain] .ufs-task-center-state>.ufs-svg{color:#c13d37}",
     "#ufs-app .ufs-task-center-meta{text-align:right;min-height:14px;line-height:1.3;font-size:11px;color:var(--ufs-muted);font-variant-numeric:tabular-nums}#ufs-app .ufs-task-center-meta-muted{color:var(--ufs-muted)}#ufs-app .ufs-task-center-name{font-size:12px}",
     "#ufs-app .ufs-status .ufs-copy-task-trigger[data-phase=running]{max-width:75%}#ufs-app .ufs-task-badge-percent,#ufs-app .ufs-task-badge-speed{white-space:nowrap;font-variant-numeric:tabular-nums}#ufs-app .ufs-task-badge-spinner{flex:0 0 13px;width:13px;height:13px;border-width:1.8px}",
     "@media(max-width:720px){#ufs-app .ufs-status .ufs-copy-task-trigger[data-phase=running]{max-width:84%}#ufs-app .ufs-task-badge-percent{display:none!important}}",
@@ -3536,6 +3536,8 @@
       row.dataset.taskId=job.taskId||'';
       row.dataset.status=job.status;
       row.dataset.phase=job.phase||'';
+      row.dataset.partial=String(!!job.record?.items?.some(item=>
+        item.moveOutcome==='merged-partial'));
       const line=element('div','ufs-task-center-line');
       const main=element('button','ufs-task-center-open');
       main.type='button';
@@ -3695,8 +3697,10 @@
     const queued=copyJobs.filter(job=>job.status==='queued').length;
     const problems=copyJobs.some(job=>['failed','uncertain','stopped'].includes(job.status));
     const complete=copyJobs.every(job=>job.status==='success');
+    const partialMove=copyJobs.some(job=>
+      job.record?.items?.some(item=>item.moveOutcome==='merged-partial'));
     const phase=copyRecoveryLocked?'recovery':copyQueuePaused?'paused':active?'running':
-      queued?'queued':complete?'success':problems?'failed':'queued';
+      queued?'queued':complete?(partialMove?'partial':'success'):problems?'failed':'queued';
     const waitingRestore=copyJobs.filter(job=>job.recovered&&job.status==='queued').length;
     const needsCheck=copyJobs.filter(job=>job.recovered&&job.status==='uncertain').length;
     const text=copyRecoveryLocked?
@@ -3704,7 +3708,10 @@
         needsCheck?'有 '+needsCheck+' 项原生任务待处理':'有 '+waitingRestore+' 项任务待恢复'):
       copyQueuePaused&&queued?'文件任务已暂停':
       active?copyJobPhaseLabel(active):
-      queued?'等待中':complete?(copyJobs.some(job=>job.record?.operation==='delete')?'文件任务完成 ':'复制完成 ')+copyJobs.length+' 项':
+      queued?'等待中':complete?(partialMove?'部分移动 · 源目录有剩余':
+        (copyJobs.some(job=>job.record?.operation==='delete')?'文件任务完成 ':
+          copyJobs.some(job=>job.record?.operation==='move')?'移动完成 ':'复制完成 ')+
+          copyJobs.length+' 项'):
       problems?(copyJobs.some(job=>job.status==='uncertain'||job.status==='stopped'||
         (job.status==='failed'&&!job.preflightRejected))?'文件任务待核实':
         '预检未通过'):(copyJobs.some(job=>['move','delete'].includes(job.record?.operation))?'文件任务 ':'复制任务 ')+copyJobs.length+' 项';
@@ -3716,7 +3723,7 @@
         icon(copyRecoveryLocked&&needsCheck?'alert-circle':
           copyRecoveryLocked?'clock-3':
           copyQueuePaused&&queued?'alert-circle':queued?'clock-3':
-          complete?'check-circle':problems?'alert-circle':'copy'));
+          complete?(partialMove?'alert-circle':'check-circle'):problems?'alert-circle':'copy'));
       button.append(element('span','ufs-task-badge-main'));
       if(active) {
         button.append(element('span','ufs-task-badge-percent'));
