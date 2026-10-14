@@ -4509,9 +4509,8 @@
               {hiddenCount:moreTrigger._ufsHiddenPaths.length});
           }
         },600);
-      } else if(target && canDropMoveAt(target,session) &&
-         !state.expanded.has(target) &&
-         $('.ufs-tree-row[data-ufs-drop-path]',app).some(node=>node.dataset.ufsDropPath===target)){
+      } else if(target && hit?.classList.contains('ufs-tree-row') &&
+         canDropMoveAt(target,session) && !state.expanded.has(target)){
         session.expandTimer=setTimeout(()=>{
           if(dragMoveSession!==session || !session.active || session.target!==target)return;
           state.expanded.add(target);
