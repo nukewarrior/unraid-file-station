@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.11.9
+// @version      0.2.11.8
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
-// @match        *://*/*
+// @match        *://*/Shares*
+// @match        *://*/Main/Browse*
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==
@@ -18,6 +19,8 @@
   const isDemo = document.documentElement.getAttribute('data-ufs-demo') === 'true';
   const browsePage = /\/(?:Shares|Main)\/Browse\/?$/.test(location.pathname);
   const sharesPage = /\/Shares\/?$/.test(location.pathname);
+  if (!isDemo && !browsePage && !sharesPage) return;
+
   const $ = (selector, scope = document) => scope.querySelector(selector);
   const $$ = (selector, scope = document) => Array.from(scope.querySelectorAll(selector));
   const safePath = (path) => typeof path === 'string' &&
@@ -42,115 +45,6 @@
   function encodeFileUrl(path) {
     return path.split('/').map((segment) => encodeURIComponent(segment)).join('/');
   }
-
-  // Unraid's actual WebGUI nav uses #menu > .nav-tile.right and
-  // div.nav-item.BrowseButton (BrowseButton.page, Menu="Buttons:3a").
-  // On unrelated websites the explicit structural check fails closed.
-  const FILE_STATION_ENTRY = '/Shares/Browse?dir=' + encodeURIComponent(PREFIX) + '&ufs=1';
-  let topEntryStarted = false;
-  const wiredNativeAnchors = new WeakSet();
-
-  function syncTopEntry() {
-    const entry = $('#ufs-top-entry');
-    if (!entry) return;
-    const native = $('#menu .nav-tile.right .nav-item.BrowseButton');
-    const inBrowse = browsePage && Boolean(app) && !destroyed;
-    const selected = inBrowse && fileManagerMode === 'file-station';
-    entry.classList.toggle('ufs-selected', selected);
-    entry.querySelector('a')?.setAttribute('aria-current', selected ? 'page' : 'false');
-    native?.classList.toggle('ufs-top-native-selected', inBrowse && !selected);
-    native?.classList.toggle('ufs-top-native-muted', selected);
-  }
-
-  function mountTopEntry() {
-    const native = $('#menu .nav-tile.right .nav-item.BrowseButton');
-    if (!native || !native.parentElement) return;
-    const nativeAnchor = $('a', native);
-    if (!nativeAnchor) return;
-
-    if (!$('#ufs-top-entry-style')) {
-      const style = element('style');
-      style.id = 'ufs-top-entry-style';
-      style.textContent = [
-        '#ufs-top-entry a::before{display:none!important;content:none!important}',
-        '#ufs-top-entry a svg{width:24px;height:24px;display:inline-block;vertical-align:middle;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}',
-        '#ufs-top-entry.ufs-selected::after,#menu .BrowseButton.ufs-top-native-selected::after{background-color:var(--orange-800,#ff6a36)!important}',
-        '#menu .BrowseButton.ufs-top-native-muted::after{background-color:transparent}',
-        '#ufs-top-entry a:focus-visible{outline:2px solid var(--orange-800,#ff6a36);outline-offset:2px}'
-      ].join('');
-      document.head.appendChild(style);
-    }
-    let entry = $('#ufs-top-entry');
-    if (entry && entry.previousElementSibling !== native) {
-      entry.remove();
-      entry = null;
-    }
-    if (!entry) {
-      entry = element('div','nav-item UfsFileStationButton util');
-      entry.id = 'ufs-top-entry';
-      const link = element('a');
-      link.href = FILE_STATION_ENTRY;
-      link.title = 'File Station';
-      link.setAttribute('aria-label','File Station');
-      const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
-      svg.setAttribute('viewBox','0 0 24 24');
-      svg.setAttribute('aria-hidden','true');
-      for (const shape of ['M3 7h7l2 2h9v10H3z','M7 12h10']) {
-        const path = document.createElementNS('http://www.w3.org/2000/svg','path');
-        path.setAttribute('d',shape);
-        svg.appendChild(path);
-      }
-      link.append(svg,element('span','', 'File Station'));
-      link.addEventListener('click',(event)=>{
-        if (!browsePage || !app || destroyed) return;
-        event.preventDefault();
-        event.stopPropagation();
-        switchFileManager('file-station');
-      });
-      entry.appendChild(link);
-      native.after(entry);
-    }
-    // Preserve the original native icon on every other page and in native mode.
-    // Only intercept when switching OUT of the enhanced Browse view.
-    if (browsePage && !wiredNativeAnchors.has(nativeAnchor)) {
-      wiredNativeAnchors.add(nativeAnchor);
-      nativeAnchor.addEventListener('click',(event)=>{
-        if (!app || destroyed || fileManagerMode !== 'file-station') return;
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        switchFileManager('native');
-      },true);
-    }
-    syncTopEntry();
-  }
-
-  function startTopEntry() {
-    // Real Unraid pages render #menu server-side. Leave all other websites
-    // untouched rather than installing a document-wide mutation observer.
-    if (isDemo || topEntryStarted || typeof document.querySelector !== 'function' ||
-        !document.querySelector('#menu') || typeof MutationObserver !== 'function') return;
-    topEntryStarted = true;
-    mountTopEntry();
-    // Some WebGUI themes replace navigation nodes after scripts start.
-    // Re-inject only when the toolbar node is missing or detached.
-    const observer = new MutationObserver(()=>{
-      const entry = $('#ufs-top-entry');
-      const native = $('#menu .nav-tile.right .nav-item.BrowseButton');
-      if (native && (!entry || entry.previousElementSibling !== native)) mountTopEntry();
-    });
-    observer.observe(document.body || document.documentElement,{childList:true,subtree:true});
-    window.addEventListener('pagehide',()=>observer.disconnect(),{once:true});
-  }
-
-  // Outside Shares/Browse: install the global shortcut and do not initialize
-  // the file browser, its queue, native monitors, or persistence.
-  if (!isDemo && !browsePage && !sharesPage) {
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded',startTopEntry,{once:true});
-    } else startTopEntry();
-    return;
-  }
-
   function extractLocations(cell) {
     // Browse.php puts disk/pool names in device_* spans. The surrounding cell also
     // contains lock-state tooltips ("Not encrypted", "Locked", etc.), not locations.
@@ -1868,7 +1762,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.11.9';
+  const DIAGNOSTIC_VERSION='0.2.11.8';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -3859,7 +3753,6 @@
     if(nativeControls) nativeControls.hidden=!native;
     document.documentElement.classList.toggle('ufs-active-page',!native && !isDemo);
     updateNativeModeProtection();
-    syncTopEntry();
     if(native) {
       // The preserved table is already rendered. Request only if stale.
       void refreshNativeListIfNeeded();
@@ -7210,19 +7103,9 @@
     if ($('#ufs-app')) return true;
     const mount = isDemo ? $('#ufs-demo-mount') : native.parentNode;
     if (!mount) return false;
-    // An explicit topbar entry always opens the enhanced view, even when the
-    // previous Browse visit was switched to the native file manager.
-    const requestedStation = new URLSearchParams(location.search).get('ufs') === '1';
-    const initialNative = !isDemo && !requestedStation && localStorage.getItem(STORE+'native')==='1';
+    const initialNative = !isDemo && localStorage.getItem(STORE+'native')==='1';
     const start = isDemo ? '/mnt/user/downloads' : new URLSearchParams(location.search).get('dir') || PREFIX;
     if (!safePath(start)) return false;
-    if (requestedStation) {
-      // This flag is a one-shot navigation intent, not a persistent mode.
-      // Otherwise switching back to native and pressing F5 would reactivate UFS.
-      const url = new URL(location.href);
-      url.searchParams.delete('ufs');
-      history.replaceState(history.state, '', url);
-    }
     const style = element('style');
     style.textContent = css;
     document.head.append(style);
@@ -7414,7 +7297,6 @@
   }
 
   function begin() {
-    if (!isDemo) startTopEntry();
     if (sharesPage && !isDemo) {
       addSharesEntry();
       const observer = new MutationObserver(() => addSharesEntry());

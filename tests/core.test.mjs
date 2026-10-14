@@ -162,12 +162,10 @@ function makeIcon(path, type = 'f') {
   };
 }
 
-test('脚本可正常解析，非 Unraid 页面仅在检测到真实导航后启动快捷入口', () => {
+test('脚本可正常解析且具有明确的 Unraid 路由限定', () => {
   assert.doesNotThrow(() => new vm.Script(script));
-  assert.match(script, /@match\s+\*:\/\/\*\/\*/);
-  assert.match(script, /document\.querySelector\('#menu'\)/);
-  assert.match(script, /\.nav-item\.BrowseButton/);
-  assert.match(script, /if \(!isDemo && !browsePage && !sharesPage\)/);
+  assert.match(script, /@match\s+\*:\/\/\*\/Shares\*/);
+  assert.match(script, /@match\s+\*:\/\/\*\/Main\/Browse\*/);
   assert.match(script, /@grant\s+none/);
 });
 
