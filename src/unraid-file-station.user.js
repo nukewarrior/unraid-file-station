@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.13.0
+// @version      0.2.13.1
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -734,67 +734,6 @@
   // Copy target is the existing destination directory WITH a trailing slash.
   function nativeCopyTarget(plan) { return plan.destinationDir + '/'; }
 
-  // Read-only recovery verification. No file writes, copies or native restarts.
-  const RECOVERY_AUTO_CHECK_BYTES=1024*1024*1024;
-  async function compareRecoveryFileStreams(source,target,expectedBytes,onProgress=()=>{}) {
-    if(!safeCopyPath(source) || !safeCopyPath(target) ||
-       !Number.isSafeInteger(expectedBytes) || expectedBytes<0)
-      throw new Error('不安全的恢复核验路径或文件大小');
-    // Treat redirect-to-login, HTML responses and changed lengths as failures.
-    const responses=await Promise.all([source,target].map(path=>fetch(encodeFileUrl(path),{
-      method:'GET',credentials:'same-origin',cache:'no-store',signal:lifecycle.signal
-    })));
-    const streams=[];
-    try {
-      for(const response of responses) {
-        if(response.redirected || !response.ok || response.status!==200)
-          throw new Error('文件下载接口未提供可读取的数据流');
-        if(/text\/html/i.test(response.headers.get('content-type')||''))
-          throw new Error('文件读取返回了网页而不是文件内容');
-        const encoding=response.headers.get('content-encoding');
-        if(encoding && encoding.toLowerCase()!=='identity')
-          throw new Error('文件下载启用了内容编码，无法逐字节核对');
-        const length=response.headers.get('content-length');
-        if(length!==null && (!/^\d+$/.test(length)||Number(length)!==expectedBytes))
-          throw new Error('文件下载长度与目录记录不一致');
-        if(!response.body || typeof response.body.getReader!=='function')
-          throw new Error('当前浏览器或文件接口不支持流式读取');
-        streams.push({reader:response.body.getReader(),bytes:new Uint8Array(0),offset:0,done:false});
-      }
-      let checked=0,lastReport=0;
-      async function refill(stream) {
-        while(!stream.done && stream.offset>=stream.bytes.length) {
-          const next=await stream.reader.read();
-          if(next.done){stream.done=true;break;}
-          if(next.value?.length){stream.bytes=next.value;stream.offset=0;}
-        }
-      }
-      while(true) {
-        await Promise.all(streams.map(refill));
-        if(streams.some(stream=>stream.done)) {
-          if(!streams.every(stream=>stream.done)||checked!==expectedBytes)
-            throw new Error('源文件与目标文件长度不一致');
-          onProgress(checked,expectedBytes);
-          return true;
-        }
-        const count=Math.min(...streams.map(stream=>stream.bytes.length-stream.offset));
-        if(checked+count>expectedBytes)throw new Error('读取量超过预期文件大小');
-        const [a,b]=streams;
-        for(let i=0;i<count;i++)if(a.bytes[a.offset+i]!==b.bytes[b.offset+i]) {
-          onProgress(checked+i,expectedBytes);
-          return false;
-        }
-        for(const stream of streams)stream.offset+=count;
-        checked+=count;
-        if(Date.now()-lastReport>400){lastReport=Date.now();onProgress(checked,expectedBytes);}
-      }
-    } finally {
-      await Promise.allSettled(streams.map(stream=>stream.reader.cancel()));
-      await Promise.allSettled(responses.map(async response=>{
-        try {if(response.body&&!response.body.locked)await response.body.cancel();}catch(_){}
-      }));
-    }
-  }
   function matchesCopyTask(active, plan) {
     return active && Number(active.action) === (plan.folder ? 3 : 8) &&
       active.source === plan.source && active.target === nativeCopyTarget(plan);
@@ -1850,7 +1789,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.13.0';
+  const DIAGNOSTIC_VERSION='0.2.13.1';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -2072,10 +2011,10 @@
         meaning:'任务持久化失败，操作状态可能待核实',
         checks:'先核对 IndexedDB 与 Unraid 原生任务结果，再决定是否恢复'
       },
-      'queue.recovery_readback_inconclusive':{
-        issue:'RECOVERY_VERIFICATION_BLOCKED',severity:'warning',
-        meaning:'刷新后自动内容核验未能确认复制完整性，原任务仍保留',
-        checks:'查看详情中的核验原因和原生任务状态，切勿清空队列或重发已提交项'
+      'queue.recovery_native_idle':{
+        issue:'RECOVERY_NATIVE_IDLE_NO_RECEIPT',severity:'warning',
+        meaning:'页面恢复时 Unraid 没有正在执行的原生任务，无法重放已丢失的完成回执',
+        checks:'按 taskId 查看队列，不自动重发原生请求；用户可选择不再执行本项，无需 SSH 核验'
       },
       'queue.recovery_native_read_failed':{
         issue:'RECOVERY_NATIVE_READ_FAILED',severity:'warning',
@@ -2544,6 +2483,24 @@
   const copyOwnerId='ufs_'+Date.now().toString(36)+'_'+
     Math.random().toString(36).slice(2,16);
   const COPY_LEASE_TTL=30000;
+  // taskId identifies one persisted record. An identical unfinished operation
+  // is a collision, whereas completed historical records remain separate.
+  function copyTaskSignature(record) {
+    if(!record || !Array.isArray(record.items))return '';
+    const items=record.items.map(item=>JSON.stringify([item.source,Boolean(item.folder)])).sort();
+    return JSON.stringify([record.operation||'copy',record.destination,
+      record.conflictPolicy,items]);
+  }
+  function findUnfinishedDuplicate(record,jobs=copyJobs) {
+    const signature=copyTaskSignature(record);
+    if(!signature)return null;
+    return jobs.find(job=>job.record && (
+      ['queued','running','uncertain','stopped'].includes(job.status) ||
+      job.record.items.some(item=>
+        ['intent-saved','unknown'].includes(item.submission) &&
+        !['success','skipped','excluded'].includes(item.status))) &&
+      copyTaskSignature(job.record)===signature) || null;
+  }
   function copySavedSnapshot() {
     return validateCopyQueueSnapshot({schema:COPY_QUEUE_SCHEMA,savedAt:Date.now(),
       tasks:copyJobs.filter(job=>job.record).map(job=>job.record)});
@@ -2746,6 +2703,9 @@
               execute:()=>executeRecoveredCopyJob(job)
             };
             copyJobs.push(job);
+            diagnosticLog('INFO','queue.restored_task',{
+              taskId:job.taskId,operation:record.operation||'copy',
+              items:record.items.length,status:job.status,originalStatus:record.status});
           }
           updateCopyTaskButton();
           // Reconnect only the already-running native rsync. No file writes,
@@ -2777,8 +2737,12 @@
     } // Network errors preserve the existing "待核实" state.
     if(destroyed)return;
     if(!active){
-      diagnosticLog('INFO','queue.recovery_native_initial_idle',{});
-      void checkIdleRecoveredNativeCopy();return;
+      // The server's active slot does not retain historical completion receipts.
+      // Preserve the saved task; never re-POST or read back both files.
+      diagnosticLog('INFO','queue.recovery_native_idle',{
+        unresolved:copyJobs.filter(job=>job.recovered&&job.status==='uncertain').length,
+        action:'hold-for-user-decision'});
+      return;
     }
     const matches=[];
     for(const job of copyJobs) {
@@ -2893,128 +2857,6 @@
     }
   }
 
-  async function verifyIdleRecoveredCopy(job,index,allowLarge=false) {
-    const item=job?.record?.items?.[index];
-    if(destroyed||!job?.recovered||!copyRecoveryLocked||job.recoveryVerifying||
-       job.recoveryMonitoring||job.status==='running'||!item||item.folder||
-       (job.record.operation&&job.record.operation!=='copy')||
-       !['intent-saved','unknown'].includes(item.submission))return;
-    if(!allowLarge&&Number.isFinite(item.size)&&item.size>RECOVERY_AUTO_CHECK_BYTES) {
-      diagnosticLog('INFO','queue.recovery_readback_deferred',{taskId:job.taskId,itemIndex:index,
-        bytes:item.size,reason:'large-file'});
-      job.recoveryVerifyMessage='文件较大，点击「自动核验文件」即可检查，无需命令行；此操作会读取源文件与目标文件。';
-      return;
-    }
-    job.recoveryVerifying=true;job.status='running';job.phase='verifying';
-    job.verifyProgress=null;job.recoveryVerifyMessage='';updateCopyTaskButton();
-    let verified=false;
-    try {
-      if(await readNativeActive())throw new Error('原生任务仍在运行，不允许开始核验');
-      const target=job.destination+'/'+fileName(item.source);
-      const inspect=async()=>{
-        const [sources,targets]=await Promise.all([
-          listDirectory(parentPath(item.source)),listDirectory(job.destination)]);
-        return {origin:sources.find(e=>e.path===item.source),
-          dest:targets.find(e=>e.path===target)};
-      };
-      const before=await inspect(),origin=before.origin,dest=before.dest;
-      if(!origin||!dest||origin.folder||dest.folder||
-         origin.copyPathVerified===false||dest.copyPathVerified===false||
-         !Number.isSafeInteger(origin.size)||!Number.isSafeInteger(dest.size))
-        throw new Error('源文件或目标文件不存在，或元信息不可信');
-      if(Number.isFinite(item.size)&&origin.size!==item.size)
-        throw new Error('源文件大小与最初记录不一致');
-      if(origin.size!==dest.size)
-        throw new Error('源文件与目标文件长度不同，疑似部分复制');
-      if(!allowLarge&&origin.size>RECOVERY_AUTO_CHECK_BYTES) {
-        diagnosticLog('INFO','queue.recovery_readback_deferred',{taskId:job.taskId,itemIndex:index,
-          bytes:origin.size,reason:'large-file'});
-        return;
-      }
-      diagnosticLog('INFO','queue.recovery_readback_started',{taskId:job.taskId,itemIndex:index,
-        bytes:origin.size});
-      const identical=await compareRecoveryFileStreams(item.source,target,origin.size,(done,total)=>{
-        if(destroyed)return;
-        job.verifyProgress=total?Math.floor(done/total*100):100;updateCopyTaskButton();
-      });
-      if(!identical)throw new Error('源文件与目标文件内容不一致');
-      const after=await inspect();
-      if(!after.origin||!after.dest||origin.size!==after.origin.size||
-         origin.mtime!==after.origin.mtime||dest.size!==after.dest.size||
-         dest.mtime!==after.dest.mtime)
-        throw new Error('文件在核验过程中发生变化');
-      if(await readNativeActive())throw new Error('核验结束时原生任务占用');
-      try {
-        await verifyRecoveredNativeCopy(job,index);
-      } catch(error) {
-        // The original page's IndexedDB writer lease may outlive a reload.
-        // Never steal it. Wait until it naturally expires, then re-check
-        // that both files are still unchanged before trying the checkpoint.
-        if(!String(error?.message||'').includes('旧租约占用'))throw error;
-        const lease=await copyLeaseObservation();
-        if(!lease || !(lease.remainingMs>0) || lease.remainingMs>COPY_LEASE_TTL)
-          throw error;
-        diagnosticLog('INFO','queue.recovery_wait_old_lease',
-          {taskId:job.taskId,remainingMs:lease.remainingMs});
-        await waitNative(Math.ceil(lease.remainingMs)+180);
-        if(destroyed)return;
-        const finalState=await inspect();
-        if(!finalState.origin||!finalState.dest||
-           finalState.origin.size!==origin.size||finalState.origin.mtime!==origin.mtime||
-           finalState.dest.size!==dest.size||finalState.dest.mtime!==dest.mtime||
-           await readNativeActive())
-          throw new Error('等待旧租约过期期间文件或原生任务状态变化');
-        await verifyRecoveredNativeCopy(job,index);
-      }
-      verified=true;
-      diagnosticLog('INFO','queue.recovery_readback_verified',{taskId:job.taskId,itemIndex:index,
-        bytes:origin.size,method:'stream-byte-equality'});
-    } catch(error) {
-      if(!destroyed){
-        job.recoveryVerifyMessage=String(error?.message||error);
-        diagnosticLog('WARN','queue.recovery_readback_inconclusive',
-          {taskId:job.taskId,itemIndex:index,message:job.recoveryVerifyMessage});
-      }
-    } finally {
-      job.recoveryVerifying=false;job.verifyProgress=null;
-      if(!destroyed&&!verified){
-        job.status='uncertain';job.phase='uncertain';copyQueuePaused=true;copyRecoveryLocked=true;
-      }
-      if(!destroyed)updateCopyTaskButton();
-    }
-  }
-  async function checkIdleRecoveredNativeCopy() {
-    // Probe only while the restored queue is still locked. A user may have
-    // already resolved the item and resumed normal writes in another tick.
-    if(!copyRecoveryLocked || copyQueueRunning)return;
-    await waitNative(750);
-    if(destroyed || !copyRecoveryLocked || copyQueueRunning)return;
-    let active;
-    try {active=await readNativeActive();}
-    catch(error){
-      diagnosticLog('WARN','queue.recovery_native_read_failed',
-        {message:error?.message,probe:'second'});
-      return;
-    }
-    if(destroyed || !copyRecoveryLocked || copyQueueRunning)return;
-    if(active){
-      diagnosticLog('INFO','queue.recovery_native_reappeared',{action:Number(active.action)});
-      void monitorRecoveredNativeTask();return;
-    }
-    const candidates=[];
-    for(const job of copyJobs)if(job.recovered)
-      for(let i=0;i<job.record.items.length;i++){
-        const item=job.record.items[i];
-        if(['intent-saved','unknown'].includes(item.submission)&&
-           ['submission-intent','copying','verifying','uncertain'].includes(item.status))
-          candidates.push({job,index:i});
-      }
-    diagnosticLog('INFO','queue.recovery_native_idle',{candidates:candidates.length});
-    if(candidates.length!==1)return;
-    const {job,index}=candidates[0];
-    if((job.record.operation||'copy')==='copy'&&!job.record.items[index].folder)
-      await verifyIdleRecoveredCopy(job,index);
-  }
   async function verifyRecoveredNativeBatch(job) {
     const plans=savedMoveBatchPlans(job.record);
     if(!plans || destroyed)throw new Error('无法恢复不可信的原生批量移动');
@@ -3200,7 +3042,7 @@
       return;
     }
     if(copyJobs.some(j=>j.recovered&&j.status==='uncertain')) {
-      notify('存在原生结果待核实的任务，请先逐项核实并排除，不能直接恢复队列');
+      notify('存在原生完成结果未知的任务，请先决定是否不再执行该项；不能安全地自动重试');
       return;
     }
     const queuedDelete=copyJobs.some(job=>job.recovered&&job.status==='queued'&&job.record.operation==='delete');
@@ -3252,25 +3094,18 @@
       const label=job.recoveryMonitoring && (job.recoveryBatch||job.recoveryMonitorIndex===i)?(job.record.operation==='delete'?'原生删除中':job.record.operation==='move'?'原生移动中':'原生复制中'):
         item.status==='success'?'已完成':
         item.status==='skipped'?'已忽略':
-        item.status==='excluded'?'已核实并跳过':
+        item.status==='excluded'?'已排除，不重复执行':
         ['submission-intent','copying','verifying','uncertain'].includes(item.status) ||
-        ['intent-saved','unknown'].includes(item.submission)?'待核实':
+        ['intent-saved','unknown'].includes(item.submission)?'结果未确认':
         item.status==='queued'?'等待恢复':'需要检查';
       row.append(element('span','',item.name+' · '+label));
       if(['原生复制中','原生移动中','原生删除中'].includes(label)) row.append(element('span','ufs-batch-meta',
         copyJobMeta(job)+(Number.isFinite(job.percent)?' · '+Math.floor(job.percent)+'%':'')));
-      if(label==='待核实'&&(job.record.operation||'copy')==='copy'&&
-         !item.folder&&job.status!=='running'){
-        const verify=element('button','ufs-task-center-remove','自动核验文件');
-        verify.type='button';
-        verify.addEventListener('click',()=>{overlay.remove();void verifyIdleRecoveredCopy(job,i,true);});
-        row.append(verify);
-      }
-      if((label==='待核实'||label==='需要检查') && job.status!=='running') {
-        const skip=element('button','ufs-task-center-remove','已人工核实，跳过此项');
+      if((label==='结果未确认'||label==='需要检查') && job.status!=='running') {
+        const skip=element('button','ufs-task-center-remove','不再执行此项');
         skip.type='button';
         skip.addEventListener('click',async()=>{
-          if(!window.confirm('请先在 Unraid 核实该项操作结果。\n选择跳过后本队列不会重新执行该操作，确认吗？'))return;
+          if(!window.confirm('Unraid 原生任务目前不在活动列表，但缺少上一次操作的完成回执。\n\n确认后此项将不会重新执行，并不代表已经证明文件完整。后续队列仍需单独手动恢复。确认不再执行此项？'))return;
           try {
             await ensureCopyOwnership();
             if(await readNativeActive()) throw new Error('Unraid 仍有原生任务运行，禁止清除此状态');
@@ -3293,8 +3128,6 @@
       }
       body.append(row);
     }
-    if(job.recoveryVerifyMessage)body.append(element('div','ufs-error',
-      '自动核验尚未完成：'+job.recoveryVerifyMessage));
     const footer=element('div','ufs-create-buttons');
     const done=element('button','ufs-create-submit','关闭');
     done.type='button';done.addEventListener('click',()=>overlay.remove());
@@ -3378,6 +3211,12 @@
     if(JSON.stringify(fresh?.tasks||[])!==lastPersistedTasks) {
       diagnosticLog('WARN','queue.snapshot_conflict',{operation:job.record?.operation||'copy'});
       throw new Error('队列记录已由其他页面实例更新，请刷新页面并核实任务，禁止覆盖旧记录');
+    }
+    const duplicate=findUnfinishedDuplicate(job.record);
+    if(duplicate){
+      diagnosticLog('WARN','queue.duplicate_blocked',{
+        existingTaskId:duplicate.taskId,newTaskId:job.taskId});
+      throw new Error('相同来源、目标与操作的任务仍在队列中，请先处理已有任务，避免重复执行');
     }
     job.id=++copyJobCounter;
     job.status='queued';
@@ -3583,6 +3422,7 @@
     const body=element('div','ufs-task-center-body');
     for(const job of copyJobs) {
       const row=element('div','ufs-task-center-row');
+      row.dataset.taskId=job.taskId||'';
       row.dataset.status=job.status;
       row.dataset.phase=job.phase||'';
       const line=element('div','ufs-task-center-line');
@@ -3590,12 +3430,13 @@
       main.type='button';
       main.dataset.taskFocus='open-'+job.id;
       const info=element('span','ufs-task-center-name',job.name);
-      info.title=job.name;
+      info.title=job.name+' · 任务 '+String(job.taskId||job.id).slice(-8);
       const statusWrap=element('span','ufs-task-center-state');
       if(job.status==='running') statusWrap.append(copySpinner());
       else statusWrap.append(icon(job.status==='queued'?'clock-3':
         job.status==='success'?'check-circle':'alert-circle'));
-      statusWrap.append(element('span','ufs-task-center-status',copyJobStatusLabel(job)));
+      statusWrap.append(element('span','ufs-task-center-status',
+        job.status==='success'?'历史 · 已完成':copyJobStatusLabel(job)));
       main.append(info,statusWrap);
       main.addEventListener('click',()=>{closeCopyTaskCenter();job.reopen();});
       line.append(main);
@@ -3645,19 +3486,17 @@
       const panel=element('div','ufs-task-center-paused ufs-task-recovery');
       const uncertain=copyJobs.filter(job=>job.recovered&&job.status==='uncertain').length;
       const waiting=copyJobs.filter(job=>job.recovered&&job.status==='queued').length;
-      const monitoring=copyJobs.some(job=>job.recovered&&(job.recoveryMonitoring||job.recoveryVerifying));
-        const verifying=copyJobs.some(job=>job.recovered&&job.recoveryVerifying);
-      panel.append(element('div','',monitoring?(verifying?
-        '正在自动核验源文件与目标文件内容；后续队列保持暂停。':
-        '已重新连接 Unraid 正在复制的原生任务；后续队列仍暂停，原生任务结束并核实后才能手动恢复。'):
-        uncertain?'上次复制有 '+uncertain+' 项待核实。请打开任务详情，核实后选择跳过；不能自动重试。':
+      const monitoring=copyJobs.some(job=>job.recovered&&job.recoveryMonitoring);
+      panel.append(element('div','',monitoring?
+        '已重新连接 Unraid 正在执行的原生文件任务；尚未提交的队列保持暂停。':
+        uncertain?'上次有 '+uncertain+' 项已提交的原生任务失去完成回执。可选择不再执行该项，再决定是否继续队列；不会自动重做。':
         '检测到上次保存的 '+waiting+' 项待恢复任务，当前队列已暂停。'));
       const later=element('button','','稍后处理');
       later.type='button';later.dataset.taskFocus='later';
       later.addEventListener('click',()=>closeCopyTaskCenter(true));
       panel.append(later);
-      const confirm=element('button','',monitoring?(verifying?'等待核验完成':'等待当前复制完成'):
-        uncertain?'请先核实任务':'确认恢复队列');
+      const confirm=element('button','',monitoring?'等待当前复制完成':
+        uncertain?'请先处理上次任务':'确认恢复队列');
       confirm.type='button';confirm.disabled=monitoring || uncertain>0 || waiting===0;
       confirm.dataset.taskFocus='recover';
       confirm.addEventListener('click',()=>void confirmRecoveredCopyQueue());
@@ -3745,9 +3584,8 @@
     const waitingRestore=copyJobs.filter(job=>job.recovered&&job.status==='queued').length;
     const needsCheck=copyJobs.filter(job=>job.recovered&&job.status==='uncertain').length;
     const text=copyRecoveryLocked?
-      (active?.recoveryVerifying?'正在核验文件'+(Number.isFinite(active.verifyProgress)?' '+active.verifyProgress+'%':'')+' · 队列暂停':
-        active?.recoveryMonitoring?'原生文件操作中 · 队列暂停':
-        needsCheck?'有 '+needsCheck+' 项任务待核实':'有 '+waitingRestore+' 项任务待恢复'):
+      (active?.recoveryMonitoring?'原生文件操作中 · 队列暂停':
+        needsCheck?'有 '+needsCheck+' 项原生任务待处理':'有 '+waitingRestore+' 项任务待恢复'):
       copyQueuePaused&&queued?'文件任务已暂停':
       active?copyJobPhaseLabel(active):
       queued?'等待中':complete?(copyJobs.some(job=>job.record?.operation==='delete')?'文件任务完成 ':'复制完成 ')+copyJobs.length+' 项':
@@ -3784,8 +3622,7 @@
       const percent=button.querySelector('.ufs-task-badge-percent');
       const speed=button.querySelector('.ufs-task-badge-speed');
       if(percent) {
-        percent.textContent=active.recoveryVerifying?'':
-          active.phase==='copying' && Number.isFinite(active.percent)?
+        percent.textContent=active.phase==='copying' && Number.isFinite(active.percent)?
           ' '+Math.floor(active.percent)+'%':'';
         percent.hidden=!percent.textContent;
       }
@@ -7654,7 +7491,7 @@
   if (isDemo && window.__UFS_TEST_MODE__ === true) {
     window.__UFS_TEST_API__ = { diagnosticSanitize, diagnosticScrub, diagnosticLog,
     diagnosticReadAll, diagnosticSnapshot, diagnosticMarkIssue, diagnosticSetVerbose,
-    diagnosticIsVerbose, normalizeSavedCopyItem, normalizeSavedCopyTask, validateCopyQueueSnapshot, copyRecoveryAssessment, createCopyQueueStore, currentCopySpeed, copyJobPhaseLabel, copyJobStatusLabel, copyJobMeta, findBatchCopyConflicts, findBatchCopyTypeConflicts, batchCopyOverallProgress, safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, COPY_ENABLED, MOVE_ENABLED, DELETE_ENABLED, matchesMoveTask, matchesDeleteTask, deleteNativeEntry, moveNativeEntry, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, nativeCopyTarget, matchesCopyTask, copyDestinationAllowed, copyNativeEntry, compareRecoveryFileStreams, decodeRsyncFilename, parseRsyncProgress, shortenCopyName, requestCancelNativeCopy, takeOverNativeFileMonitor, availableHeight, visibleEntries, sortedCopyFolders, safeCopyName, safeCopyPath, copyBlockedReason, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
+    diagnosticIsVerbose, normalizeSavedCopyItem, normalizeSavedCopyTask, validateCopyQueueSnapshot, copyRecoveryAssessment, createCopyQueueStore, currentCopySpeed, copyJobPhaseLabel, copyJobStatusLabel, copyJobMeta, findBatchCopyConflicts, findBatchCopyTypeConflicts, batchCopyOverallProgress, safePath, formatSize, encodeFileUrl, parseBrowse, extractLocations, locationNames, fitLocationNames, renderLocationTags, listDirectory, safeWriteName, safeWritePath, planFileOperation, previewNativeOperationRequest, createFileOperationCoordinator, FILE_WRITES_ENABLED, CREATE_FOLDER_ENABLED, RENAME_ENABLED, COPY_ENABLED, MOVE_ENABLED, DELETE_ENABLED, matchesMoveTask, matchesDeleteTask, deleteNativeEntry, moveNativeEntry, parseNativeActive, matchesCreateTask, matchesRenameTask, renameSelectionEnd, remapPathPrefix, resolveRenamedFolderPath, applyRenameToBrowser, createNativeFolder, renameNativeEntry, nativeCopyTarget, matchesCopyTask, copyDestinationAllowed, copyNativeEntry, copyTaskSignature, findUnfinishedDuplicate, decodeRsyncFilename, parseRsyncProgress, shortenCopyName, requestCancelNativeCopy, takeOverNativeFileMonitor, availableHeight, visibleEntries, sortedCopyFolders, safeCopyName, safeCopyPath, copyBlockedReason, selectedEntries, breadcrumbDisplayPaths, renderHeaderMarkup, renderBrowserBarMarkup, renderFileActionsMarkup, renderWorkspaceMarkup, COLUMNS, clampColumnWidth, readColumnWidths, columnLayout, inspectListScrollMetrics, virtualWindow, virtualGridColumns, firstSharePath, defaultSharePath, isShareRoot, selectionStatus, updateSelection, shouldSuppressTextSelection, state };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin, { once: true });
   else begin();

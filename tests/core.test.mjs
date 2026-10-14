@@ -2133,7 +2133,7 @@ test('v0.2.7 恢复任务仅展示记录，自动暂停，必须手动确认',()
   assert.match(script,/稍后处理/);
   assert.match(script,/if\(copyQueueRunning \|\| copyQueuePaused \|\| copyRecoveryLocked/);
   assert.match(script,/if\(copyRecoveryLocked \|\| !copyQueuePaused/);
-  assert.match(script,/请先逐项核实并排除/);
+  assert.match(script,/先决定是否不再执行该项/);
   assert.match(script,/function executeRecoveredCopyJob\(job\)/);
 });
 
@@ -2866,58 +2866,42 @@ test('v0.2.12 提交意图落盘后原生任务占用或读取失败：复制、
 });
 
 
-test('v0.2.13 只读流式核验支持不同分块大小，内容完全一致才成功',async()=>{
-  const chunksFor=(values,chunkSizes)=>{
-    let offset=0;
-    return new ReadableStream({pull(controller){
-      if(offset>=values.length){controller.close();return;}
-      const count=chunkSizes.shift()||values.length;
-      controller.enqueue(Uint8Array.from(values.slice(offset,offset+count)));
-      offset+=count;
-    }});
-  };
-  const content=[0,1,2,3,4,255,129,0,99,42];
-  const calls=[];
-  const {api}=createAPI({fetch:async(url,options)=>{
-    calls.push({url,method:options.method});
-    const first=url.includes('source');
-    const bytes=first?[1,3,2,4]:[2,1,5,2];
-    return new Response(chunksFor(content,bytes),{
-      headers:{'content-type':'application/octet-stream','content-length':String(content.length)}
-    });
-  }});
-  const progress=[];
-  assert.equal(await api.compareRecoveryFileStreams(
-    '/mnt/user/verify/source.bin','/mnt/user/verify/target.bin',content.length,
-    (done,total)=>progress.push([done,total])),true);
-  assert.equal(calls.length,2);
-  assert.ok(calls.every(call=>call.method==='GET'));
-  assert.deepEqual(progress.at(-1),[10,10]);
-});
-
-test('v0.2.13 相同文件大小但不同内容不得误认完整',async()=>{
-  const {api}=createAPI({fetch:async url=>new Response(
-    Uint8Array.from(url.includes('source')?[1,2,3,4]:[1,2,9,4]),{
-      headers:{'content-type':'application/octet-stream','content-length':'4'}
-    })
+test('v0.2.13.1 相同未结束的任务按语义识别并阻止重复入队',()=>{
+  const {api}=createAPI();
+  const task=(operation='copy',status='queued',destination='/mnt/user/downloads')=>({
+    taskId:'copy_test'+operation,operation,status,destination,conflictPolicy:'skip',
+    items:[{source:'/mnt/user/TimeMachine/notes.txt',folder:false,submission:'not-submitted',status}]
   });
-  assert.equal(await api.compareRecoveryFileStreams(
-    '/mnt/user/verify/source.bin','/mnt/user/verify/target.bin',4),false);
+  const first={taskId:'job_1',status:'queued',record:task()};
+  const duplicate=task();duplicate.items[0].status='checking';
+  assert.equal(api.findUnfinishedDuplicate(duplicate,[first]).taskId,'job_1');
+  assert.equal(api.findUnfinishedDuplicate(task('move'),[first]),null);
+  assert.equal(api.findUnfinishedDuplicate(task('copy','queued','/mnt/user/appdata'),[first]),null);
+  // A completed record with the same name is historical, not a second unfinished write.
+  assert.equal(api.findUnfinishedDuplicate(task(),[{...first,status:'success',
+    record:{...first.record,items:[{...first.record.items[0],status:'success',submission:'confirmed'}]}}]),null);
 });
 
-test('v0.2.13 长度错误、登录页面、禁区路径必须拒绝自动核验',async()=>{
-  let calls=0;
-  const {api}=createAPI({fetch:async url=>{
-    calls++;
-    if(url.includes('source'))return new Response('<html>登录</html>',{
-      headers:{'content-type':'text/html'}});
-    return new Response(new Uint8Array([1,2,3,4]),{
-      headers:{'content-length':'4','content-type':'application/octet-stream'}
-    });
-  }});
-  await assert.rejects(api.compareRecoveryFileStreams(
-    '/mnt/user/verify/source.bin','/mnt/user/verify/target.bin',4),/网页/);
-  await assert.rejects(api.compareRecoveryFileStreams(
-    '/mnt/disk1/secret.bin','/mnt/user/verify/target.bin',4),/不安全/);
-  assert.equal(calls,2);
+test('v0.2.13.1 已提交但结果不明的任务不得再次按相同操作入队',()=>{
+  const {api}=createAPI();
+  const item={source:'/mnt/user/TimeMachine/notes.txt',folder:false,status:'uncertain',submission:'unknown'};
+  const a={taskId:'copy_old_1234',operation:'copy',destination:'/mnt/user/downloads',
+    conflictPolicy:'overwrite',items:[item]};
+  const jobs=[{taskId:a.taskId,status:'uncertain',record:a}];
+  const candidate={...a,taskId:'copy_new_1234',items:[{...item,status:'queued',submission:'not-submitted'}]};
+  assert.equal(api.findUnfinishedDuplicate(candidate,jobs)?.taskId,a.taskId);
+  // "skip" policy is semantically different; it must not be treated as the same operation.
+  assert.equal(api.findUnfinishedDuplicate({...candidate,conflictPolicy:'skip'},jobs),null);
+});
+
+test('v0.2.13.1 刷新恢复只重连原生执行器，不触发浏览器文件流式读取',()=>{
+  const {api}=createAPI();
+  assert.equal('compareRecoveryFileStreams' in api,false);
+  assert.equal(typeof api.matchesCopyTask,'function');
+  assert.equal(api.matchesCopyTask(
+    {action:8,source:'/mnt/user/TimeMachine/notes.txt',target:'/mnt/user/downloads/'},
+    {folder:false,source:'/mnt/user/TimeMachine/notes.txt',destinationDir:'/mnt/user/downloads'}),true);
+  assert.equal(api.matchesCopyTask(
+    {action:8,source:'/mnt/user/TimeMachine/notes.txt',target:'/mnt/user/other/'},
+    {folder:false,source:'/mnt/user/TimeMachine/notes.txt',destinationDir:'/mnt/user/downloads'}),false);
 });
