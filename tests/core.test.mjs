@@ -94,6 +94,72 @@ test('任务清理等待保存检查时拒绝重复操作',async()=>{
   assert.equal(writes.length,1);
 });
 
+function createRecoveredDiscardHarness(overrides={}) {
+  const completed={id:1,taskId:'copy_completed',status:'success',recovered:true,
+    record:{taskId:'copy_completed',items:[{status:'success',submission:'confirmed'}]}};
+  const queued={id:2,taskId:'copy_waiting',status:'queued',recovered:true,
+    record:{taskId:'copy_waiting',items:[
+      {status:'success',submission:'confirmed'},
+      {status:'queued',submission:'not-submitted'}
+    ]}};
+  const jobs=[completed,queued],writes=[],messages=[],events=[];
+  const saved=jobs.map(job=>job.record);
+  const context={
+    copyJobs:jobs,copyCleanupPending:false,copyCleanupError:'',
+    copyQueuePaused:true,copyRecoveryLocked:true,destroyed:false,
+    copyPersistTail:Promise.resolve(),lastPersistedTasks:JSON.stringify(saved),
+    initializeCopyPersistence:async()=>{},ensureCopyOwnership:async()=>{},
+    persistentCopyStore:{read:async()=>({tasks:saved})},
+    persistCopyQueue:async()=>{writes.push(jobs.map(job=>job.taskId));},
+    updateCopyTaskButton:()=>{},releaseIdleCopyOwnership:async()=>false,
+    closeCopyTaskCenter:()=>{},showCopyTaskCenter:()=>{},
+    diagnosticLog:(level,code)=>events.push({level,code}),
+    notify:message=>messages.push(message),
+    copyPersistenceFailure:()=>{throw new Error('不应将租约冲突当成持久化故障');},
+    ...overrides
+  };
+  const begin=script.indexOf('  async function discardRecoveredCopyJob(');
+  const end=script.indexOf('  async function executeRecoveredCopyJob(',begin);
+  assert.ok(begin>=0 && end>begin);
+  vm.runInNewContext(script.slice(begin,end),context);
+  return {jobs,writes,messages,events,context,completed,queued,
+    discard:context.discardRecoveredCopyJob};
+}
+
+test('v0.2.13.2 旧租约暂时阻挡恢复记录清理，租约解除后不用 F5 即可重试',async()=>{
+  let blocked=true;
+  const h=createRecoveredDiscardHarness({
+    ensureCopyOwnership:async()=>{if(blocked)throw new Error('旧租约尚未过期');}
+  });
+  await h.discard(h.queued);
+  assert.deepEqual(h.jobs.map(job=>job.taskId),['copy_completed','copy_waiting']);
+  assert.equal(h.writes.length,0);
+  assert.match(h.context.copyCleanupError,/旧租约尚未过期/);
+  assert.equal(h.context.copyCleanupPending,false);
+  blocked=false;
+  await h.discard(h.queued);
+  assert.deepEqual(h.jobs.map(job=>job.taskId),['copy_completed']);
+  assert.equal(h.writes.length,1);
+  assert.equal(h.context.copyRecoveryLocked,false);
+  assert.equal(h.context.copyQueuePaused,false,'只有完成记录时必须释放队列暂停锁');
+  assert.ok(h.events.some(event=>event.code==='queue.recovered_record_removed'));
+});
+
+test('v0.2.13.2 恢复记录持久化失败要回滚，不得吞掉待核实项',async()=>{
+  const h=createRecoveredDiscardHarness({
+    persistCopyQueue:async()=>{throw new Error('模拟 IndexedDB 保存失败');}
+  });
+  await h.discard(h.queued);
+  assert.deepEqual(h.jobs.map(job=>job.taskId),['copy_completed','copy_waiting']);
+  assert.equal(h.context.copyRecoveryLocked,true);
+  assert.equal(h.context.copyQueuePaused,true);
+  assert.match(h.context.copyCleanupError,/模拟 IndexedDB 保存失败/);
+  h.queued.record.items[1].submission='intent-saved';
+  await h.discard(h.queued);
+  assert.match(h.context.copyCleanupError,/已提交或待核实项目/);
+  assert.equal(h.jobs.length,2);
+});
+
 function createAPI(options = {}) {
   const rows = [];
   const sandbox = {
