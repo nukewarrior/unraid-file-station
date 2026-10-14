@@ -3428,6 +3428,27 @@ test('v0.2.9 移动普通文件复用复制选择树，原生任务 action 9 不
   assert.equal(errors.length,0,errors.join('\n'));
 });
 
+test('v0.2.13.4 同名文件夹移动直接调用原生 action 4 合并，不跳过整目录',async t=>{
+  const {page,errors,nativePosts,moved}=await pageFor(t,{
+    copyConflictDest:'/mnt/user/downloads',
+    copyConflictNames:[['Photos',true]]
+  });
+  await page.locator('.ufs-entry').filter({hasText:'Photos'}).first().click();
+  await page.locator('.ufs-operations').click();
+  await page.getByRole('menuitem',{name:'移动到…'}).click();
+  const dialog=page.getByRole('dialog',{name:'移动到'});
+  assert.equal(await dialog.locator('.ufs-copy-policy-radio[value="skip"]').isChecked(),true);
+  await page.getByRole('button',{name:'选择 downloads'}).click();
+  await dialog.getByRole('button',{name:'开始移动'}).click();
+  await page.locator('.ufs-copy-progress-panel[data-phase="success"]').waitFor({timeout:20000});
+  const submits=nativePosts.filter(x=>x.mode==='file' && x.action==='4');
+  assert.equal(submits.length,1,'同名文件夹不应整体跳过');
+  assert.equal(submits[0].exist,'','空 exist 由原生 Control.php 解释为忽略同名文件');
+  assert.equal(moved.length,1);
+  assert.match(await dialog.innerText(),/移动完成|文件夹已合并/);
+  assert.equal(errors.length,0,errors.join('\n'));
+});
+
 test('v0.2.10 删除单文件通过二次确认窗口执行原生 action 6',async t=>{
   const {page,deleted,nativePosts,errors}=await pageFor(t);
   await page.locator('.ufs-entry').filter({hasText:'notes.txt'}).first().click();
