@@ -3447,6 +3447,24 @@ test('v0.2.13.4 同名文件夹移动直接调用原生 action 4 合并，不跳
   assert.equal(submits[0].exist,'','空 exist 由原生 Control.php 解释为忽略同名文件');
   assert.equal(moved.length,1);
   assert.match(await dialog.innerText(),/移动完成|文件夹已合并/);
+  await page.locator('.ufs-diagnostic-button').click();
+  const exported=page.waitForEvent('download');
+  await page.getByRole('dialog',{name:'File Station 诊断中心'})
+    .getByRole('button',{name:'导出 JSON'}).click();
+  const file=await exported;
+  const report=JSON.parse(readFileSync(await file.path(),'utf8'));
+  const preflight=report.events.find(e=>e.code==='move.preflight');
+  assert.equal(preflight?.details.conflictPolicy,'skip');
+  assert.equal(preflight?.details.targetExistedBefore,true);
+  assert.equal(preflight?.details.mergeCandidate,true);
+  assert.equal(preflight?.details.nativeAction,'4');
+  const intent=report.events.find(e=>e.code==='move.intent');
+  assert.equal(intent?.details.nestedConflictInspection,'not-performed');
+  const result=report.events.find(e=>e.code==='move.verified');
+  assert.equal(result?.details.targetExistedBefore,true);
+  assert.equal(result?.details.moveOutcome,'merged');
+  assert.equal(result?.details.verificationScope,'top-level-only');
+  assert.equal(result?.details.nestedConflictInspection,'not-performed');
   assert.equal(errors.length,0,errors.join('\n'));
 });
 
@@ -4074,6 +4092,13 @@ test('v0.2.11.6 移动完成诊断提供可归因的分段耗时，不重复提�
   assert.ok(details.polls>=2);
   assert.equal(typeof details.observedOwnTask,'boolean');
   assert.equal(typeof details.observedDone,'boolean');
+  assert.equal(details.conflictPolicy,'skip');
+  assert.equal(details.targetExistedBefore,false);
+  assert.equal(details.moveOutcome,'moved');
+  assert.equal(details.verificationScope,'top-level-size-if-available');
+  const preflight=report.events.find(e=>e.code==='move.preflight');
+  assert.equal(preflight?.details.targetExistedBefore,false);
+  assert.equal(preflight?.details.conflictPolicy,'skip');
   assert.equal(moved.length,1);
   assert.equal(nativePosts.filter(x=>x.mode==='file'&&x.action==='9').length,1);
   assert.equal(errors.length,0,errors.join('\n'));
@@ -4113,6 +4138,12 @@ test('v0.2.11.7 同目录两普通文件一次原生批量 Move，所有项目�
   assert.equal(audit.length,1);
   assert.equal(audit[0].details.count,2);
   assert.equal(audit[0].details.strategy,'native-cr-source');
+  assert.equal(audit[0].details.conflictPolicy,'skip');
+  assert.equal(audit[0].details.targetExistingCount,0);
+  assert.equal(audit[0].details.nestedConflictInspection,'not-performed');
+  const preflight=diagnostic.events.find(e=>e.code==='move.batch_preflight');
+  assert.equal(preflight?.details.targetExistingCount,0);
+  assert.equal(preflight?.details.conflictPolicy,'skip');
   assert.equal(errors.length,0,errors.join('\n'));
 });
 
