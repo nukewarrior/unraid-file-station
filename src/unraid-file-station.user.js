@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.13.3
+// @version      0.2.13.4
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -1117,14 +1117,14 @@
         throw new Error('同名目标路径无法核实，拒绝移动');
       if(existing && plan.conflictPolicy==='fail')
         throw new Error('目标存在同名项目，禁止移动或合并');
-      if(existing && plan.conflictPolicy==='skip') {
+      if(existing && existing.folder!==plan.folder)
+        throw new Error('目标同名文件与文件夹类型不同，拒绝移动以保护已有内容');
+      // For a directory, let native rsync merge descendants. With
+      // --ignore-existing only conflicting *files* remain in source.
+      if(existing && plan.conflictPolicy==='skip' && !plan.folder) {
         diagnosticLog('INFO','move.skipped_conflict',{source:plan.source,target:plan.target});
-        // Keep the original source untouched, even when the conflict is a folder.
         return {...origin,copyOutcome:'skipped',moveOutcome:'skipped'};
       }
-      // A folder collision is never treated as an implicit replace/merge.
-      if(existing && (existing.folder || plan.folder || existing.folder!==plan.folder))
-        throw new Error('移动覆盖仅支持同名普通文件，不允许覆盖或合并文件夹');
       if(await readNativeActive())throw new Error('Unraid 原生任务正在运行');
       nativeCsrfToken();
       if(beforeSubmit)await beforeSubmit(); // Durable intent BEFORE native POST.
@@ -1177,15 +1177,23 @@
           listDirectory(parentPath(plan.source)),listDirectory(plan.destinationDir)
         ]);
         const target=afterDestination.find(x=>x.path===plan.target);
-        if(afterSource.some(x=>x.path===plan.source) || !target ||
+        const sourceRemains=afterSource.some(x=>x.path===plan.source);
+        // Native --ignore-existing --remove-source-files can leave the
+        // directory in source when conflicting child files were skipped.
+        const partiallyMerged=sourceRemains && plan.folder &&
+          plan.conflictPolicy==='skip' && target?.folder===true &&
+          target.copyPathVerified!==false;
+        if((sourceRemains && !partiallyMerged) || !target ||
            target.folder!==plan.folder || target.copyPathVerified===false)
           throw new Error('源仍存在或目标未核实，移动可能不完整');
         if(!plan.folder && Number.isFinite(origin.size)&&Number.isFinite(target.size)&&
            origin.size!==target.size)throw new Error('移动前后文件大小不同');
         diagnosticLog('INFO','move.verified',{source:plan.source,target:plan.target,
+          partial:partiallyMerged,merged:!!existing&&plan.folder,
           requestMs,monitorMs,verifyMs:Date.now()-verificationStartedAt,
           totalMs:Date.now()-startedAt,polls,observedOwnTask:seen,observedDone:done});
-        return {...target,moveOutcome:'moved'};
+        return {...target,moveOutcome:partiallyMerged?'merged-partial':
+          existing&&plan.folder?'merged':'moved'};
       }catch(error){
         diagnosticLog('ERROR','move.failed',{submitted,message:error?.message});
         if(submitted)throw new Error('移动请求可能已提交；结果不确定，源目录可能部分删除。请检查两处目录，切勿直接重试。详情：'+String(error?.message||error));
@@ -1801,7 +1809,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.13.3';
+  const DIAGNOSTIC_VERSION='0.2.13.4';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -2294,7 +2302,8 @@
     if (!item || typeof item!=='object' || Array.isArray(item) ||
         !safeCopyPath(item.source) || typeof item.folder!=='boolean' ||
         !COPY_QUEUE_STATES.has(item.status) ||
-        !['not-submitted','intent-saved','confirmed','unknown'].includes(item.submission)) {
+        !['not-submitted','intent-saved','confirmed','unknown'].includes(item.submission) ||
+        (item.moveOutcome!==undefined && item.moveOutcome!=='merged-partial')) {
       throw new Error('持久化复制项目格式错误或路径不安全');
     }
     return {
@@ -2302,6 +2311,7 @@
       name:fileName(item.source),
       size:Number.isFinite(item.size)&&item.size>=0?item.size:null,
       status:item.status,submission:item.submission,
+      ...(item.moveOutcome==='merged-partial'?{moveOutcome:'merged-partial'}:{}),
       updatedAt:Number.isFinite(item.updatedAt)?item.updatedAt:0
     };
   }
@@ -3084,6 +3094,8 @@
           job.record.operation==='move'?moveNativeEntry:copyNativeEntry)(plan,(_,phase,info)=>{
           copyJobSignal(job,phase,info);
         },{},async()=>copyItemCheckpoint(job,i,'submission-intent','intent-saved'));
+        if(result.moveOutcome==='merged-partial')
+          job.record.items[i].moveOutcome='merged-partial';
         await copyItemCheckpoint(job,i,result.copyOutcome==='skipped'?'skipped':'success',
           result.copyOutcome==='skipped'?'not-submitted':'confirmed');
       } catch(error) {
@@ -6238,14 +6250,9 @@
         throw new Error((isMove?'有多个项目对应同一个目标文件名，拒绝批量移动':'有多个项目对应同一个目标文件名，拒绝批量复制'));
       const sourceItems=await listDirectory(parentPath(plans[0].source));
       const destinationItems=await listDirectory(plans[0].destinationDir);
-      const typeConflicts=isMove && plans[0].conflictPolicy==='skip'?[]:
-        findBatchCopyTypeConflicts(plans,destinationItems);
-      const folderOverwrite=isMove && plans[0].conflictPolicy==='overwrite'?
-        plans.filter(plan=>plan.folder && destinationItems.some(item=>
-          item.path===plan.target || item.name===fileName(plan.source)))
-          .map(plan=>fileName(plan.source)):[];
-      const conflicts=typeConflicts.length?typeConflicts:folderOverwrite.length?
-        folderOverwrite:plans[0].conflictPolicy==='fail'?
+      const typeConflicts=findBatchCopyTypeConflicts(plans,destinationItems);
+      const conflicts=typeConflicts.length?typeConflicts:
+        plans[0].conflictPolicy==='fail'?
           findBatchCopyConflicts(plans,destinationItems):[];
       if(conflicts.length) {
         const error=new Error('发现 '+conflicts.length+
@@ -6434,9 +6441,12 @@
               if(info?.eta) copyJob.eta=info.eta;
               renderBatchProgress();
             },control,async()=>copyItemCheckpoint(copyJob,i,'submission-intent','intent-saved'));
+            if(outcome.moveOutcome==='merged-partial')
+              copyJob.record.items[i].moveOutcome='merged-partial';
             await copyItemCheckpoint(copyJob,i,
               outcome.copyOutcome==='skipped'?'skipped':'success',
               outcome.copyOutcome==='skipped'?'not-submitted':'confirmed');
+            row.moveOutcome=outcome.moveOutcome;
             row.status=outcome.copyOutcome==='skipped'?'skipped':'success';
             renderBatchRows();
             batch.currentPercent=null;
@@ -6557,6 +6567,8 @@
         await copyItemCheckpoint(copyJob,0,'checking','not-submitted');
         const outcome=await (isMove?moveNativeEntry:copyNativeEntry)(plan,updateCopyProgress,control,
           async()=>copyItemCheckpoint(copyJob,0,'submission-intent','intent-saved'));
+        if(outcome.moveOutcome==='merged-partial')
+          copyJob.record.items[0].moveOutcome='merged-partial';
         await copyItemCheckpoint(copyJob,0,
           outcome.copyOutcome==='skipped'?'skipped':'success',
           outcome.copyOutcome==='skipped'?'not-submitted':'confirmed');
