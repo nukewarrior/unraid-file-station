@@ -2345,10 +2345,10 @@ test('v0.2.8 诊断界面、持久化与导出必须与复制队列独立',()=>{
   assert.match(script,/window\.addEventListener\('unhandledrejection',captureRejection/);
 });
 
-test('v0.2.9 移动使用原生 action 4/9，禁覆盖，并与现有任务队列持久化兼容',()=>{
+test('v0.2.9 移动使用原生 action 4/9，与现有任务队列持久化兼容',()=>{
  const {api}=createAPI();
  assert.match(script,/async function moveNativeEntry\(/);
- assert.match(script,/plan\.conflictPolicy!=='fail'/);
+ assert.match(script,/!\['fail','skip','overwrite'\]\.includes\(plan\.conflictPolicy\)/);
  assert.match(script,/action:plan\.folder\?'4':'9'/);
  assert.match(script,/if\(beforeSubmit\)await beforeSubmit\(\)/);
  assert.match(script,/function matchesMoveTask\(/);
@@ -2598,17 +2598,18 @@ test('v0.2.11.5 页面卸载不提前释放正在运行或待核实队列的租�
 });
 
 
-function movePollingHarness({activeReads=0,done=true,mismatch=false,moveFiles=true}={}){
+function movePollingHarness({activeReads=0,done=true,mismatch=false,moveFiles=true,
+  conflict=false,conflictFolder=false,folder=false,policy='fail'}={}){
   const start=script.indexOf('  function matchesMoveTask(');
   const end=script.indexOf('  function matchesDeleteTask(',start);
   assert.ok(start>=0 && end>start);
   const plan={type:'move',source:'/mnt/user/TimeMachine/notes.txt',
     destinationDir:'/mnt/user/downloads',target:'/mnt/user/downloads/notes.txt',
-    folder:false,conflictPolicy:'fail'};
-  let time=10000,submitted=0,reads=0,subscriber=null,moved=false,closed=false;
+    folder,conflictPolicy:policy};
+  let time=10000,submitted=0,reads=0,subscriber=null,moved=false,closed=false,requestExist='';
   const intervals=[],diagnostics=[];
-  const origin={path:plan.source,name:'notes.txt',folder:false,size:2048};
-  const target={path:plan.target,name:'notes.txt',folder:false,size:2048};
+  const origin={path:plan.source,name:'notes.txt',folder,size:2048};
+  const target={path:plan.target,name:'notes.txt',folder,size:2048};
   const context={
     MOVE_ENABLED:true,isDemo:false,
     withNativeWriteLock:async operation=>operation(),
@@ -2616,7 +2617,7 @@ function movePollingHarness({activeReads=0,done=true,mismatch=false,moveFiles=tr
     fileName:path=>path.slice(path.lastIndexOf('/')+1),
     parentPath:path=>path.slice(0,path.lastIndexOf('/')),
     listDirectory:async path=>path==='/mnt/user/TimeMachine'?
-      (moved?[]:[origin]):(moved?[target]:[]),
+      (moved?[]:[origin]):(moved?[target]:conflict?[{...target,folder:conflictFolder}]:[]),
     readNativeActive:async()=>{
       if(!submitted)return null;
       reads++;
@@ -2632,7 +2633,8 @@ function movePollingHarness({activeReads=0,done=true,mismatch=false,moveFiles=tr
     parseRsyncProgress:()=>({}),stripNativeStatusHtml:x=>x,
     postNativeControl:async payload=>{
       assert.equal(payload.mode,'file');
-      assert.equal(payload.action,'9','只能使用已有的 Unraid 原生 rsync 移动');
+      assert.equal(payload.action,folder?'4':'9','只能使用已有的 Unraid 原生移动');
+      requestExist=payload.exist;
       submitted++;
       moved=moveFiles;
       if(done)subscriber({done:1});
@@ -2645,8 +2647,70 @@ function movePollingHarness({activeReads=0,done=true,mismatch=false,moveFiles=tr
   vm.runInNewContext(script.slice(start,end),context);
   return {plan,intervals,diagnostics,move:()=>context.moveNativeEntry(plan),
     get reads(){return reads;},get submitted(){return submitted;},
+    get requestExist(){return requestExist;},
     get closed(){return closed;},get time(){return time;}};
 }
+
+test('v0.2.13.3 移动同名策略：忽略不提交，覆盖普通文件需显式原生标志，文件夹冲突拒绝',async()=>{
+  const ignored=movePollingHarness({policy:'skip',conflict:true});
+  const outcome=await ignored.move();
+  assert.equal(outcome.copyOutcome,'skipped');
+  assert.equal(ignored.submitted,0);
+  assert.equal(ignored.closed,false);
+  const replace=movePollingHarness({policy:'overwrite',conflict:true});
+  assert.equal((await replace.move()).moveOutcome,'moved');
+  assert.equal(replace.requestExist,'1');
+  assert.equal(replace.submitted,1);
+  const folderConflict=movePollingHarness({policy:'overwrite',folder:true,
+    conflict:true,conflictFolder:true});
+  await assert.rejects(folderConflict.move(),/同名普通文件|不允许覆盖或合并文件夹/);
+  assert.equal(folderConflict.submitted,0);
+  const plain=movePollingHarness({policy:'fail',conflict:true});
+  await assert.rejects(plain.move(),/目标存在同名项目/);
+  assert.equal(plain.submitted,0);
+});
+
+test('v0.2.13.3 未提交的失败任务刷新不需要人工核验，仍能安全清理',()=>{
+  const {api}=createAPI();
+  const input={
+    taskId:'copy_failed_record_0001',name:'notes.txt',operation:'move',
+    destination:'/mnt/user/downloads',conflictPolicy:'skip',
+    status:'failed',createdAt:100,updatedAt:120,
+    items:[{source:'/mnt/user/TimeMachine/notes.txt',folder:false,
+      status:'failed',submission:'not-submitted',updatedAt:110}]
+  };
+  const data=api.validateCopyQueueSnapshot({schema:1,savedAt:121,tasks:[input]});
+  assert.equal(data.tasks[0].conflictPolicy,'skip');
+  const restored=api.copyRecoveryAssessment(data);
+  assert.equal(restored.requiresConfirmation,false);
+  assert.equal(restored.tasks[0].restoreStatus,'safe-failed');
+  const unsafe={...input,items:[{...input.items[0],
+    status:'uncertain',submission:'intent-saved'}]};
+  const uncertain=api.copyRecoveryAssessment({schema:1,savedAt:121,tasks:[unsafe]});
+  assert.equal(uncertain.requiresConfirmation,true);
+  assert.equal(uncertain.tasks[0].restoreStatus,'needs-verification');
+});
+
+test('v0.2.13.3 同名选项在复制与移动窗口中统一呈现并保留原生批量快速路径',()=>{
+  const {api}=createAPI();
+  for(const conflictPolicy of ['skip','overwrite']){
+    const plan=api.planFileOperation({type:'move',
+      source:'/mnt/user/TimeMachine/notes.txt',
+      destinationDir:'/mnt/user/downloads',folder:false,conflictPolicy});
+    assert.equal(plan.conflictPolicy,conflictPolicy);
+  }
+  assert.doesNotMatch(script,/if\(isMove\)policy\.hidden=true/);
+  assert.match(script,/const hasMoveConflict=isMove && plans\.some/);
+  assert.match(script,/const batchMoveMode=isMove && !hasMoveConflict/);
+  assert.match(script,/move\.skipped_conflict/);
+  assert.match(script,/移动覆盖仅支持同名普通文件/);
+  assert.match(script,/queue\.terminal_records_cleared/);
+  assert.match(script,/isRemovableFailedCopyJob\(job\)/);
+  const close=script.slice(script.indexOf("const dismiss=element('button','ufs-task-center-close"),
+    script.indexOf('    actions.append(clear,divider,dismiss);'));
+  assert.ok(close.length>0);
+  assert.doesNotMatch(close,/dismiss\.dataset\.tooltip/);
+});
 
 test('v0.2.11.6 快速移动轮询：仍需两次空闲和 done 证据，缩短固定等待',async()=>{
   const harness=movePollingHarness();
