@@ -4058,6 +4058,7 @@
   let copyJobCounter=0;
   let copyQueueRunning=false;
   let copyQueuePaused=false;
+  let copyNativeQueueBlocked='';
   let copyCleanupPending=false;
   let copyCleanupError='';
 
@@ -4694,6 +4695,7 @@
       const fresh=await persistentCopyStore.read();
       if(!fresh || JSON.stringify(fresh.tasks)!==lastPersistedTasks)
         throw new Error('队列内容已在其他标签页发生变化，需重新加载后核实');
+      copyNativeQueueBlocked='';
       copyQueuePaused=false;
       copyRecoveryLocked=false;
       await persistCopyQueue();
@@ -4929,6 +4931,7 @@
           await assertNativeDispatchIdle('local-scheduler');
         } catch(error) {
           copyQueuePaused=true;
+          copyNativeQueueBlocked=String(error?.message||error);
           diagnosticLog('WARN','queue.native_wait',{
             taskId:job.taskId,reason:String(error?.message||error),
             taskKeptQueued:true
@@ -4940,6 +4943,7 @@
         }
         if(destroyed || copyQueuePaused || !copyOwnerHeld ||
            job.status!=='queued')break;
+        copyNativeQueueBlocked='';
         job.status='running';
         job.phase='checking';
         diagnosticLog('INFO','queue.started',{taskId:job.taskId,count:job.count});
@@ -5011,6 +5015,7 @@
         if(!fresh || JSON.stringify(fresh.tasks)!==lastPersistedTasks)
           throw new Error('队列记录已更新，请刷新后核实');
         await assertNativeDispatchIdle('resume-local-queue');
+        copyNativeQueueBlocked='';
         copyQueuePaused=false;
         updateCopyTaskButton();
         void runCopyQueue();
@@ -5208,8 +5213,12 @@
       body.append(panel);
     } else if(copyQueuePaused && copyJobs.some(job=>job.status==='queued')) {
       const paused=element('div','ufs-task-center-paused');
-      paused.append(element('div','','后续队列已暂停，请先核实失败或待核实任务。'));
-      const resume=element('button','','确认已核实，继续排队任务');
+      paused.append(element('div','',copyNativeQueueBlocked?
+        'Unraid 原生任务尚未空闲：'+copyNativeQueueBlocked+
+          '。不会抢占原生队列；请先等待原生队列完成。':
+        '后续队列已暂停，请先核实失败或待核实任务。'));
+      const resume=element('button','',copyNativeQueueBlocked?
+        '原生任务已空闲，检查并继续':'确认已核实，继续排队任务');
       resume.type='button';
       resume.dataset.taskFocus='resume';
       resume.addEventListener('click',()=>{
@@ -5285,7 +5294,7 @@
     const text=copyRecoveryLocked?
       (active?.recoveryMonitoring?'原生文件操作中 · 队列暂停':
         needsCheck?'有 '+needsCheck+' 项原生任务待处理':'有 '+waitingRestore+' 项任务待恢复'):
-      copyQueuePaused&&queued?'文件任务已暂停':
+      copyQueuePaused&&queued?(copyNativeQueueBlocked?'等待原生队列 · 已暂停':'文件任务已暂停'):
       active?copyJobPhaseLabel(active):
       queued?'等待中':complete?(partialMove?'部分移动 · 源目录有剩余':
         (copyJobs.some(job=>job.record?.operation==='delete')?'文件任务完成 ':
