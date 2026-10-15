@@ -2710,7 +2710,9 @@
         if(!entry.folder && /\.mp4$/i.test(entry.name) &&
            Number.isFinite(entry.size) && entry.size>=64*1024*1024 &&
            entry.size<=2*1024*1024*1024 &&
+           entry.path===dir+'/'+entry.name && safePath(entry.path) &&
            entry.path.startsWith(NATIVE_PROBE_ROOT+'/') &&
+           !/^l/.test(entry.permissions||'') &&
            !entry.path.split('/').some(x=>x==='.'||x==='..'))
           files.push(entry);
         if(entry.folder && depth<1 && !entry.name.startsWith('__ufs_') &&
@@ -2720,7 +2722,9 @@
     };
     for(const entry of folders){
       if(!entry.folder && /\.mp4$/i.test(entry.name) &&
-         entry.copyPathVerified!==false && entry.size>=64*1024*1024 &&
+         entry.copyPathVerified!==false && entry.path===NATIVE_PROBE_ROOT+'/'+entry.name &&
+         safePath(entry.path) && !/^l/.test(entry.permissions||'') &&
+         entry.size>=64*1024*1024 &&
          entry.size<=2*1024*1024*1024)files.push(entry);
       if(entry.folder && !entry.name.startsWith('__ufs_'))
         await inspect(entry.path,0);
