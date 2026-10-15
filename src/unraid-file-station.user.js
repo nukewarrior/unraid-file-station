@@ -3201,6 +3201,11 @@
       const q2=await nativeLifecycleFileSize(run.workspace+'/queue2','queue2.txt');
       const smallFilesCorrect=q1===('UFS_LIFECYCLE_QUEUE1_'+run.ownerToken).length &&
         q2===('UFS_LIFECYCLE_QUEUE2_'+run.ownerToken).length;
+      const smallFilesExact=smallFilesCorrect &&
+        await nativeProbeWaitFile(run.workspace+'/queue1/queue1.txt',
+          'UFS_LIFECYCLE_QUEUE1_'+run.ownerToken) &&
+        await nativeProbeWaitFile(run.workspace+'/queue2/queue2.txt',
+          'UFS_LIFECYCLE_QUEUE2_'+run.ownerToken);
       const largeSizeMatch=bigSize===run.video.size;
       const snapshot={
         at:new Date().toISOString(),
@@ -3208,7 +3213,7 @@
         manualClosureConfirmed:!!run.userConfirmedClosedAllTabs,
         evidence:'first_manual_observation_after_reopening; browser_closure_not_machine_verifiable',
         activeOwner:owner,queuedCount:jobs.length,queuedIndexes,bigSize,q1,q2,
-        smallFilesCorrect,largeSizeMatch
+        smallFilesCorrect,smallFilesExact,largeSizeMatch
       };
       run.samples.push(snapshot);
       nativeLifecycleNote(run,'detached-first-reopened-observation',{
@@ -3218,14 +3223,14 @@
         run.conclusion.unattendedAdvance='inconclusive_closure_not_confirmed';
       }else if(!owner && jobs.length>0 && largeSizeMatch){
         run.conclusion.unattendedAdvance='queue_remained_after_reported_browser_closure';
-      }else if(!owner && jobs.length===0 && smallFilesCorrect && largeSizeMatch){
+      }else if(!owner && jobs.length===0 && smallFilesExact && largeSizeMatch){
         run.conclusion.unattendedAdvance='completed_before_first_observation_cause_unknown';
       }else{
         run.conclusion.unattendedAdvance='inconclusive_active_or_incomplete_on_reopen';
       }
       run.conclusion.firstPostReopenSnapshot=snapshot;
       // Never call mode=start: that would invalidate the closed-browser test.
-      if(!owner && !jobs.length && smallFilesCorrect && largeSizeMatch &&
+      if(!owner && !jobs.length && smallFilesExact && largeSizeMatch &&
          run.userConfirmedClosedAllTabs){
         const source=await nativeProbeEntries(run.video.path.slice(0,run.video.path.lastIndexOf('/')));
         const original=source.find(e=>e.path===run.video.path);
@@ -3264,7 +3269,9 @@
     header.append(close);
     const hint=element('p','',
       '此测试先复制授权目录内的现有 MP4，并在运行时追加 2 个唯一小文件任务。准备就绪后，请关闭全部 Unraid WebGUI 页面，等待至少 30 秒，再重新打开任意一个 Unraid Shares/Browse 页面进行只读观测。浏览器无法自动证明其他设备或标签页均已关闭，结果会标注为用户确认。');
-    const status=element('div','ufs-diagnostic-status',initial||'尚未开始');
+    const status=element('div','ufs-diagnostic-status',initial||(
+      nativeDetachedRead()?.phase==='awaiting-closure'?
+        '检测到未完成的关闭页面测试。关闭所有 WebGUI 页面并等待至少 30 秒后，请点击“关闭页面后读取结果”。':'尚未开始'));
     const controls=element('div','ufs-diagnostic-controls');
     const start=element('button','ufs-diagnostic-primary','准备关闭页面测试');
     const observe=element('button','','关闭页面后读取结果');
@@ -8837,7 +8844,16 @@
     }
     switchFileManager(initialNative?'native':'file-station');
     startDiagnosticMonitoring();
-    onCleanup(()=>nativeMultitabStop?.());
+    onCleanup(()=>{
+      try{
+        const run=nativeDetachedRead();
+        if(run?.phase==='awaiting-closure'){
+          run.observedPagehideAt=new Date().toISOString();
+          nativeLifecycleSnapshot(run);
+        }
+      }catch(_){}
+      nativeMultitabStop?.();
+    });
     // Native filemonitor.start() is delayed; take ownership before it fires.
     if (!isDemo) {
       if (!takeOverNativeFileMonitor()) {
