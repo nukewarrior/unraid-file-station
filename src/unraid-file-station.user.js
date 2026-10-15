@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.15.0
+// @version      0.2.15.1
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -1861,7 +1861,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.15.0';
+  const DIAGNOSTIC_VERSION='0.2.15.1';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -2253,7 +2253,7 @@
     const url=URL.createObjectURL(blob);
     const a=document.createElement('a');
     a.href=url;
-    a.download=(report.kind==='unraid-native-multitab-observation'?'unraid-file-station-multitab-probe-':report.kind==='unraid-native-lifecycle-probe'?'unraid-file-station-lifecycle-probe-':'unraid-file-station-native-probe-')+new Date().toISOString()
+    a.download=(report.kind==='unraid-native-multitab-observation'?'unraid-file-station-multitab-probe-':report.kind==='unraid-native-lifecycle-probe'?'unraid-file-station-lifecycle-probe-':report.kind==='unraid-v0215-acceptance'?'unraid-file-station-v0215-acceptance-':'unraid-file-station-native-probe-')+new Date().toISOString()
       .replace(/[-:]/g,'').replace('T','-').slice(0,15)+'.json';
     document.body.append(a);
     a.click();
@@ -2694,6 +2694,297 @@
       nativeProbeRunning=false;
     }
   }
+
+  // v0.2.15 automated acceptance: invokes the production copy/move path, not
+  // only the raw native capability probe. All writes remain in the isolated
+  // __ufs_probe_* workspace under the explicitly authorized root.
+  let nativeAcceptanceRunning=false;
+  function nativeAcceptanceStep(report,name,status,details={}) {
+    report.steps.push({name,status,at:new Date().toISOString(),...details});
+  }
+  function nativeAcceptanceOwn(workspace,path) {
+    return nativeProbeOwned(path,workspace) &&
+      /^__ufs_probe_v215_[a-z0-9_]+$/.test(workspace.slice(NATIVE_PROBE_ROOT.length+1));
+  }
+  async function nativeAcceptanceExecute(notifyStatus) {
+    if(nativeAcceptanceRunning || nativeProbeRunning || nativeLifecycleBusy)
+      throw new Error('已有实机测试正在运行');
+    nativeAcceptanceRunning=true;
+    nativeProbeRunning=true;
+    const workspace=NATIVE_PROBE_ROOT+'/__ufs_probe_v215_'+Date.now().toString(36)+'_'+
+      Math.random().toString(36).slice(2,10);
+    const report={
+      schemaVersion:1,kind:'unraid-v0215-acceptance',
+      fileStationVersion:DIAGNOSTIC_VERSION,
+      startedAt:new Date().toISOString(),
+      scope:{authorizedRoot:NATIVE_PROBE_ROOT,workspace,
+        allWritesInsideWorkspace:true,sourceData:'synthetic-only'},
+      checks:{
+        productionSingleCopy:'not_tested',
+        productionMultiFileSerialCopy:'not_tested',
+        productionMove:'not_tested',
+        nativeDispatchGuard:'not_tested',
+        productionCopyBlockedByNativeQueue:'not_tested',
+        ownedNativeQueueStart:'not_tested',
+        localIndexedDBScheduler:'not_tested',
+        browserF5Recovery:'not_tested'
+      },
+      assumptions:[
+        '复制/移动使用正式生产函数；多文件测试覆盖当前逐文件串行路径，不模拟 UI 点击或 IndexedDB 全流程',
+        '在独立工作区内创建数据，不移动或删除授权目录中的已有文件',
+        'Unraid 原生 mode=start 只在完整识别本测试唯一队列任务后显式执行',
+        '共享活动槽并无跨标签原子锁；运行时不要从其他页面启动文件操作'
+      ],
+      ownerToken:'UFS_PROBE_OWNER_'+Math.random().toString(36).slice(2)+'_END',
+      steps:[],queueObservations:[],uncertain:false,cleanup:'not_started',
+      result:'in_progress'
+    };
+    const status=msg=>notifyStatus(msg);
+    let workspaceCreated=false;
+    const mkdir=async(parent,name)=>{
+      if(parent!==NATIVE_PROBE_ROOT && !nativeAcceptanceOwn(workspace,parent))
+        throw new Error('测试目录创建路径超出专属授权');
+      if(parent===NATIVE_PROBE_ROOT && name!==workspace.split('/').pop())
+        throw new Error('测试工作目录身份不匹配');
+      const path=parent+'/'+name;
+      if(!nativeAcceptanceOwn(workspace,path))throw new Error('测试目录越界');
+      status('正在创建测试目录：'+name);
+      await nativeProbeRun(report,'mkdir-'+name,{},
+        {action:0,source:parent,target:name},
+        async()=>(await nativeProbeEntries(parent)).some(e=>
+          e.path===path && e.folder && e.copyPathVerified!==false),workspace);
+    };
+    const write=async(relative,content)=>{
+      const path=workspace+'/'+relative;
+      if(!nativeAcceptanceOwn(workspace,path))throw new Error('合成数据写入越界');
+      await nativeProbeIdle();
+      report.uncertain=true;
+      await postNativeControl({mode:'save',file:encodeURIComponent(path),
+        data:encodeURIComponent(content)});
+      if(!(await nativeProbeWaitFile(path,content)))
+        throw new Error('合成测试源文件写入后无法回读：'+relative);
+      report.uncertain=false;
+      nativeAcceptanceStep(report,'save-'+relative,'passed',{bytes:content.length});
+    };
+    const operation=async(name,type,source,destinationDir,expectedContent)=>{
+      if(!nativeAcceptanceOwn(workspace,source) ||
+         !nativeAcceptanceOwn(workspace,destinationDir))
+        throw new Error('生产函数测试路径超出独立工作区');
+      const plan=planFileOperation({type,source,destinationDir,folder:false,
+        conflictPolicy:'fail'});
+      status('正在测试：'+name);
+      const progressPhases=[];
+      const started=performance.now();
+      // A lost native completion receipt is ambiguous. Never clean up and
+      // never submit another file operation after an uncertain result.
+      report.uncertain=true;
+      const outcome=await (type==='move'?moveNativeEntry:copyNativeEntry)(
+        plan,(_msg,phase)=>{if(phase && !progressPhases.includes(phase))progressPhases.push(phase);},
+        {cancelRequested:false,observedOwnTask:false}
+      );
+      if(!(await nativeProbeWaitFile(plan.target,expectedContent)))
+        throw new Error('文件操作成功返回但目标内容不符：'+name);
+      const original=(await nativeProbeEntries(parentPath(source)))
+        .some(item=>item.path===source);
+      if(original!==(type==='copy'))throw new Error('源文件保留/移动结果异常：'+name);
+      if(outcome.path!==plan.target)
+        throw new Error('生产函数返回的目标文件路径不符');
+      report.uncertain=false;
+      nativeAcceptanceStep(report,name,'passed',{
+        operation:type,elapsedMs:Math.round(performance.now()-started),
+        phases:progressPhases,sourceRetained:type==='copy',
+        targetContentVerified:true
+      });
+    };
+    try{
+      if(isDemo)throw new Error('真实 NAS 以外不允许启动自动验收');
+      nativeCsrfToken();
+      status('检查 Unraid 原生活动任务和队列是否为空…');
+      await nativeProbeIdle();
+      const rootItems=await nativeProbeEntries(NATIVE_PROBE_ROOT);
+      if(rootItems.some(x=>x.path===workspace || x.name===fileName(workspace)))
+        throw new Error('随机测试目录已存在，拒绝覆盖');
+      nativeAcceptanceStep(report,'native-idle-preflight','passed',{
+        queueFormat:nativeProbeQueueFormat});
+      await mkdir(NATIVE_PROBE_ROOT,fileName(workspace));
+      workspaceCreated=true;
+      await mkdir(workspace,'source');
+      await mkdir(workspace,'target');
+      await write('probe-owner.txt',report.ownerToken);
+      const src=workspace+'/source',dst=workspace+'/target';
+      const dataA=('UFS_AUTO_A_'+report.ownerToken+'\n').repeat(512);
+      const dataB=('UFS_AUTO_B_'+report.ownerToken+'\n').repeat(512);
+      const dataMove=('UFS_AUTO_MOVE_'+report.ownerToken+'\n').repeat(256);
+      const dataQueue='UFS_AUTO_QUEUE_'+report.ownerToken;
+      await write('source/batch-a.txt',dataA);
+      await write('source/batch-b.txt',dataB);
+      await write('source/move.txt',dataMove);
+      await write('source/queue.txt',dataQueue);
+
+      status('1/4：通过 File Station 正式复制函数复制单个文件…');
+      await operation('production-single-file-copy','copy',
+        src+'/batch-a.txt',dst,dataA);
+      report.checks.productionSingleCopy='verified';
+
+      status('2/4：通过当前正式串行路径复制两个普通文件…');
+      // Two production copyNativeEntry invocations are the current
+      // multi-file serial execution primitive. No fake bulk-copy claim.
+      await operation('production-serial-copy-second-file','copy',
+        src+'/batch-b.txt',dst,dataB);
+      report.checks.productionMultiFileSerialCopy='verified_two_production_copy_calls';
+
+      status('3/4：通过正式移动函数移动合成文件…');
+      await operation('production-single-file-move','move',
+        src+'/move.txt',dst,dataMove);
+      report.checks.productionMove='verified';
+
+      status('4/4：创建独立原生等待任务，验证生产调度保护…');
+      await nativeProbeIdle();
+      const queueSource=src+'/queue.txt',queueTarget=dst+'/';
+      const task='ufs-auto-v215-'+Math.random().toString(36).slice(2,12);
+      const before=await nativeProbeQueue();
+      if(before.length)throw new Error('入队前存在其他等待任务，测试终止');
+      report.uncertain=true; // Native enqueue may succeed despite lost HTTP reply.
+      await postNativeControl({mode:'file',task:encodeURIComponent(task),action:'8',
+        title:encodeURIComponent('UFS v0.2.15 automated acceptance'),
+        source:encodeURIComponent(queueSource),target:encodeURIComponent(queueTarget),
+        hdlink:'',sparse:'',exist:'1',zfs:''});
+      const queued=await nativeProbeQueue();
+      if(queued.length!==1 ||
+         !nativeProbeOwnQueuedJob(queued[0],queueSource,queueTarget,task))
+        throw new Error('无法确认测试原生排队任务的唯一归属');
+      if(await readNativeActive())
+        throw new Error('验证原生队列占用前发现其他活动任务');
+      report.queueObservations.push({phase:'queued',count:queued.length,owned:true});
+
+      let rejected=false;
+      try{await assertNativeDispatchIdle('automated-acceptance');}
+      catch(error){
+        rejected=/原生队列/.test(String(error?.message||error));
+        nativeAcceptanceStep(report,'dispatch-blocked-when-native-queued',
+          rejected?'passed':'failed',{message:String(error?.message||error)});
+      }
+      if(!rejected)throw new Error('协调层未拒绝非空原生队列');
+      report.checks.nativeDispatchGuard='verified';
+
+      // Production copyNativeEntry MUST refuse before mode=file. Its source
+      // and target are both inside the workspace; no success is expected.
+      const blockedPlan=planFileOperation({type:'copy',source:queueSource,
+        destinationDir:dst,folder:false,conflictPolicy:'fail'});
+      let blocked=false;
+      try{
+        await copyNativeEntry(blockedPlan,()=>{},{});
+      }catch(error){
+        blocked=/原生队列/.test(String(error?.message||error));
+        nativeAcceptanceStep(report,'production-copy-refuses-native-backlog',
+          blocked?'passed':'failed',{error:String(error?.message||error)});
+      }
+      const afterBlocked=await nativeProbeQueue();
+      if(!blocked || afterBlocked.length!==1 ||
+         !nativeProbeOwnQueuedJob(afterBlocked[0],queueSource,queueTarget,task) ||
+         (await nativeProbeEntries(dst)).some(x=>x.path===dst+'/queue.txt'))
+        throw new Error('原生队列占用保护未生效，或出现意外的原生写入');
+      report.checks.productionCopyBlockedByNativeQueue='verified';
+      if(await readNativeActive())throw new Error('启动自有队列前检测到其他活动任务');
+      const beforeStart=await nativeProbeQueue();
+      if(beforeStart.length!==1 ||
+         !nativeProbeOwnQueuedJob(beforeStart[0],queueSource,queueTarget,task))
+        throw new Error('准备执行时原生队列归属发生变化');
+      const answer=(await postNativeControl({mode:'start'})).trim();
+      if(!['1','2'].includes(answer))throw new Error('受控队列启动返回非预期响应：'+answer);
+      const deadline=Date.now()+60000;
+      let idle=0,completed=false;
+      while(Date.now()<deadline){
+        await waitNative(350);
+        const active=await readNativeActive();
+        if(active){
+          if(Number(active.action)!==8 || active.source!==queueSource ||
+             active.target!==queueTarget)
+            throw new Error('受控启动后检测到不属于本次测试的活动任务');
+          idle=0;
+        }else if(++idle>=3 && await nativeProbeWaitFile(dst+'/queue.txt',dataQueue)){
+          completed=true;
+          break;
+        }
+      }
+      if(!completed || (await nativeProbeQueue()).length)
+        throw new Error('受控原生队列任务未能核验完成或队列仍然非空');
+      report.uncertain=false;
+      report.checks.ownedNativeQueueStart='verified';
+      nativeAcceptanceStep(report,'owned-native-queue-finished','passed',{
+        startReply:answer,queueCount:0,textVerified:true});
+      status('全部验证结束，正在安全核验和清理测试目录…');
+    }catch(error){
+      report.error=String(error?.message||error);
+      nativeAcceptanceStep(report,'acceptance-aborted','failed',{error:report.error});
+      status('测试中止：'+report.error);
+    }finally{
+      if(workspaceCreated){
+        try{
+          if(report.uncertain)
+            throw new Error('存在未确认原生提交结果，保留专属工作目录');
+          await nativeProbeIdle();
+          await nativeProbeShapeSafe(workspace,report);
+          await nativeProbeRun(report,'cleanup-owned-workspace',{},
+            {action:1,source:workspace,target:''},
+            async()=>!(await nativeProbeEntries(NATIVE_PROBE_ROOT))
+              .some(item=>item.path===workspace),workspace);
+          report.cleanup='completed';
+        }catch(error){
+          report.cleanup='skipped_or_failed';
+          report.cleanupReason=String(error?.message||error);
+        }
+      }else report.cleanup='nothing_created_or_unconfirmed';
+      report.result=report.error?'failed':
+        report.cleanup==='completed'?'passed':'needs_manual_check';
+      report.endedAt=new Date().toISOString();
+      status('自动验收结束：'+report.result+
+        (report.cleanup==='completed'?'；测试目录已安全清理':'；请查看报告中的测试目录')+
+        '。即将下载 JSON 报告。');
+      diagnosticLog(report.result==='passed'?'INFO':'WARN',
+        'native_acceptance.finished',{
+          result:report.result,cleanup:report.cleanup,
+          steps:report.steps.length,uncertain:report.uncertain
+        });
+      try{nativeProbeDownload(report);}
+      catch(error){status('自动下载报告失败：'+String(error?.message||error));}
+      nativeAcceptanceRunning=false;
+      nativeProbeRunning=false;
+    }
+    return report;
+  }
+  function showNativeAcceptanceDialog() {
+    if(document.querySelector('.ufs-native-acceptance-overlay') ||
+       nativeAcceptanceRunning || nativeProbeRunning)return;
+    const overlay=element('div','ufs-diagnostic-overlay ufs-native-acceptance-overlay');
+    const panel=element('section','ufs-diagnostic-panel');
+    panel.setAttribute('role','dialog');
+    panel.setAttribute('aria-modal','true');
+    panel.setAttribute('aria-label','v0.2.15 一键自动验收');
+    const head=element('div','ufs-diagnostic-head');
+    head.append(element('strong','','v0.2.15 一键自动验收'));
+    const close=element('button','','×');close.type='button';
+    const status=element('div','ufs-diagnostic-status',
+      '尚未开始。测试会自动创建合成文件、复制、移动、模拟原生队列占用并核验，最后安全清理和导出 JSON。');
+    const start=element('button','ufs-diagnostic-primary','开始一键验收');
+    start.type='button';
+    const dismiss=()=>{if(!nativeAcceptanceRunning)overlay.remove();};
+    close.addEventListener('click',dismiss);
+    head.append(close);
+    start.addEventListener('click',()=>{
+      if(!window.confirm('即将自动执行 v0.2.15 实机验收：正式复制与移动函数、原生队列占用保护、自有队列受控启动。\n\n所有写入均在 '+
+        NATIVE_PROBE_ROOT+' 下新建的专属临时目录，不接触现有文件。\n\n请确保没有其他 NAS 文件任务、Unraid WebGUI 标签页或其他用户同时执行文件操作。'))return;
+      start.disabled=true;close.disabled=true;
+      void nativeAcceptanceExecute(message=>{status.textContent=message;})
+        .catch(error=>{status.textContent='验收未能开始：'+String(error?.message||error);})
+        .finally(()=>{close.disabled=false;});
+    });
+    panel.append(head,element('p','',
+      '单击后自动运行，无须手动复制或移动。异常时不会重发不确定的原生请求，也不会越权删除测试数据；如未完成清理，请导出报告供诊断。'),start,status);
+    overlay.append(panel);
+    document.body.append(overlay);
+  }
+
   function showNativeProbeDialog() {
     if(document.querySelector('.ufs-native-probe-overlay')||nativeProbeRunning)return;
     const overlay=element('div','ufs-diagnostic-overlay ufs-native-probe-overlay');
@@ -3762,12 +4053,14 @@
     const refresh=element('button','','刷新日志');
     const download=element('button','ufs-diagnostic-primary','导出 JSON');
     const nativeProbe=element('button','','原生能力测试');
+    const autoAccept=element('button','','v0.2.15 一键自动验收');
     const lifecycleProbe=element('button','','任务生命周期测试');
     const detachedProbe=element('button','','关闭页面后队列测试');
     const multiTabProbe=element('button','','多标签页接力观测');
     const clear=element('button','','清空日志');
-    for(const button of [debug,mark,refresh,download,nativeProbe,lifecycleProbe,detachedProbe,multiTabProbe,clear]) button.type='button';
-    controls.append(debug,mark,refresh,download,nativeProbe,lifecycleProbe,detachedProbe,multiTabProbe,clear);
+    for(const button of [debug,mark,refresh,download,nativeProbe,autoAccept,lifecycleProbe,detachedProbe,multiTabProbe,clear]) button.type='button';
+    controls.append(debug,mark,refresh,download,nativeProbe,autoAccept,lifecycleProbe,detachedProbe,multiTabProbe,clear);
+    autoAccept.addEventListener('click',()=>{dismiss();showNativeAcceptanceDialog();});
     multiTabProbe.addEventListener('click',()=>{dismiss();nativeMultitabShowPanel();});
     detachedProbe.addEventListener('click',()=>{dismiss();nativeDetachedShowPanel();});
     lifecycleProbe.addEventListener('click',()=>{dismiss();nativeLifecycleShowPanel();});
