@@ -171,7 +171,7 @@ test('F5 关联候选必须唯一且属于恢复任务，不允许同名非恢�
   const js=src.slice(src.indexOf('  async function monitorRecoveredNativeTask()'),
     src.indexOf('  async function verifyRecoveredNativeBatch('));
   assert.match(js,/nativeSavedTaskCandidates\(active,copyJobs\)/);
-  assert.match(js,/candidate\\?copyJobs\.find/);
+  assert.match(js,/candidate\?copyJobs\.find/);
   assert.match(js,/item\.recovered/);
   assert.match(js,/batch\?matchesMoveBatchTask\(current,grouped\)/);
   assert.doesNotMatch(js,/postNativeControl\(\{\s*mode:\s*['"](?:file|start|undo)['"]/);
