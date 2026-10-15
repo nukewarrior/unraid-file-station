@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.14.2
+// @version      0.2.15.0
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -433,10 +433,24 @@
       diagnosticLog('WARN','native.pre_submit_read_failed',{operation,message:error?.message});
       throw new Error('保存提交意图后无法再次确认原生任务状态；本次请求未发送，持久化记录结果不确定。详情：'+String(error?.message||error));
     }
-    if(!active)return;
-    diagnosticLog('WARN','native.pre_submit_busy',{operation,activeAction:Number(active.action),
-      taskId:activeCopySession?.taskId});
-    throw new Error('保存提交意图后发现其他 Unraid 原生任务占用；本次请求未发送，持久化记录结果不确定，请先核实队列');
+    if(active) {
+      diagnosticLog('WARN','native.pre_submit_busy',{operation,activeAction:Number(active.action),
+        taskId:activeCopySession?.taskId});
+      throw new Error('保存提交意图后发现其他 Unraid 原生任务占用；本次请求未发送，持久化记录结果不确定，请先核实队列');
+    }
+    try {
+      const jobs=await nativeProbeQueue();
+      if(jobs.length) {
+        diagnosticLog('WARN','native.pre_submit_queue_busy',{
+          operation,queued:jobs.length,format:nativeProbeQueueFormat,
+          taskId:activeCopySession?.taskId
+        });
+        throw new Error('原生队列还有 '+jobs.length+' 项任务');
+      }
+    } catch(error) {
+      throw new Error('保存提交意图后原生队列不再确认空闲；本次请求未发送，持久化记录结果不确定。详情：'+
+        String(error?.message||error));
+    }
   }
   function matchesCreateTask(active, plan) {
     return active && Number(active.action) === 0 &&
@@ -1022,8 +1036,11 @@
       // The IndexedDB commit can take time. Reduce the race with unrelated
       // native tasks by checking the shared active slot immediately again.
       // If busy, the saved intent stays uncertain; NEVER overwrite or retry.
-      if(await readNativeActive())
-        throw new Error('保存提交意图后发现另一个 Unraid 原生任务，整批未发送');
+      try { await assertNativeDispatchIdle('move-batch-pre-submit'); }
+      catch(error) {
+        throw new Error('批量移动提交意图已保存，但原生任务槽或队列不空闲，整批未发送；请核实后处理：'+
+          String(error?.message||error));
+      }
       const rawSources=plans.map(plan=>plan.source).join('\r');
       diagnosticLog('INFO','move.batch_intent',{taskId:activeCopySession?.taskId,
         count:plans.length,sourceDir,destination:plans[0].destinationDir,
@@ -1844,7 +1861,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.14.2';
+  const DIAGNOSTIC_VERSION='0.2.15.0';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -2307,6 +2324,36 @@
     nativeProbeQueueFormat=result.format;
     return result.jobs;
   }
+
+  // v0.2.15: this is the first shared read-only native execution boundary.
+  // A File Station durable queue item is NOT permission to leap ahead of
+  // Unraid's independent native mode=jobs queue. All operations fail closed
+  // on unknown queue shape or failed reads; no global mode=start is issued.
+  function nativeDispatchDecision(active,jobs) {
+    if(!Array.isArray(jobs))
+      return {allowed:false,reason:'unknown-native-queue',queued:null};
+    if(active)
+      return {allowed:false,reason:'native-active',queued:jobs.length};
+    if(jobs.length)
+      return {allowed:false,reason:'native-queued',queued:jobs.length};
+    return {allowed:true,reason:'idle',queued:0};
+  }
+  async function assertNativeDispatchIdle(stage='scheduler') {
+    const [active,jobs]=await Promise.all([readNativeActive(),nativeProbeQueue()]);
+    const decision=nativeDispatchDecision(active,jobs);
+    if(!decision.allowed) {
+      diagnosticLog('WARN','queue.native_dispatch_blocked',{
+        stage,reason:decision.reason,queued:decision.queued,
+        activeAction:active?.action??null,format:nativeProbeQueueFormat
+      });
+      throw new Error(decision.reason==='native-active'?
+        'Unraid 正有原生文件任务在运行，File Station 不会抢占':
+        'Unraid 原生队列尚有 '+decision.queued+' 项待执行任务，File Station 不会越队提交');
+    }
+    diagnosticLog('DEBUG','queue.native_dispatch_idle',{stage,format:nativeProbeQueueFormat});
+    return decision;
+  }
+
   async function nativeProbeIdle(requireEmptyQueue=true) {
     if(nativeWriteBusy)throw new Error('File Station 正在执行其他原生写入');
     if(copyJobs.some(j=>['queued','running','verifying','uncertain','recovering'].includes(j.status)))
@@ -4636,8 +4683,7 @@
       '确认恢复尚未执行的文件任务队列？\n\n移动会移除原位置文件；复制仍使用原有忽略/覆盖策略。'))return;
     try {
       await ensureCopyOwnership();
-      if(await readNativeActive())
-        throw new Error('Unraid 正在执行原生任务，请等待其完成后再恢复');
+      await assertNativeDispatchIdle('restore-confirmation');
       await copyPersistTail;
       const fresh=await persistentCopyStore.read();
       if(!fresh || JSON.stringify(fresh.tasks)!==lastPersistedTasks)
@@ -4871,6 +4917,23 @@
         // another File Station operation owns that lock.
         while(nativeWriteBusy && !destroyed) await waitNative(150);
         if(destroyed || copyQueuePaused || job.status!=='queued') continue;
+        // Do not claim the item or persist "running" until Unraid's own
+        // active slot AND its queued jobs are both known to be empty.
+        try {
+          await assertNativeDispatchIdle('local-scheduler');
+        } catch(error) {
+          copyQueuePaused=true;
+          diagnosticLog('WARN','queue.native_wait',{
+            taskId:job.taskId,reason:String(error?.message||error),
+            taskKeptQueued:true
+          });
+          updateCopyTaskButton();
+          notify('文件队列已暂停，未提交任务：'+String(error?.message||error)+
+            '。原生队列空闲后可在任务中心手动继续。');
+          break;
+        }
+        if(destroyed || copyQueuePaused || !copyOwnerHeld ||
+           job.status!=='queued')break;
         job.status='running';
         job.phase='checking';
         diagnosticLog('INFO','queue.started',{taskId:job.taskId,count:job.count});
@@ -4941,8 +5004,7 @@
         const fresh=await persistentCopyStore.read();
         if(!fresh || JSON.stringify(fresh.tasks)!==lastPersistedTasks)
           throw new Error('队列记录已更新，请刷新后核实');
-        if(await readNativeActive())
-          throw new Error('Unraid 仍有原生文件操作运行');
+        await assertNativeDispatchIdle('resume-local-queue');
         copyQueuePaused=false;
         updateCopyTaskButton();
         void runCopyQueue();
