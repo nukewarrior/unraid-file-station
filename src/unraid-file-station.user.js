@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.13.8
+// @version      0.2.13.9
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -1844,7 +1844,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.13.8';
+  const DIAGNOSTIC_VERSION='0.2.13.9';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -2317,14 +2317,34 @@
     if(requireEmptyQueue && jobs.length)throw new Error('Unraid 原生队列不为空（'+jobs.length+'项），拒绝启动探针');
     return jobs;
   }
-  async function nativeProbeRun(report,operation,fields,expected,check,workspace) {
-    if(!nativeProbeSourcesOwned(expected.source,workspace) &&
-       !(expected.action===0 && expected.source===NATIVE_PROBE_ROOT &&
-         expected.target===workspace.slice(NATIVE_PROBE_ROOT.length+1)))
-      throw new Error('测试源路径超出授权范围');
-    if(expected.action!==0 && expected.target &&
-        !nativeProbeOwned(expected.target.replace(/\/$/,''),workspace))
-      throw new Error('测试目标路径超出授权范围');
+  function nativeProbeOperationAllowed(report,expected,workspace,scope='basic') {
+    if(scope==='lifecycle') {
+      // The lifecycle suite has a distinct workspace prefix, and an existing
+      // MP4 under the authorized root is a read-only input to its long copy.
+      // This helper is ONLY used for mkdir and cleanup, never for the video POST.
+      if(report?.kind!=='unraid-native-lifecycle-probe' ||
+         report.workspace!==workspace || !nativeLifecycleOwn(workspace,report))
+        return false;
+      if(expected.action===0 && typeof expected.target==='string' &&
+         safeWriteName(expected.target)) {
+        if(expected.source===NATIVE_PROBE_ROOT)
+          return expected.target===workspace.slice(NATIVE_PROBE_ROOT.length+1);
+        return expected.source===workspace &&
+          ['source','large','queue1','queue2'].includes(expected.target);
+      }
+      return expected.action===1 && expected.source===workspace && expected.target==='';
+    }
+    if(scope!=='basic')return false;
+    const validSource=nativeProbeSourcesOwned(expected.source,workspace) ||
+      (expected.action===0 && expected.source===NATIVE_PROBE_ROOT &&
+       expected.target===workspace.slice(NATIVE_PROBE_ROOT.length+1));
+    const validTarget=expected.action===0 || !expected.target ||
+      nativeProbeOwned(expected.target.replace(/\/$/,''),workspace);
+    return validSource && validTarget;
+  }
+  async function nativeProbeRun(report,operation,fields,expected,check,workspace,scope='basic') {
+    if(!nativeProbeOperationAllowed(report,expected,workspace,scope))
+      throw new Error('测试操作超出授权范围：'+operation);
     await nativeProbeIdle();
     let submitted=false,done=false,remoteError='',seen=false;
     let lastText='',progressCount=0;
@@ -2691,7 +2711,7 @@
     }
   }
   function nativeLifecycleNote(run,name,detail={}) {
-    run.steps.push({time:new Date().toISOString(),name,...detail});
+    run.steps.push({time:new Date().toISOString(),...detail,name});
     nativeLifecycleSnapshot(run);
   }
   function nativeLifecycleFilePath(run,part,name) {
@@ -2767,8 +2787,25 @@
   async function nativeLifecycleSafeCleanup(run) {
     if(run.uncertain)throw new Error('原生写入或任务归属尚未确认，不允许清理');
     await nativeProbeIdle();
-    if(!(await nativeProbeWaitFile(run.workspace+'/owner.txt',run.ownerToken)))
-      throw new Error('所有权标记不匹配，拒绝清理');
+    if(!(await nativeProbeWaitFile(run.workspace+'/owner.txt',run.ownerToken))) {
+      // mkdir may succeed before owner.txt can be written. An empty workspace
+      // is safe to remove only when THIS session confirms that it created it
+      // and no other native write was ever attempted afterward.
+      const onlyInitialDirectory=run.workspaceCreated &&
+        run.steps.some(step=>step.name==='mkdir-lifecycle-workspace' &&
+          step.status==='passed') &&
+        run.steps.every(step=>step.name==='selected-readonly-video' ||
+          step.name==='mkdir-lifecycle-workspace' ||
+          step.name==='setup-aborted');
+      if(!onlyInitialDirectory ||
+         (await nativeProbeEntries(run.workspace)).length!==0)
+        throw new Error('所有权标记不匹配或非空目录，拒绝清理');
+      return nativeProbeRun(run,'cleanup-empty-lifecycle-workspace',{},
+        {action:1,source:run.workspace,target:''},
+        async()=>!(await nativeProbeEntries(NATIVE_PROBE_ROOT))
+          .some(e=>e.name===run.workspace.split('/').pop()),
+        run.workspace,'lifecycle');
+    }
     const layout=[
       ['',{'owner.txt':false,'source':true,'large':true,'queue1':true,'queue2':true}],
       ['source',{'queue1.txt':false,'queue2.txt':false}],
@@ -2791,7 +2828,7 @@
       {action:1,source:run.workspace,target:''},
       async()=>!(await nativeProbeEntries(NATIVE_PROBE_ROOT))
         .some(e=>e.name===run.workspace.split('/').pop()),
-      run.workspace);
+      run.workspace,'lifecycle');
   }
   async function nativeLifecycleFinalize(run,status,reason,notify) {
     try{
@@ -2903,14 +2940,14 @@
       await nativeProbeRun(run,'mkdir-lifecycle-workspace',{},
         {action:0,source:NATIVE_PROBE_ROOT,target:workspace.split('/').pop()},
         async()=>(await nativeProbeEntries(NATIVE_PROBE_ROOT))
-          .some(e=>e.name===workspace.split('/').pop()&&e.folder),workspace);
+          .some(e=>e.name===workspace.split('/').pop()&&e.folder),workspace,'lifecycle');
       run.workspaceCreated=true;
       nativeLifecycleSnapshot(run);
       for(const subdir of ['source','large','queue1','queue2']){
         await nativeProbeRun(run,'mkdir-'+subdir,{},
           {action:0,source:workspace,target:subdir},
           async()=>(await nativeProbeEntries(workspace))
-            .some(e=>e.name===subdir&&e.folder),workspace);
+            .some(e=>e.name===subdir&&e.folder),workspace,'lifecycle');
       }
       for(const [name,contents] of [
         ['owner.txt',run.ownerToken],
