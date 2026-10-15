@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.13.7
+// @version      0.2.13.8
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -1844,7 +1844,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.13.7';
+  const DIAGNOSTIC_VERSION='0.2.13.8';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -2657,6 +2657,450 @@
     start.focus();
   }
 
+
+  // Lifecycle test v0.2.13.8: only operates inside the user-authorized
+  // /mnt/user/downloads/新建文件夹 subtree. Existing videos are READ-ONLY inputs.
+  // A dedicated __ufs_lifecycle_* directory owns every generated output.
+  const NATIVE_LIFECYCLE_KEY=STORE+'native-lifecycle-v1';
+  let nativeLifecycleBusy=false;
+  function nativeLifecycleOwn(path,run) {
+    return typeof path==='string' &&
+      typeof run?.workspace==='string' &&
+      /^__ufs_lifecycle_[a-z0-9_]+$/.test(run.workspace.slice(NATIVE_PROBE_ROOT.length+1)) &&
+      run.workspace.startsWith(NATIVE_PROBE_ROOT+'/') &&
+      (path===run.workspace || path.startsWith(run.workspace+'/')) &&
+      safePath(path) && !path.split('/').some(p=>p==='.'||p==='..');
+  }
+  function nativeLifecycleSnapshot(run) {
+    sessionStorage.setItem(NATIVE_LIFECYCLE_KEY,JSON.stringify(run));
+  }
+  function nativeLifecycleRead() {
+    try {
+      const raw=sessionStorage.getItem(NATIVE_LIFECYCLE_KEY);
+      if(!raw)return null;
+      const run=JSON.parse(raw);
+      if(!run || run.schemaVersion!==1 || !nativeLifecycleOwn(run.workspace,run) ||
+         typeof run.ownerToken!=='string' || !run.ownerToken.startsWith('UFS_LIFECYCLE_') ||
+         !Array.isArray(run.steps) || !Array.isArray(run.samples) ||
+         !['preparing','before-reload','resuming','complete','stopped'].includes(run.phase))
+        throw new Error('生命周期记录无法校验，拒绝自动恢复');
+      return run;
+    } catch(error) {
+      diagnosticLog('ERROR','native_lifecycle.invalid_snapshot',{message:error?.message});
+      return null;
+    }
+  }
+  function nativeLifecycleNote(run,name,detail={}) {
+    run.steps.push({time:new Date().toISOString(),name,...detail});
+    nativeLifecycleSnapshot(run);
+  }
+  function nativeLifecycleFilePath(run,part,name) {
+    const path=run.workspace+'/'+part+'/'+name;
+    if(!nativeLifecycleOwn(path,run) || !['source','large','queue1','queue2'].includes(part))
+      throw new Error('生命周期文件路径超出授权目录');
+    return path;
+  }
+  async function nativeLifecycleFindVideo() {
+    const folders=await nativeProbeEntries(NATIVE_PROBE_ROOT);
+    const files=[];
+    const inspect=async(dir,depth)=>{
+      const entries=await nativeProbeEntries(dir);
+      for(const entry of entries){
+        if(entry.copyPathVerified===false)continue;
+        if(!entry.folder && /\.mp4$/i.test(entry.name) &&
+           Number.isFinite(entry.size) && entry.size>=64*1024*1024 &&
+           entry.size<=2*1024*1024*1024 &&
+           entry.path.startsWith(NATIVE_PROBE_ROOT+'/') &&
+           !entry.path.split('/').some(x=>x==='.'||x==='..'))
+          files.push(entry);
+        if(entry.folder && depth<1 && !entry.name.startsWith('__ufs_') &&
+           entry.path.startsWith(NATIVE_PROBE_ROOT+'/'))
+          await inspect(entry.path,depth+1);
+      }
+    };
+    for(const entry of folders){
+      if(!entry.folder && /\.mp4$/i.test(entry.name) &&
+         entry.copyPathVerified!==false && entry.size>=64*1024*1024 &&
+         entry.size<=2*1024*1024*1024)files.push(entry);
+      if(entry.folder && !entry.name.startsWith('__ufs_'))
+        await inspect(entry.path,0);
+    }
+    files.sort((a,b)=>b.size-a.size);
+    return files[0]||null;
+  }
+  async function nativeLifecycleFileSize(directory,name) {
+    const entries=await nativeProbeEntries(directory);
+    const entry=entries.find(e=>e.name===name && !e.folder && e.copyPathVerified!==false);
+    return entry ? entry.size : null;
+  }
+  function nativeLifecycleJobsOwned(run,jobs) {
+    const expected=[
+      {source:nativeLifecycleFilePath(run,'source','queue1.txt'),target:run.workspace+'/queue1/',task:run.tasks[0]},
+      {source:nativeLifecycleFilePath(run,'source','queue2.txt'),target:run.workspace+'/queue2/',task:run.tasks[1]}
+    ];
+    const matches=jobs.map(job=>expected.findIndex(item=>
+      nativeProbeOwnQueuedJob(job,item.source,item.target,item.task)));
+    if(matches.some(i=>i<0) || new Set(matches).size!==matches.length)
+      throw new Error('原生队列包含其他任务或未知任务，拒绝调度与清理');
+    return matches;
+  }
+  function nativeLifecycleActiveOwned(run,active) {
+    if(!active)return null;
+    const possibilities=[
+      {source:run.video.path,target:run.workspace+'/large/'},
+      {source:nativeLifecycleFilePath(run,'source','queue1.txt'),target:run.workspace+'/queue1/'},
+      {source:nativeLifecycleFilePath(run,'source','queue2.txt'),target:run.workspace+'/queue2/'}
+    ];
+    const i=possibilities.findIndex(item=>Number(active.action)===8 &&
+      item.source===active.source && item.target===active.target);
+    if(i<0)throw new Error('检测到不属于测试的原生活动任务，立即停止测试');
+    return i===0?'large':'queue'+i;
+  }
+  async function nativeLifecycleSafeCleanup(run) {
+    if(run.uncertain)throw new Error('原生写入或任务归属尚未确认，不允许清理');
+    await nativeProbeIdle();
+    if(!(await nativeProbeWaitFile(run.workspace+'/owner.txt',run.ownerToken)))
+      throw new Error('所有权标记不匹配，拒绝清理');
+    const layout=[
+      ['',{'owner.txt':false,'source':true,'large':true,'queue1':true,'queue2':true}],
+      ['source',{'queue1.txt':false,'queue2.txt':false}],
+      ['large',{[run.video.name]:false}],
+      ['queue1',{'queue1.txt':false}],
+      ['queue2',{'queue2.txt':false}]
+    ];
+    for(const [dir,expected] of layout){
+      const path=run.workspace+(dir?'/'+dir:'');
+      const entries=await nativeProbeEntries(path);
+      for(const entry of entries){
+        if(!nativeLifecycleOwn(entry.path,run) ||
+           !Object.hasOwn(expected,entry.name) ||
+           expected[entry.name]!==entry.folder ||
+           entry.copyPathVerified===false)
+          throw new Error('测试目录内容异常，拒绝清理：'+dir+'/'+entry.name);
+      }
+    }
+    return nativeProbeRun(run,'cleanup-lifecycle-workspace',{},
+      {action:1,source:run.workspace,target:''},
+      async()=>!(await nativeProbeEntries(NATIVE_PROBE_ROOT))
+        .some(e=>e.name===run.workspace.split('/').pop()),
+      run.workspace);
+  }
+  async function nativeLifecycleFinalize(run,status,reason,notify) {
+    try{
+      run.phase='stopped';
+      run.endedAt=new Date().toISOString();
+      run.result=status;
+      if(reason)run.error=String(reason?.message||reason);
+      nativeLifecycleSnapshot(run);
+      if(run.workspaceCreated && !run.uncertain){
+        notify('正在核对测试数据并尝试清理临时目录…');
+        try{
+          await nativeLifecycleSafeCleanup(run);
+          run.cleanup='completed';
+        }catch(error){
+          run.cleanup='skipped';
+          run.cleanupReason=String(error.message||error);
+        }
+      }else{
+        run.cleanup='skipped';
+        run.cleanupReason=run.workspaceCreated?'操作结果未确认，保留测试目录':'测试目录未确认创建';
+      }
+      run.result=run.result==='passed'&&run.cleanup!=='completed'?'needs_manual_check':run.result;
+      run.phase='complete';
+      nativeLifecycleSnapshot(run);
+      notify('生命周期测试结束：'+run.result+'。'+
+        (run.cleanup==='completed'?'专属测试目录已清理。':'临时目录保留，请查看 JSON 报告。'));
+      nativeProbeDownload({...run,kind:'unraid-native-lifecycle-probe'});
+      diagnosticLog('INFO','native_lifecycle.finished',{result:run.result,cleanup:run.cleanup});
+    }finally{nativeLifecycleBusy=false;}
+  }
+  function nativeLifecycleShowPanel(initial='') {
+    let existing=document.querySelector('.ufs-native-lifecycle-overlay');
+    if(existing)return message=>{
+      const status=existing.querySelector('.ufs-native-lifecycle-status');
+      if(status)status.textContent=message;
+    };
+    const overlay=element('div','ufs-diagnostic-overlay ufs-native-lifecycle-overlay');
+    const panel=element('section','ufs-diagnostic-panel');
+    panel.setAttribute('role','dialog');
+    panel.setAttribute('aria-modal','true');
+    panel.setAttribute('aria-label','原生任务生命周期测试');
+    const title=element('div','ufs-diagnostic-head');
+    title.append(element('strong','','原生任务生命周期专项测试'));
+    const close=element('button','','×');
+    close.type='button';
+    close.addEventListener('click',()=>{if(!nativeLifecycleBusy)overlay.remove();});
+    title.append(close);
+    const text=element('p','',
+      '只读取授权目录中的现有 MP4，复制结果和队列测试文件均创建在 __ufs_lifecycle_* 临时目录内；不会移动或删除原始视频。测试过程中可能自动刷新此页面一次。请不要使用其他标签页执行文件操作，也不要关闭当前标签页。');
+    const status=element('div','ufs-diagnostic-status ufs-native-lifecycle-status',
+      initial||'准备运行；要求原生队列为空，且没有正在执行的文件任务。');
+    const controls=element('div','ufs-diagnostic-controls');
+    const start=element('button','ufs-diagnostic-primary','开始生命周期测试');
+    start.type='button';
+    const download=element('button','','下载已有报告');
+    download.type='button';
+    controls.append(start,download);
+    const existingRun=nativeLifecycleRead();
+    start.disabled=nativeLifecycleBusy || !!existingRun && existingRun.phase!=='complete';
+    download.disabled=!existingRun;
+    start.addEventListener('click',()=>{
+      if(!window.confirm('测试将复制授权目录内的一份大型视频到独立临时目录，然后在复制运行期间向原生队列追加两个小文件任务，并自动 F5 一次。\n\n原始视频保持不变，但复制会暂时占用等量磁盘空间。请确认没有其他 WebGUI 任务或用户正在执行文件操作。'))return;
+      if(nativeLifecycleBusy)return;
+      start.disabled=true;
+      void nativeLifecycleStart(msg=>status.textContent=msg);
+    });
+    download.addEventListener('click',()=>{
+      const r=nativeLifecycleRead();
+      if(r)nativeProbeDownload({...r,kind:'unraid-native-lifecycle-probe'});
+    });
+    overlay.append(panel);
+    panel.append(title,text,controls,status);
+    document.body.append(overlay);
+    return message=>{status.textContent=message;download.disabled=!nativeLifecycleRead();};
+  }
+  async function nativeLifecycleStart(notify){
+    if(nativeLifecycleBusy)return;
+    nativeLifecycleBusy=true;
+    const workspace=NATIVE_PROBE_ROOT+'/__ufs_lifecycle_'+Date.now().toString(36)+'_'+
+      Math.random().toString(36).slice(2,10);
+    const run={
+      schemaVersion:1,kind:'unraid-native-lifecycle-probe',version:DIAGNOSTIC_VERSION,
+      startedAt:new Date().toISOString(),phase:'preparing',workspace,
+      scope:{authorizedRoot:NATIVE_PROBE_ROOT,videoSourceReadOnly:true},
+      ownerToken:'UFS_LIFECYCLE_'+Math.random().toString(36).slice(2),
+      tasks:['ufs-lifecycle-'+Math.random().toString(36).slice(2)+'-1',
+        'ufs-lifecycle-'+Math.random().toString(36).slice(2)+'-2'],
+      workspaceCreated:false,uncertain:false,steps:[],samples:[],queueResponseFormat:null,
+      conclusion:{runningEnqueue:'not_tested',f5Resume:'not_tested',
+        automaticQueueAdvance:'not_tested',unattendedAdvance:'not_tested',
+        cancel:'not_tested',largeCopySpeed:'not_benchmarked'},
+      cleanup:'not_started'
+    };
+    try{
+      if(isDemo)throw new Error('演示模式不允许运行生命周期测试');
+      const old=nativeLifecycleRead();
+      if(old && old.phase!=='complete')throw new Error('上次生命周期测试尚未结束，拒绝启动新任务');
+      await nativeProbeIdle();
+      run.queueResponseFormat=nativeProbeQueueFormat;
+      notify('正在授权目录下寻找大型 MP4，仅作复制源文件…');
+      const video=await nativeLifecycleFindVideo();
+      if(!video)throw new Error('授权目录内未找到 64MB–2GB 且路径已核验的 MP4 文件');
+      run.video={path:video.path,name:video.name,size:video.size,mtime:video.mtime};
+      nativeLifecycleNote(run,'selected-readonly-video',{size:video.size,name:video.name});
+      const existing=(await nativeProbeEntries(NATIVE_PROBE_ROOT))
+        .some(e=>e.name===workspace.split('/').pop());
+      if(existing)throw new Error('随机工作目录已存在，拒绝覆盖');
+      notify('正在创建受限测试目录…');
+      await nativeProbeRun(run,'mkdir-lifecycle-workspace',{},
+        {action:0,source:NATIVE_PROBE_ROOT,target:workspace.split('/').pop()},
+        async()=>(await nativeProbeEntries(NATIVE_PROBE_ROOT))
+          .some(e=>e.name===workspace.split('/').pop()&&e.folder),workspace);
+      run.workspaceCreated=true;
+      nativeLifecycleSnapshot(run);
+      for(const subdir of ['source','large','queue1','queue2']){
+        await nativeProbeRun(run,'mkdir-'+subdir,{},
+          {action:0,source:workspace,target:subdir},
+          async()=>(await nativeProbeEntries(workspace))
+            .some(e=>e.name===subdir&&e.folder),workspace);
+      }
+      for(const [name,contents] of [
+        ['owner.txt',run.ownerToken],
+        ['source/queue1.txt','UFS_LIFECYCLE_QUEUE1_'+run.ownerToken],
+        ['source/queue2.txt','UFS_LIFECYCLE_QUEUE2_'+run.ownerToken]
+      ]){
+        await nativeProbeIdle();
+        const dst=workspace+'/'+name;
+        if(!nativeLifecycleOwn(dst,run))throw new Error('写入超出授权路径');
+        // Save is not idempotent under network failures; checkpoint before POST.
+        run.uncertain=true;
+        nativeLifecycleSnapshot(run);
+        await postNativeControl({mode:'save',file:encodeURIComponent(dst),
+          data:encodeURIComponent(contents)});
+        if(!(await nativeProbeWaitFile(dst,contents)))
+          throw new Error('测试源文件写入后内容无法确认');
+        run.uncertain=false;
+        nativeLifecycleNote(run,'save-'+name,{size:contents.length});
+      }
+      await nativeProbeIdle();
+      notify('正在发起大型视频原生复制，并采样活动任务…');
+      run.phase='preparing';
+      run.uncertain=true;
+      nativeLifecycleSnapshot(run);
+      const startedAt=Date.now();
+      const target=workspace+'/large/';
+      await postNativeControl({mode:'file',action:'8',
+        title:encodeURIComponent('UFS lifecycle large-file copy'),
+        source:encodeURIComponent(video.path),target:encodeURIComponent(target),
+        hdlink:'',sparse:'',exist:'1',zfs:''});
+      nativeLifecycleNote(run,'large-copy-submitted',{at:startedAt,size:video.size});
+      // The original file is never written: only native copies into our workspace.
+      let observed=false;
+      for(let i=0;i<18;i++){
+        const active=await readNativeActive();
+        const owner=nativeLifecycleActiveOwned(run,active);
+        if(owner==='large'){observed=true;break;}
+        if(owner!==null)throw new Error('原生活动任务被其他探针任务占用');
+        await waitNative(150);
+      }
+      run.conclusion.runningEnqueue=observed?'pending':'not_observed_large_copy_was_too_fast';
+      nativeLifecycleNote(run,'large-copy-observation',{activeObserved:observed});
+      if(!observed)throw new Error('大文件复制未能在活动槽中被观察到；本轮不入队或自动刷新，避免误判');
+      // Submit both queued jobs only while a matching large-copy action is active.
+      for(let i=0;i<2;i++){
+        const active=await readNativeActive();
+        if(nativeLifecycleActiveOwned(run,active)!=='large')
+          throw new Error('复制任务已结束或活动槽不匹配；停止继续入队');
+        const source=nativeLifecycleFilePath(run,'source','queue'+(i+1)+'.txt');
+        const destination=workspace+'/queue'+(i+1)+'/';
+        const queue=await nativeProbeQueue();
+        nativeLifecycleJobsOwned(run,queue);
+        run.phase='preparing';
+        nativeLifecycleSnapshot(run);
+        await postNativeControl({mode:'file',task:encodeURIComponent(run.tasks[i]),action:'8',
+          title:encodeURIComponent('UFS lifecycle queued copy'),
+          source:encodeURIComponent(source),target:encodeURIComponent(destination),
+          hdlink:'',sparse:'',exist:'1',zfs:''});
+        const after=await nativeProbeQueue();
+        const ids=nativeLifecycleJobsOwned(run,after);
+        if(!ids.includes(i))throw new Error('已提交的排队任务未能在原生队列中确认');
+        nativeLifecycleNote(run,'queued-during-active',{which:i+1,queueCount:after.length,
+          activeBeforeSubmission:'large'});
+      }
+      run.conclusion.runningEnqueue='verified';
+      run.phase='before-reload';
+      run.uncertain=false;
+      run.reloadRequestedAt=new Date().toISOString();
+      nativeLifecycleSnapshot(run);
+      notify('运行中入队成功。现在自动刷新本页面，随后恢复观测…');
+      window.location.reload();
+    }catch(error){
+      if(!run.steps.some(x=>x.name==='large-copy-submitted') && !run.workspaceCreated)
+        run.uncertain=false;
+      nativeLifecycleNote(run,'setup-aborted',{error:String(error.message||error)});
+      notify('测试中止：'+String(error.message||error));
+      await nativeLifecycleFinalize(run,'failed',error,notify);
+    }
+  }
+  async function nativeLifecycleResume(run,notify){
+    if(nativeLifecycleBusy)return;
+    nativeLifecycleBusy=true;
+    try{
+      run.phase='resuming';
+      run.resumedAt=new Date().toISOString();
+      run.conclusion.f5Resume='observed_new_page';
+      nativeLifecycleSnapshot(run);
+      let idleSince=null,allCompleted=false,manualAdvances=0;
+      const initial=(await Promise.all([readNativeActive(),nativeProbeQueue()]));
+      const firstOwner=nativeLifecycleActiveOwned(run,initial[0]);
+      nativeLifecycleJobsOwned(run,initial[1]);
+      nativeLifecycleNote(run,'after-f5-first-observation',{
+        nativeActive:firstOwner,queueCount:initial[1].length,
+        elapsedFromRefreshMs:Date.now()-new Date(run.reloadRequestedAt).getTime()});
+      notify('刷新后已重新读取原生活动槽及服务器端队列，持续观察…');
+      const until=Date.now()+180000;
+      let nextSample=0;
+      let lastProgress=null;
+      const unsubscribe=observeNativeProgress(data=>{
+        if(data?.done===1)lastProgress={event:'done',time:Date.now()};
+        else if(data?.status)lastProgress={event:'progress',time:Date.now()};
+      });
+      try{
+        while(Date.now()<until){
+          const active=await readNativeActive();
+          const owner=nativeLifecycleActiveOwned(run,active);
+          const queued=await nativeProbeQueue();
+          const queuedIndexes=nativeLifecycleJobsOwned(run,queued);
+          const bigSize=await nativeLifecycleFileSize(run.workspace+'/large',run.video.name);
+          const q1=await nativeLifecycleFileSize(run.workspace+'/queue1','queue1.txt');
+          const q2=await nativeLifecycleFileSize(run.workspace+'/queue2','queue2.txt');
+          const source1='UFS_LIFECYCLE_QUEUE1_'+run.ownerToken;
+          const source2='UFS_LIFECYCLE_QUEUE2_'+run.ownerToken;
+          const smallComplete=q1===source1.length && q2===source2.length;
+          const largeSizeMatch=bigSize===run.video.size;
+          const now=Date.now();
+          if(now>=nextSample || !owner && queued.length===0){
+            run.samples.push({at:new Date().toISOString(),owner,queueCount:queued.length,
+              queuedIndexes,bigSize,q1,q2,lastProgress});
+            if(run.samples.length>150)run.samples.shift();
+            nativeLifecycleSnapshot(run);
+            nextSample=now+1500;
+          }
+          if(!owner && queued.length===0 && smallComplete && largeSizeMatch){
+            allCompleted=true;
+            nativeLifecycleNote(run,'queue-finished',{
+              queueCount:0,manualAdvances,largeTargetSize:bigSize,
+              integrity:'sizes-only-no-hash',eventsObserved:!!lastProgress});
+            break;
+          }
+          if(!owner && queued.length>0 && largeSizeMatch){
+            if(idleSince===null)idleSince=now;
+            // No automatic advancement observed for 6 seconds after the
+            // initial large copy. Record it and then manually promote only
+            // a queue whose items ALL match the probe's unique source/target.
+            if(now-idleSince>=6000){
+              if(run.conclusion.automaticQueueAdvance==='not_tested')
+                run.conclusion.automaticQueueAdvance='not_observed_with_browser_open';
+              if(manualAdvances>=2)throw new Error('手动推进两次仍未完成队列');
+              const before=await nativeProbeQueue();
+              nativeLifecycleJobsOwned(run,before);
+              if((await readNativeActive())!==null)throw new Error('提交 mode=start 前活动槽变化');
+              const reply=(await postNativeControl({mode:'start'})).trim();
+              if(!['1','2'].includes(reply))throw new Error('手动推进返回未知状态 '+reply);
+              manualAdvances++;
+              nativeLifecycleNote(run,'manual-start-after-idle',{
+                reply,manualAdvances,queuedBefore:before.length});
+              idleSince=null;
+            }
+          }else idleSince=null;
+          notify('正在观测：原生活动任务 '+(owner||'无')+
+            '，待执行 '+queued.length+'，已手动推进 '+manualAdvances+' 次。');
+          await waitNative(500);
+        }
+      }finally{unsubscribe();}
+      if(!allCompleted)throw new Error('3 分钟内未能确认所有队列任务完成');
+      // No manual start means the queue was advanced by an external frontend,
+      // not necessarily a headless server-side scheduler.
+      if(manualAdvances===0)
+        run.conclusion.automaticQueueAdvance='observed_with_browser_open';
+      if(manualAdvances>0 && run.conclusion.automaticQueueAdvance==='not_tested')
+        run.conclusion.automaticQueueAdvance='partially_observed_with_browser_open';
+      if(!(await nativeProbeWaitFile(run.workspace+'/queue1/queue1.txt',
+           'UFS_LIFECYCLE_QUEUE1_'+run.ownerToken)) ||
+         !(await nativeProbeWaitFile(run.workspace+'/queue2/queue2.txt',
+           'UFS_LIFECYCLE_QUEUE2_'+run.ownerToken)))
+        throw new Error('排队结果文本内容核验失败');
+      // Source may have changed during the test; metadata is evidence but not a hash.
+      const original=await nativeProbeEntries(run.video.path.slice(0,run.video.path.lastIndexOf('/')));
+      const videoNow=original.find(e=>e.path===run.video.path);
+      run.conclusion.sourceUnchangedByMetadata=!!videoNow &&
+        videoNow.size===run.video.size && videoNow.mtime===run.video.mtime;
+      run.conclusion.largeCopy='file_size_matches_not_hash_verified';
+      run.conclusion.f5Resume='verified_reconnected_and_completed';
+      run.uncertain=false;
+      await nativeLifecycleFinalize(run,'passed','',notify);
+    }catch(error){
+      nativeLifecycleNote(run,'resume-aborted',{error:String(error.message||error)});
+      notify('恢复观测中止：'+String(error.message||error));
+      await nativeLifecycleFinalize(run,'failed',error,notify);
+    }
+  }
+  function nativeLifecycleOnMount(){
+    if(isDemo)return;
+    const run=nativeLifecycleRead();
+    if(!run)return;
+    if(run.phase==='before-reload'){
+      const notify=nativeLifecycleShowPanel('检测到刷新前保存的测试状态，正在安全恢复观察…');
+      void nativeLifecycleResume(run,notify);
+    } else if(run.phase!=='complete'){
+      // Never automatically resubmit a request whose state is not explicitly
+      // "before-reload"; preserve native task/queue state for manual review.
+      const notify=nativeLifecycleShowPanel();
+      void nativeLifecycleFinalize(run,'failed',
+        '页面在准备或恢复阶段意外中断；不自动重发任务。',notify);
+    }
+  }
+
   function showDiagnosticCenter() {
     if(document.querySelector('.ufs-diagnostic-overlay')) return;
     const overlay=element('div','ufs-diagnostic-overlay');
@@ -2678,9 +3122,11 @@
     const refresh=element('button','','刷新日志');
     const download=element('button','ufs-diagnostic-primary','导出 JSON');
     const nativeProbe=element('button','','原生能力测试');
+    const lifecycleProbe=element('button','','任务生命周期测试');
     const clear=element('button','','清空日志');
-    for(const button of [debug,mark,refresh,download,nativeProbe,clear]) button.type='button';
-    controls.append(debug,mark,refresh,download,nativeProbe,clear);
+    for(const button of [debug,mark,refresh,download,nativeProbe,lifecycleProbe,clear]) button.type='button';
+    controls.append(debug,mark,refresh,download,nativeProbe,lifecycleProbe,clear);
+    lifecycleProbe.addEventListener('click',()=>{dismiss();nativeLifecycleShowPanel();});
     nativeProbe.addEventListener('click',()=>{dismiss();showNativeProbeDialog();});
     const status=element('div','ufs-diagnostic-status','正在读取诊断记录…');
     const preview=element('pre','ufs-diagnostic-events','');
@@ -7999,6 +8445,7 @@
     // "all shares" listing or put the virtual group into tab history.
     void initializeCopyPersistence();
     void initializeBrowser(start);
+    nativeLifecycleOnMount();
     return true;
   }
   async function initializeBrowser(start) {
