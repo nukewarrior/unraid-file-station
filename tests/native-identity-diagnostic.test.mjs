@@ -33,10 +33,11 @@ const context={
   nativeProbeDownload(){},diagnosticLog(){},
   readNativeActive:async()=>null,nativeProbeQueue:async()=>[],
   nativeProbeQueueFormat:'html-legacy',
-  DIAGNOSTIC_VERSION:'0.2.16.0',
+  DIAGNOSTIC_VERSION:'0.2.16.1',
+  NATIVE_PROBE_ROOT:'/mnt/user/downloads/新建文件夹',
 };
 vm.runInNewContext(source+
-  '\nglobalThis.api={candidates:nativeSavedTaskCandidates,describe:nativeDescribeTaskRelation,export:nativeExportIdentityDiagnostic};',
+  '\nglobalThis.api={candidates:nativeSavedTaskCandidates,describe:nativeDescribeTaskRelation,export:nativeExportIdentityDiagnostic,selftest:nativeIdentitySelfTest,exportSelftest:nativeExportIdentitySelfTest};',
   context);
 
 test('活动槽仅以原生动作+完整源路径+完整目标路径匹配已提交意图',()=>{
@@ -122,4 +123,57 @@ test('成功安全清理后的历史错误字段应明确归档，不误报当�
   assert.match(block,/imported\.originalCleanupReason=imported\.cleanupReason\|\|null;/);
   assert.match(block,/delete imported\.cleanupReason;/);
   assert.match(block,/imported\.cleanup='completed';/);
+});
+
+
+test('免文件操作的一键身份自测覆盖正确、错误、歧义与批量移动签名',()=>{
+  const report=context.api.selftest();
+  assert.equal(report.kind,'unraid-native-identity-selftest');
+  assert.equal(report.scope,'synthetic-only');
+  assert.equal(report.noNasRead,true);
+  assert.equal(report.noNasWrite,true);
+  assert.equal(report.noIndexedDbWrite,true);
+  assert.equal(report.total,10);
+  assert.equal(report.passed,10,JSON.stringify(report.steps));
+  assert.equal(report.result,'passed');
+  assert.equal(report.steps.find(x=>x.name==='exact-batch-move').status,'passed');
+  assert.equal(report.steps.find(x=>x.name==='duplicate-is-ambiguous').actual,'ambiguous');
+  assert.equal(report.steps.find(x=>x.name==='legacy-queue-remains-unattributed').queuedRelation,'unattributed');
+});
+test('一键身份自测仅调用纯匹配逻辑，绝不读取服务器、提交队列或写 IndexedDB',()=>{
+  const originalRead=context.readNativeActive;
+  const originalQueue=context.nativeProbeQueue;
+  const originalJobs=context.copyJobs;
+  let downloads=0,reads=0,queues=0;
+  const savedDownload=context.nativeProbeDownload;
+  try{
+    context.readNativeActive=async()=>{reads++;throw Error('forbidden');};
+    context.nativeProbeQueue=async()=>{queues++;throw Error('forbidden');};
+    context.copyJobs=[makeJob('existing-persisted-task')];
+    context.nativeProbeDownload=()=>{downloads++;};
+    const status=[];
+    const report=context.api.exportSelftest(text=>status.push(text));
+    assert.equal(report.result,'passed');
+    assert.equal(downloads,1);
+    assert.equal(reads,0);
+    assert.equal(queues,0);
+    assert.equal(context.copyJobs.length,1);
+    assert.match(status[0],/10\/10/);
+    assert.doesNotMatch(source,/postNativeControl\(\{\s*mode:\s*['"](?:start|file|undo)['"]/);
+  }finally{
+    context.readNativeActive=originalRead;
+    context.nativeProbeQueue=originalQueue;
+    context.copyJobs=originalJobs;
+    context.nativeProbeDownload=savedDownload;
+  }
+});
+test('F5 关联候选必须唯一且属于恢复任务，不允许同名非恢复任务抢归属',()=>{
+  const js=src.slice(src.indexOf('  async function monitorRecoveredNativeTask()'),
+    src.indexOf('  async function verifyRecoveredNativeBatch('));
+  assert.match(js,/nativeSavedTaskCandidates\(active,copyJobs\)/);
+  assert.match(js,/candidate\\?copyJobs\.find/);
+  assert.match(js,/item\.recovered/);
+  assert.match(js,/batch\?matchesMoveBatchTask\(current,grouped\)/);
+  assert.doesNotMatch(js,/postNativeControl\(\{\s*mode:\s*['"](?:file|start|undo)['"]/);
+  assert.match(js,/if\(finishedEvent && sameTaskObserved\)/);
 });
