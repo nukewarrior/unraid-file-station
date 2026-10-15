@@ -3314,6 +3314,7 @@
   const NATIVE_MULTITAB_EVENT_PREFIX=STORE+'native-multitab-events:';
   const NATIVE_MULTITAB_OPTIN=STORE+'native-multitab-optin';
   let nativeMultitabStop=null;
+  const nativeMultitabRuntimeId='runtime_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,10);
   function nativeMultitabSession(){
     try{
       const state=JSON.parse(localStorage.getItem(NATIVE_MULTITAB_KEY)||'null');
@@ -3327,10 +3328,10 @@
   }
   function nativeMultitabRecord(sessionId,event){
     try{
-      const key=nativeMultitabEventKey(sessionId,diagnosticTabId);
+      const key=nativeMultitabEventKey(sessionId,nativeMultitabRuntimeId);
       const events=JSON.parse(localStorage.getItem(key)||'[]');
       if(!Array.isArray(events))return;
-      events.push({at:Date.now(),tabId:diagnosticTabId,...event});
+      events.push({at:Date.now(),tabId:diagnosticTabId,runtimeId:nativeMultitabRuntimeId,...event});
       localStorage.setItem(key,JSON.stringify(events.slice(-150)));
     }catch(error){
       diagnosticLog('WARN','native_multitab.record_failed',{message:error?.message});
@@ -3349,6 +3350,11 @@
     };
     const wrappedSend=function(body){
       try{
+        if(Date.now()>session.expiresAt){
+          sessionStorage.removeItem(NATIVE_MULTITAB_OPTIN);
+          nativeMultitabStop?.();
+          return originalSend.call(this,body);
+        }
         const info=requests.get(this);
         if(info?.method==='POST' && info.url==='/webGui/include/Control.php' &&
            typeof body==='string' && new URLSearchParams(body).get('mode')==='start'){
@@ -3391,18 +3397,26 @@
       }catch(_){}
     }
     events.sort((a,b)=>a.at-b.at);
-    const tabs=Array.from(new Set(events.map(e=>e.tabId)));
+    const tabs=Array.from(new Set(events.map(e=>e.runtimeId||e.tabId)));
     const requests=events.filter(e=>e.type==='native-start-request');
     const possibleOverlaps=[];
-    for(let i=1;i<requests.length;i++){
-      if(requests[i].at-requests[i-1].at<=1000 &&
-         requests[i].tabId!==requests[i-1].tabId)
-        possibleOverlaps.push({a:requests[i-1],b:requests[i]});
+    let burst=[];
+    const finishBurst=()=>{
+      const unique=new Set(burst.map(item=>item.runtimeId||item.tabId));
+      if(unique.size>1)possibleOverlaps.push({from:burst[0].at,to:burst.at(-1).at,
+        runtimeCount:unique.size,requestCount:burst.length});
+    };
+    for(const request of requests){
+      if(burst.length && request.at-burst[0].at>1000){
+        finishBurst();burst=[];
+      }
+      burst.push(request);
     }
+    if(burst.length)finishBurst();
     return {schemaVersion:1,kind:'unraid-native-multitab-observation',
       version:DIAGNOSTIC_VERSION,session,tabsObserved:tabs.length,
       requestCount:requests.length,possibleCrossTabOverlaps:possibleOverlaps,
-      caveat:'仅被动记录明确开启监听的标签页中的XHR mode=start；不能观测未开启监听的标签页或后台设备，也不能单靠时间重叠证明数据被覆盖。',
+      caveat:'仅被动记录明确开启监听的页面运行实例中的XHR mode=start；刷新同一标签页会产生新实例，克隆标签页可能继承同一sessionStorage ID。不能观测未开启监听的页面或其他设备，也不能单靠时间重叠证明数据被覆盖。',
       events};
   }
   function nativeMultitabDownload(){
@@ -3435,7 +3449,7 @@
       const report=nativeMultitabReadReport();
       status.textContent=(nativeMultitabStop?'本标签页监听已开启':'本标签页未监听')+
         ' · 已记录标签页 '+(report?.tabsObserved||0)+
-        ' 个 · mode=start 请求 '+(report?.requestCount||0)+
+        ' 个运行实例 · mode=start 请求 '+(report?.requestCount||0)+
         ' 次 · 可能的跨标签重叠 '+(report?.possibleCrossTabOverlaps?.length||0)+' 次';
       join.disabled=!!nativeMultitabStop;
       stop.disabled=!nativeMultitabStop;
