@@ -39,7 +39,9 @@
 ## 如何解读
 
 - `conclusion.runningEnqueue = verified`：至少一次实际观察到大视频原生活动槽运行，同时成功把两个任务追加到原生队列。
-- `conclusion.f5Resume = verified_reconnected_and_completed`：刷新后能重新连接原生执行状态并观察到测试结果；**这不是完整的逐字节校验**。
+- `conclusion.f5OverlapObserved = true`：刷新前最后一次采样同时看到了原生活动任务和未完成队列。
+- `conclusion.f5Resume = verified_inflight_reconnected_and_completed`：刷新前有活动任务与队列重叠，刷新后重新连接并观察到测试结果；**这不是完整的逐字节校验**。
+- `conclusion.f5Resume = verified_post_refresh_state_only`：刷新前最后一次采样未见到活动任务与排队任务重叠，只能证明刷新后的状态可查询，不能证明复制期间真正跨越 F5。
 - `conclusion.automaticQueueAdvance = observed_with_browser_open`：没有手动推进便观察到后续队列执行，可能由另一个打开的 WebGUI 前端触发，**不能证明关闭所有网页后仍会推进**。
 - `conclusion.automaticQueueAdvance = not_observed_with_browser_open`：观察到一段无原生活动任务的等待且队列未推进，之后脚本尝试严格核实身份后手动推进。
 - `conclusion.largeCopy = file_size_matches_not_hash_verified`：仅文件大小相同，并不能保证二进制内容完全一致。
