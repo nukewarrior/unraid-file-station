@@ -2241,8 +2241,11 @@ test('v0.2.7 持久化恢复状态不允许盲目重发失败及提交阶段项�
 
 test('v0.2.7.1 刷新后仅重新观察严格匹配的原生任务，无法确定时不宣称成功',()=>{
   assert.match(script,/async function monitorRecoveredNativeTask\(\)/);
-  assert.match(script,/if\(matches\.length!==1\)\s*\{[\s\S]*?return;/);
-  assert.match(script,/matchesCopyTask\(active,signature\)/);
+  assert.match(script,/const candidates=nativeSavedTaskCandidates\(active,copyJobs\)/);
+  assert.match(script,/if\(!job\)\s*\{[\s\S]*?return;/);
+  assert.match(script,/candidate\?copyJobs\.find\(item=>/);
+  assert.match(script,/batch\?matchesMoveBatchTask\(current,grouped\)/);
+  assert.match(script,/matchesCopyTask\(current,signature\)/);
   assert.match(script,/const unwatch=observeNativeProgress\(data=>/);
   assert.match(script,/if\(finishedEvent && sameTaskObserved\)/);
   assert.match(script,/await verifyRecoveredNativeCopy\(job,index\)/);
