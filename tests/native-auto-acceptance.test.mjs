@@ -10,9 +10,10 @@ const b=script.indexOf('  function showNativeAcceptanceDialog()',a);
 assert.ok(a>0 && b>a,'验收执行器应可独立测试');
 const source=script.slice(a,b);
 
-function harness({copyFailure=false,foreignQueue=false}={}){
+function harness({copyFailure=false,foreignQueue=false,cleanupFailure=false}={}){
   const items=new Map([[root,{folder:true}]]);
   let queued=[],startCount=0,accepted=0,moved=0,blocked=0,removed=false,report=null;
+  let cleanupAttempted=false;
   const notes=[];
   const path=(p,name)=>p+'/'+name;
   const entries=async dir=>[...items.entries()].filter(([p])=>
@@ -44,6 +45,10 @@ function harness({copyFailure=false,foreignQueue=false}={}){
         assert.ok(dest.startsWith(workspace));
         items.set(dest,{folder:true});
       }else if(expected.action===1){
+        if(cleanupFailure && !cleanupAttempted){
+          cleanupAttempted=true;
+          throw Error('simulated native cleanup failed before submission');
+        }
         assert.equal(expected.source,workspace);
         for(const p of [...items.keys()])if(p===workspace||p.startsWith(workspace+'/'))
           items.delete(p);
@@ -114,7 +119,10 @@ function harness({copyFailure=false,foreignQueue=false}={}){
     waitNative:async()=>{},
   };
   vm.runInNewContext(source+'\nglobalThis.execute=nativeAcceptanceExecute;'+
-    '\nglobalThis.own=nativeAcceptanceOwn;',context);
+    '\nglobalThis.own=nativeAcceptanceOwn;'+
+    '\nglobalThis.safeCleanup=nativeAcceptanceSafeCleanup;'+
+    '\nglobalThis.validateReport=nativeAcceptanceValidateReport;'+
+    '\nglobalThis.shapeSafe=nativeAcceptanceShapeSafe;',context);
   return {context,notes,get report(){return report;},get startCount(){return startCount;},
     get accepted(){return accepted;},get moved(){return moved;},
     get blocked(){return blocked;},get removed(){return removed;},items};
@@ -141,6 +149,7 @@ test('自动验收调用正式复制/移动函数，拦截原生越队，并且�
   assert.equal(result.checks.productionCopyBlockedByNativeQueue,'verified');
   assert.equal(result.checks.ownedNativeQueueStart,'verified');
   assert.equal(result.checks.localIndexedDBScheduler,'not_tested');
+  assert.equal(result.cleanupVerification.verifiedFiles,8);
 });
 test('原生复制结果不确定时保留现场且不启动测试队列',async()=>{
   const h=harness({copyFailure:true});
@@ -179,4 +188,54 @@ test('生产自动验收不调用全局停止或按编号移除队列',()=>{
   assert.match(source,/assertNativeDispatchIdle\('automated-acceptance'\)/);
   assert.match(source,/nativeProbeOwnQueuedJob/);
   assert.match(source,/nativeProbeShapeSafe/);
+});
+
+test('旧版验收全部执行成功但清理失败后，可导入报告并严格验证再完成清理',async()=>{
+  const h=harness({cleanupFailure:true});
+  const run=await h.context.execute(()=>{});
+  assert.equal(run.result,'needs_manual_check');
+  assert.equal(run.uncertain,false);
+  assert.equal(run.cleanup,'skipped_or_failed');
+  assert.equal(h.removed,false);
+  assert.match(run.cleanupReason,/simulated native cleanup/);
+  const info=h.context.validateReport(run,{imported:true});
+  assert.equal(info.workspace,run.scope.workspace);
+  const verified=await h.context.safeCleanup(run);
+  assert.equal(verified.verifiedFiles,8);
+  assert.equal(verified.verifiedDirectories,3);
+  assert.equal(h.removed,true);
+  assert.equal(h.items.size,1);
+});
+test('目录混入未知文件时拒绝清理上次验收残留，不执行删除',async()=>{
+  const h=harness({cleanupFailure:true});
+  const run=await h.context.execute(()=>{});
+  h.items.set(run.scope.workspace+'/source/unknown.txt',{folder:false,content:'unexpected'});
+  await assert.rejects(h.context.safeCleanup(run),/目录结构与一键验收预期不符/);
+  assert.equal(h.removed,false);
+  assert.equal(h.items.has(run.scope.workspace+'/source/unknown.txt'),true);
+});
+test('上传报告中的路径、所有权、状态都必须满足清理白名单',async()=>{
+  const h=harness({cleanupFailure:true});
+  const run=await h.context.execute(()=>{});
+  const invalid=[
+    {...run,scope:{...run.scope,workspace:root+'/existing-file'}},
+    {...run,scope:{...run.scope,workspace:run.scope.workspace+'/../escape'}},
+    {...run,scope:{...run.scope,workspace:'/mnt/user/TimeMachine/other'}},
+    {...run,ownerToken:'USER_CONTENT'},
+    {...run,uncertain:true},
+    {...run,checks:{...run.checks,productionMove:'not_tested'}},
+    {...run,result:'passed'},
+    {...run,cleanup:'completed'},
+  ];
+  for(const candidate of invalid)
+    assert.throws(()=>h.context.validateReport(candidate,{imported:true}),
+      /不符合安全清理条件|仅支持导入/,JSON.stringify(candidate.scope));
+  assert.equal(h.removed,false);
+});
+test('不含旧探针 merge-folder 时一键验收自身的安全清理仍可执行',async()=>{
+  const h=harness();
+  const result=await h.context.execute(()=>{});
+  assert.equal(result.result,'passed');
+  assert.equal(result.cleanup,'completed');
+  assert.equal(result.steps.at(-1).name,'cleanup-owned-workspace');
 });
