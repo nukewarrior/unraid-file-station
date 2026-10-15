@@ -162,3 +162,98 @@ test('遗留队列任务签名拒绝外部任务、重复项和错误顺序',()=
   assert.throws(()=>ctx.check(run,[job1,job1]),/其他任务/);
   assert.throws(()=>ctx.check(run,[{...job1,task:'external'}]),/其他任务/);
 });
+
+
+test('两项唯一遗留任务可经用户显式确认依次接力且保留无人值守原始结论',async()=>{
+  const workspace=root+'/__ufs_lifecycle_verified_test';
+  const run={
+    ...structuredClone(sample),workspace,phase:'awaiting-closure',
+    userConfirmedClosedAllTabs:true,uncertain:true,
+    conclusion:{unattendedAdvance:'queue_remained_after_reported_browser_closure'}
+  };
+  const makeJob=i=>({id:i+1,source:workspace+'/source/queue'+(i+1)+'.txt',
+    target:workspace+'/queue'+(i+1)+'/',task:run.tasks[i]});
+  let pending=[makeJob(0),makeJob(1)];
+  let starts=0,cleaned=false,downloaded=false;
+  class FakeDate extends Date{
+    static now(){return Date._fakeTick=(Date._fakeTick||Date.now())+1000;}
+  }
+  const checkOwner=(r,jobs)=>{
+    const matched=jobs.map(job=>[0,1].findIndex(i=>
+      job.source===workspace+'/source/queue'+(i+1)+'.txt' &&
+      job.target===workspace+'/queue'+(i+1)+'/' &&
+      job.task===r.tasks[i]));
+    if(matched.includes(-1) || matched.length!==new Set(matched).size)
+      throw Error('原生队列包含其他任务或未知任务');
+    return matched;
+  };
+  const context={
+    nativeLifecycleBusy:false,nativeDetachedRead:()=>run,
+    nativeWriteBusy:false,copyJobs:[],readNativeActive:async()=>null,
+    nativeProbeQueue:async()=>pending.slice(),
+    nativeLifecycleJobsOwned:checkOwner,
+    nativeProbeWaitFile:async(path,text)=>{
+      if(path===workspace+'/owner.txt')return text===run.ownerToken;
+      if(path.includes('/source/queue'))return true;
+      if(path.includes('/queue1/queue1.txt'))return !pending.some(j=>j.task===run.tasks[0]);
+      if(path.includes('/queue2/queue2.txt'))return !pending.some(j=>j.task===run.tasks[1]);
+      return false;
+    },
+    nativeLifecycleFilePath:(r,part,name)=>workspace+'/'+part+'/'+name,
+    nativeLifecycleFileSize:async()=>run.video.size,
+    nativeLifecycleActiveOwned:(_r,active)=>active? 'unknown':null,
+    postNativeControl:async(body)=>{
+      assert.equal(body.mode,'start');
+      assert.ok(pending.length>0);
+      starts++;
+      const count=pending.length;
+      pending.shift();
+      return String(count);
+    },
+    nativeLifecycleNote:(r,name,other={})=>r.steps.push({name,...other}),
+    nativeLifecycleFinalize:async(r,result)=>{
+      cleaned=true;
+      r.phase='complete';r.result=result;
+    },
+    nativeProbeDownload:()=>{downloaded=true;},
+    waitNative:async()=>{},
+    Date:FakeDate,
+  };
+  vm.runInNewContext(slice('  async function nativeDetachedCompleteOwnedQueue(',
+    '  function nativeDetachedShowPanel(')+
+    '\nglobalThis.finish=nativeDetachedCompleteOwnedQueue;',context);
+  const messages=[];
+  await context.finish(m=>messages.push(m));
+  assert.equal(starts,2);
+  assert.equal(cleaned,true);
+  assert.equal(downloaded,false);
+  assert.equal(run.result,'passed');
+  assert.equal(run.conclusion.unattendedAdvance,'queue_remained_after_reported_browser_closure');
+  assert.equal(run.conclusion.recoveryByExplicitAction.manualAdvances,2);
+});
+
+test('有陌生排队任务时，遗留队列恢复不会发出 mode=start',async()=>{
+  const workspace=root+'/__ufs_lifecycle_verified_test2';
+  const run={...structuredClone(sample),workspace,phase:'awaiting-closure',
+    userConfirmedClosedAllTabs:true,
+    conclusion:{unattendedAdvance:'queue_remained_after_reported_browser_closure'}};
+  let starts=0,downloaded=false;
+  const context={
+    nativeLifecycleBusy:false,nativeDetachedRead:()=>run,
+    nativeWriteBusy:false,copyJobs:[],readNativeActive:async()=>null,
+    nativeProbeQueue:async()=>[{id:1,source:'/mnt/user/other',target:'/mnt/user/other',task:'foreign'}],
+    nativeLifecycleJobsOwned:()=>{throw Error('原生队列包含其他任务或未知任务');},
+    postNativeControl:async()=>{starts++;return '1';},
+    nativeLifecycleNote:(r,name,x={})=>r.steps.push({name,...x}),
+    nativeProbeDownload:()=>{downloaded=true;},
+    Date
+  };
+  vm.runInNewContext(slice('  async function nativeDetachedCompleteOwnedQueue(',
+    '  function nativeDetachedShowPanel(')+
+    '\nglobalThis.finish=nativeDetachedCompleteOwnedQueue;',context);
+  await context.finish(()=>{});
+  assert.equal(starts,0);
+  assert.equal(downloaded,true);
+  assert.equal(run.recoveryAttempted,undefined);
+  assert.equal(run.uncertain,true);
+});
