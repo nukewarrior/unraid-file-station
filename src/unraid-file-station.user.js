@@ -2230,7 +2230,7 @@
     const url=URL.createObjectURL(blob);
     const a=document.createElement('a');
     a.href=url;
-    a.download=(report.kind==='unraid-native-lifecycle-probe'?'unraid-file-station-lifecycle-probe-':'unraid-file-station-native-probe-')+new Date().toISOString()
+    a.download=(report.kind==='unraid-native-multitab-observation'?'unraid-file-station-multitab-probe-':report.kind==='unraid-native-lifecycle-probe'?'unraid-file-station-lifecycle-probe-':'unraid-file-station-native-probe-')+new Date().toISOString()
       .replace(/[-:]/g,'').replace('T','-').slice(0,15)+'.json';
     document.body.append(a);
     a.click();
@@ -3307,6 +3307,173 @@
     document.body.append(overlay);
   }
 
+
+  // Per-tab passive observer. Records only native mode=start timings,
+  // status codes, and tiny return codes; never logs HTTP bodies or credentials.
+  const NATIVE_MULTITAB_KEY=STORE+'native-multitab-session-v1';
+  const NATIVE_MULTITAB_EVENT_PREFIX=STORE+'native-multitab-events:';
+  const NATIVE_MULTITAB_OPTIN=STORE+'native-multitab-optin';
+  let nativeMultitabStop=null;
+  function nativeMultitabSession(){
+    try{
+      const state=JSON.parse(localStorage.getItem(NATIVE_MULTITAB_KEY)||'null');
+      return state && /^[a-z0-9_]+$/.test(state.id||'') &&
+        Number.isFinite(state.startedAt) && Number.isFinite(state.expiresAt) &&
+        state.expiresAt>Date.now()?state:null;
+    }catch(_){return null;}
+  }
+  function nativeMultitabEventKey(sessionId,tabId){
+    return NATIVE_MULTITAB_EVENT_PREFIX+sessionId+':'+tabId;
+  }
+  function nativeMultitabRecord(sessionId,event){
+    try{
+      const key=nativeMultitabEventKey(sessionId,diagnosticTabId);
+      const events=JSON.parse(localStorage.getItem(key)||'[]');
+      if(!Array.isArray(events))return;
+      events.push({at:Date.now(),tabId:diagnosticTabId,...event});
+      localStorage.setItem(key,JSON.stringify(events.slice(-150)));
+    }catch(error){
+      diagnosticLog('WARN','native_multitab.record_failed',{message:error?.message});
+    }
+  }
+  function nativeMultitabInstall(session){
+    if(nativeMultitabStop || isDemo)return false;
+    const proto=window.XMLHttpRequest?.prototype;
+    if(!proto)return false;
+    const originalOpen=proto.open, originalSend=proto.send;
+    const requests=new WeakMap();
+    const wrappedOpen=function(method,url,...args){
+      try{requests.set(this,{method:String(method||'').toUpperCase(),
+        url:new URL(String(url),location.origin).pathname});}catch(_){}
+      return originalOpen.call(this,method,url,...args);
+    };
+    const wrappedSend=function(body){
+      try{
+        const info=requests.get(this);
+        if(info?.method==='POST' && info.url==='/webGui/include/Control.php' &&
+           typeof body==='string' && new URLSearchParams(body).get('mode')==='start'){
+          const requestId=Math.random().toString(36).slice(2,12);
+          nativeMultitabRecord(session.id,{type:'native-start-request',requestId});
+          this.addEventListener('loadend',()=>{
+            const text=typeof this.responseText==='string'?this.responseText.trim():'';
+            nativeMultitabRecord(session.id,{type:'native-start-response',requestId,
+              httpStatus:Number(this.status)||0,
+              code:/^[012]$/.test(text)?text:'nonstandard'});
+          },{once:true});
+        }
+      }catch(error){/* Instrumentation must not break the original XHR. */}
+      return originalSend.call(this,body);
+    };
+    proto.open=wrappedOpen;
+    proto.send=wrappedSend;
+    nativeMultitabStop=()=>{
+      if(proto.open===wrappedOpen)proto.open=originalOpen;
+      if(proto.send===wrappedSend)proto.send=originalSend;
+      nativeMultitabRecord(session.id,{type:'observer-stopped'});
+      nativeMultitabStop=null;
+    };
+    sessionStorage.setItem(NATIVE_MULTITAB_OPTIN,session.id);
+    nativeMultitabRecord(session.id,{type:'observer-joined',route:location.pathname});
+    return true;
+  }
+  function nativeMultitabReadReport(){
+    const session=nativeMultitabSession() ||
+      (()=>{try{return JSON.parse(localStorage.getItem(NATIVE_MULTITAB_KEY)||'null');}catch(_){return null;}})();
+    if(!session)return null;
+    const events=[];
+    for(let i=0;i<localStorage.length;i++){
+      const key=localStorage.key(i);
+      if(!key?.startsWith(NATIVE_MULTITAB_EVENT_PREFIX+session.id+':'))continue;
+      try{
+        const list=JSON.parse(localStorage.getItem(key)||'[]');
+        if(Array.isArray(list))events.push(...list.filter(item=>
+          item && typeof item==='object' && item.type && Number.isFinite(item.at)));
+      }catch(_){}
+    }
+    events.sort((a,b)=>a.at-b.at);
+    const tabs=Array.from(new Set(events.map(e=>e.tabId)));
+    const requests=events.filter(e=>e.type==='native-start-request');
+    const possibleOverlaps=[];
+    for(let i=1;i<requests.length;i++){
+      if(requests[i].at-requests[i-1].at<=1000 &&
+         requests[i].tabId!==requests[i-1].tabId)
+        possibleOverlaps.push({a:requests[i-1],b:requests[i]});
+    }
+    return {schemaVersion:1,kind:'unraid-native-multitab-observation',
+      version:DIAGNOSTIC_VERSION,session,tabsObserved:tabs.length,
+      requestCount:requests.length,possibleCrossTabOverlaps:possibleOverlaps,
+      caveat:'仅被动记录明确开启监听的标签页中的XHR mode=start；不能观测未开启监听的标签页或后台设备，也不能单靠时间重叠证明数据被覆盖。',
+      events};
+  }
+  function nativeMultitabDownload(){
+    const report=nativeMultitabReadReport();
+    if(!report)return;
+    nativeProbeDownload(report);
+  }
+  function nativeMultitabShowPanel(){
+    if(document.querySelector('.ufs-native-multitab-overlay'))return;
+    const overlay=element('div','ufs-diagnostic-overlay ufs-native-multitab-overlay');
+    const panel=element('section','ufs-diagnostic-panel');
+    panel.setAttribute('role','dialog');
+    panel.setAttribute('aria-modal','true');
+    panel.setAttribute('aria-label','多标签页任务接力观察');
+    const header=element('div','ufs-diagnostic-head');
+    header.append(element('strong','','多标签页原生接力观测'));
+    const close=element('button','','×');
+    close.type='button';
+    close.addEventListener('click',()=>overlay.remove());
+    header.append(close);
+    const hint=element('p','',
+      '请用两个 Unraid Shares/Browse 标签页分别点击“启动/加入监听”，然后只在授权目录内执行文件任务。监听器只记录各标签页原生 mode=start 请求的时刻和返回码，不发起或阻断任何请求。开启后在本标签页的 F5 会自动继续监听，最长 15 分钟。');
+    const status=element('div','ufs-diagnostic-status','');
+    const controls=element('div','ufs-diagnostic-controls');
+    const join=element('button','ufs-diagnostic-primary','启动/加入监听');
+    const stop=element('button','','停止本标签页监听');
+    const download=element('button','','导出多标签报告');
+    for(const btn of [join,stop,download])btn.type='button';
+    const reload=()=>{
+      const report=nativeMultitabReadReport();
+      status.textContent=(nativeMultitabStop?'本标签页监听已开启':'本标签页未监听')+
+        ' · 已记录标签页 '+(report?.tabsObserved||0)+
+        ' 个 · mode=start 请求 '+(report?.requestCount||0)+
+        ' 次 · 可能的跨标签重叠 '+(report?.possibleCrossTabOverlaps?.length||0)+' 次';
+      join.disabled=!!nativeMultitabStop;
+      stop.disabled=!nativeMultitabStop;
+      download.disabled=!report;
+    };
+    join.addEventListener('click',()=>{
+      if(nativeMultitabStop)return;
+      let session=nativeMultitabSession();
+      if(!session){
+        session={id:'watch_'+Date.now().toString(36)+'_'+
+          Math.random().toString(36).slice(2,9),
+          startedAt:Date.now(),expiresAt:Date.now()+15*60*1000};
+        localStorage.setItem(NATIVE_MULTITAB_KEY,JSON.stringify(session));
+      }
+      nativeMultitabInstall(session);
+      reload();
+    });
+    stop.addEventListener('click',()=>{
+      nativeMultitabStop?.();
+      sessionStorage.removeItem(NATIVE_MULTITAB_OPTIN);
+      reload();
+    });
+    download.addEventListener('click',()=>nativeMultitabDownload());
+    controls.append(join,stop,download);
+    panel.append(header,hint,controls,status);
+    overlay.append(panel);
+    document.body.append(overlay);
+    reload();
+  }
+  function nativeMultitabOnMount(){
+    if(isDemo)return;
+    const session=nativeMultitabSession();
+    try{
+      if(session && sessionStorage.getItem(NATIVE_MULTITAB_OPTIN)===session.id)
+        nativeMultitabInstall(session);
+    }catch(_){}
+  }
+
   function nativeLifecycleOnMount(){
     if(isDemo)return;
     const detached=nativeDetachedRead();
@@ -3349,9 +3516,11 @@
     const nativeProbe=element('button','','原生能力测试');
     const lifecycleProbe=element('button','','任务生命周期测试');
     const detachedProbe=element('button','','关闭页面后队列测试');
+    const multiTabProbe=element('button','','多标签页接力观测');
     const clear=element('button','','清空日志');
-    for(const button of [debug,mark,refresh,download,nativeProbe,lifecycleProbe,detachedProbe,clear]) button.type='button';
-    controls.append(debug,mark,refresh,download,nativeProbe,lifecycleProbe,detachedProbe,clear);
+    for(const button of [debug,mark,refresh,download,nativeProbe,lifecycleProbe,detachedProbe,multiTabProbe,clear]) button.type='button';
+    controls.append(debug,mark,refresh,download,nativeProbe,lifecycleProbe,detachedProbe,multiTabProbe,clear);
+    multiTabProbe.addEventListener('click',()=>{dismiss();nativeMultitabShowPanel();});
     detachedProbe.addEventListener('click',()=>{dismiss();nativeDetachedShowPanel();});
     lifecycleProbe.addEventListener('click',()=>{dismiss();nativeLifecycleShowPanel();});
     nativeProbe.addEventListener('click',()=>{dismiss();showNativeProbeDialog();});
@@ -8654,6 +8823,7 @@
     }
     switchFileManager(initialNative?'native':'file-station');
     startDiagnosticMonitoring();
+    onCleanup(()=>nativeMultitabStop?.());
     // Native filemonitor.start() is delayed; take ownership before it fires.
     if (!isDemo) {
       if (!takeOverNativeFileMonitor()) {
@@ -8673,6 +8843,7 @@
     void initializeCopyPersistence();
     void initializeBrowser(start);
     nativeLifecycleOnMount();
+    nativeMultitabOnMount();
     return true;
   }
   async function initializeBrowser(start) {
