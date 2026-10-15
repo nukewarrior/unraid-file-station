@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.13.5
+// @version      0.2.13.6
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -1844,7 +1844,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.13.5';
+  const DIAGNOSTIC_VERSION='0.2.13.6';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -2220,6 +2220,360 @@
     diagnosticMemory.length=0;
     diagnosticPending.length=0;
   }
+
+  // Isolated native capability probe. Only synthetic files under this exact
+  // user-approved subtree may be created, changed, moved or deleted.
+  const NATIVE_PROBE_ROOT='/mnt/user/downloads/新建文件夹';
+  let nativeProbeRunning=false;
+  function nativeProbeDownload(report) {
+    const blob=new Blob([JSON.stringify(report,null,2)],{type:'application/json;charset=utf-8'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;
+    a.download='unraid-file-station-native-probe-'+new Date().toISOString()
+      .replace(/[-:]/g,'').replace('T','-').slice(0,15)+'.json';
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),15000);
+  }
+  function nativeProbeOwned(path,workspace) {
+    return typeof path==='string' && workspace.startsWith(NATIVE_PROBE_ROOT+'/__ufs_probe_') &&
+      (path===workspace || path.startsWith(workspace+'/')) &&
+      safePath(path) && !path.split('/').some(part=>part==='.'||part==='..');
+  }
+  async function nativeProbeQueue() {
+    const raw=await postNativeControl({mode:'jobs'});
+    const list=JSON.parse(raw);
+    if(!Array.isArray(list))throw new Error('原生 mode=jobs 响应不是数组');
+    return list;
+  }
+  async function nativeProbeIdle(requireEmptyQueue=true) {
+    if(nativeWriteBusy)throw new Error('File Station 正在执行其他原生写入');
+    if(copyJobs.some(j=>['queued','running','verifying','uncertain','recovering'].includes(j.status)))
+      throw new Error('File Station 存在未完成或待核实的任务，请先处理');
+    const active=await readNativeActive();
+    if(active)throw new Error('Unraid 已有活动文件任务，拒绝启动探针');
+    const jobs=await nativeProbeQueue();
+    if(requireEmptyQueue && jobs.length)throw new Error('Unraid 原生队列不为空（'+jobs.length+'项），拒绝启动探针');
+    return jobs;
+  }
+  async function nativeProbeRun(report,operation,fields,expected,check,workspace) {
+    if(!nativeProbeOwned(expected.source,workspace) &&
+        !(expected.action===0 && (expected.source===NATIVE_PROBE_ROOT ||
+           nativeProbeOwned(expected.source,workspace))))
+      throw new Error('测试源路径超出授权范围');
+    if(expected.action!==0 && expected.target &&
+        !nativeProbeOwned(expected.target.replace(/\/$/,''),workspace))
+      throw new Error('测试目标路径超出授权范围');
+    await nativeProbeIdle();
+    let submitted=false,done=false,remoteError='',seen=false;
+    let lastText='',progressCount=0;
+    const started=performance.now();
+    const unwatch=observeNativeProgress(data=>{
+      if(data.done===1)done=true;
+      if(data.error)remoteError=stripNativeStatusHtml(data.error).slice(0,350);
+      if(data.status) {
+        lastText=stripNativeStatusHtml(String(data.status)).slice(0,350);
+        progressCount++;
+      }
+    });
+    try {
+      submitted=true;
+      const response=await postNativeControl({
+        mode:'file',action:String(expected.action),title:encodeURIComponent('UFS isolated probe'),
+        source:encodeURIComponent(expected.source),target:encodeURIComponent(expected.target),
+        hdlink:'',sparse:'',exist:'1',zfs:'',...fields
+      });
+      if(response.trim())throw new Error('原生接口非空响应：'+response.slice(0,100));
+      const deadline=Date.now()+45000;
+      let empty=0;
+      while(Date.now()<deadline){
+        await waitNative(350);
+        if(remoteError)throw new Error('原生任务错误：'+remoteError);
+        const active=await readNativeActive();
+        if(active) {
+          if(Number(active.action)!==expected.action ||
+             active.source!==expected.source || active.target!==expected.target)
+            throw new Error('检测到不属于探针的活动任务，停止进一步写入');
+          seen=true;empty=0;
+        } else {
+          empty++;
+          if(empty>=3 && await check())break;
+        }
+      }
+      if(empty<3 || !(await check()))
+        throw new Error('未能在时限内确认测试任务完成；禁止自动清理');
+      const result={name:operation,status:'passed',elapsedMs:Math.round(performance.now()-started),
+        observedActive:seen,observedDone:done,progressEvents:progressCount,
+        lastProgress:lastText};
+      report.steps.push(result);
+      return result;
+    }catch(error) {
+      if(submitted)report.uncertain=true;
+      report.steps.push({name:operation,status:'failed',submitted,
+        elapsedMs:Math.round(performance.now()-started),error:String(error.message||error)});
+      throw error;
+    }finally{unwatch();}
+  }
+  async function nativeProbeWaitFile(path,content) {
+    const response=await postNativeControl({mode:'edit',file:encodeURIComponent(path)});
+    return response===content;
+  }
+  async function nativeProbeEntries(path) {
+    return await listDirectory(path);
+  }
+  async function nativeProbeShapeSafe(workspace,report) {
+    const allowed=new Map([
+      ['',new Set(['probe-owner.txt','source','target'])],
+      ['source',new Set(['batch-a.txt','batch-b.txt','move.txt','queue.txt'])],
+      ['target',new Set(['batch-a.txt','batch-b.txt','move.txt','queue.txt'])]
+    ]);
+    for(const [relative,names] of allowed){
+      const path=relative?workspace+'/'+relative:workspace;
+      const entries=await nativeProbeEntries(path);
+      if(entries.length>names.size)throw new Error('清理前发现未知额外文件');
+      for(const entry of entries) {
+        if(!names.has(entry.name) || !nativeProbeOwned(entry.path,workspace))
+          throw new Error('清理前发现探针外的内容：'+entry.name);
+        if(entry.folder!==(relative==='' && (entry.name==='source'||entry.name==='target')))
+          throw new Error('清理前目录结构与测试预期不符：'+entry.name);
+        if(entry.copyPathVerified===false)
+          throw new Error('清理前发现未经验证的路径');
+      }
+    }
+    if(!(await nativeProbeWaitFile(workspace+'/probe-owner.txt',report.ownerToken)))
+      throw new Error('测试所有权标记不匹配，禁止清理');
+  }
+  async function nativeProbeExecute(status) {
+    if(nativeProbeRunning)throw new Error('已有原生能力测试在进行');
+    nativeProbeRunning=true;
+    const workspace=NATIVE_PROBE_ROOT+'/__ufs_probe_'+Date.now().toString(36)+'_'+
+      Math.random().toString(36).slice(2,10);
+    const report={
+      schemaVersion:1,kind:'unraid-native-capability-probe',
+      fileStationVersion:DIAGNOSTIC_VERSION,startedAt:new Date().toISOString(),
+      scope:{authorizedRoot:NATIVE_PROBE_ROOT,workspace,syntheticDataOnly:true},
+      environment:{route:location.pathname,userAgent:navigator.userAgent,
+        nchanAvailable:typeof window.NchanSubscriber==='function',
+        csrfAvailable:typeof window.csrf_token==='string'&&!!window.csrf_token},
+      assumptions:[
+        '只在专属临时子目录内创建或操作合成文本文件',
+        '原生 Control.php 使用全局活动槽和队列；空闲检查不能消除其他标签页同时操作的竞争窗口',
+        '不执行全局 action=99 取消，不删除或移动现有 MP4 文件',
+        '报告反映本次实机观测，未观察到事件不等于原生不支持'
+      ],
+      ownerToken:'UFS_PROBE_OWNER_'+Math.random().toString(36).slice(2)+'_END',
+      steps:[],queueObservations:[],uncertain:false,cleanup:'not_started',
+      conclusion:{},endedAt:null
+    };
+    let workspaceCreated=false;
+    const record=(name,statusValue,extra={})=>{
+      report.steps.push({name,status:statusValue,...extra});
+      status('测试：'+name+' — '+(statusValue==='passed'?'通过':statusValue==='skipped'?'跳过':'失败'));
+    };
+    const run=async(name,fields,expected,check)=>{
+      status('执行：'+name);
+      return nativeProbeRun(report,name,fields,expected,check,workspace);
+    };
+    const mkdir=async(parent,name)=>{
+      const full=parent+'/'+name;
+      if(!full.startsWith(workspace+'/') && full!==workspace)
+        throw new Error('新建目录超出授权范围');
+      return run('mkdir '+name,{}, {action:0,source:parent,target:name},
+        async()=> (await nativeProbeEntries(parent)).some(e=>e.name===name&&e.folder));
+    };
+    const write=async(relative,content)=>{
+      const path=workspace+'/'+relative;
+      if(!nativeProbeOwned(path,workspace))throw new Error('写入范围非法');
+      await nativeProbeIdle();
+      const started=performance.now();
+      await postNativeControl({mode:'save',file:encodeURIComponent(path),
+        data:encodeURIComponent(content)});
+      if(!(await nativeProbeWaitFile(path,content))) {
+        report.uncertain=true;
+        throw new Error('mode=save 内容回读失败，停止测试并保留现场');
+      }
+      record('save '+relative,'passed',{elapsedMs:Math.round(performance.now()-started),
+        bytes:content.length});
+    };
+    try{
+      if(isDemo)throw new Error('演示模式禁止原生能力实机测试');
+      nativeCsrfToken();
+      status('正在检查原生任务状态与授权目录…');
+      const jobs=await nativeProbeIdle();
+      report.queueObservations.push({phase:'before',count:jobs.length});
+      const base=await nativeProbeEntries(NATIVE_PROBE_ROOT);
+      if(base.some(e=>e.name===workspace.split('/').pop()))
+        throw new Error('测试子目录已存在，拒绝覆盖');
+      record('native-read-and-jobs','passed',{active:null,queued:jobs.length,
+        authorizedDirectoryItemCount:base.length});
+      await mkdir(NATIVE_PROBE_ROOT,workspace.split('/').pop());
+      workspaceCreated=true;
+      await mkdir(workspace,'source');
+      await mkdir(workspace,'target');
+      await write('probe-owner.txt',report.ownerToken);
+      const a1='UFS_BATCH_A_V1_'+report.ownerToken;
+      const a2='UFS_BATCH_A_V2_'+report.ownerToken;
+      const b='UFS_BATCH_B_'+report.ownerToken;
+      const m='UFS_MOVE_'+report.ownerToken;
+      const q='UFS_QUEUE_'+report.ownerToken;
+      await write('source/batch-a.txt',a1);
+      await write('source/batch-b.txt',b);
+      await write('source/move.txt',m);
+      await write('source/queue.txt',q);
+      const src=workspace+'/source',dst=workspace+'/target';
+      const a=src+'/batch-a.txt',bb=src+'/batch-b.txt';
+      await run('native-multi-file-copy',{exist:'1'},
+        {action:8,source:a+'\r'+bb,target:dst+'/'},
+        async()=>(await nativeProbeWaitFile(dst+'/batch-a.txt',a1)) &&
+          (await nativeProbeWaitFile(dst+'/batch-b.txt',b)));
+      await write('source/batch-a.txt',a2);
+      await run('native-copy-ignore-existing',{exist:''},
+        {action:8,source:a,target:dst+'/'},
+        async()=>await nativeProbeWaitFile(dst+'/batch-a.txt',a1));
+      await run('native-copy-overwrite',{exist:'1'},
+        {action:8,source:a,target:dst+'/'},
+        async()=>await nativeProbeWaitFile(dst+'/batch-a.txt',a2));
+      const movePath=src+'/move.txt';
+      await run('native-same-share-move',{exist:'1'},
+        {action:9,source:movePath,target:dst+'/'},
+        async()=> (await nativeProbeWaitFile(dst+'/move.txt',m)) &&
+          !(await nativeProbeEntries(src)).some(e=>e.name==='move.txt'));
+      // Queue/start are global operations. Never remove arbitrary numbered jobs
+      // or issue global stop. Require the queue to contain only our own entry.
+      await nativeProbeIdle();
+      const queueSource=src+'/queue.txt',queueTarget=dst+'/';
+      status('测试：原生队列入队、查询与启动');
+      const queuedAt=performance.now();
+      report.queueObservations.push({phase:'before-enqueue',count:(await nativeProbeQueue()).length});
+      // Set uncertain before POST: a failed response might still have queued a task.
+      report.uncertain=true;
+      await postNativeControl({
+        mode:'file',task:encodeURIComponent('ufs-probe-copy'),action:'8',
+        title:encodeURIComponent('UFS isolated queue probe'),
+        source:encodeURIComponent(queueSource),target:encodeURIComponent(queueTarget),
+        hdlink:'',sparse:'',exist:'1',zfs:''
+      });
+      const queue=await nativeProbeQueue();
+      const onlyOurJob=queue.length===1 && queue[0].source===queueSource &&
+        queue[0].target===queueTarget && queue[0].task==='ufs-probe-copy';
+      report.queueObservations.push({phase:'after-enqueue',count:queue.length,
+        ourJobPresent:onlyOurJob,elapsedMs:Math.round(performance.now()-queuedAt)});
+      if(!onlyOurJob)throw new Error('队列身份不匹配，停止测试并保留现场');
+      if(await readNativeActive())throw new Error('入队后发现活动任务，停止队列推进');
+      const immediatelyBeforeStart=await nativeProbeQueue();
+      if(immediatelyBeforeStart.length!==1 ||
+         immediatelyBeforeStart[0].source!==queueSource ||
+         immediatelyBeforeStart[0].target!==queueTarget)
+        throw new Error('队列已发生变化，不执行 mode=start');
+      const queueStartedAt=performance.now();
+      const startReply=(await postNativeControl({mode:'start'})).trim();
+      if(!['1','2'].includes(startReply))
+        throw new Error('mode=start 返回非预期值 '+startReply);
+      report.steps.push({name:'native-queue-enqueue-and-start',status:'passed',
+        enqueueMs:Math.round(queueStartedAt-queuedAt),startReply});
+      // The queued job is now active or already finished. Track it without
+      // resubmission; its content is unique to this probe.
+      const deadline=Date.now()+45000;
+      let seen=false,idle=0,queueFinished=false;
+      while(Date.now()<deadline){
+        await waitNative(350);
+        const active=await readNativeActive();
+        if(active){
+          if(Number(active.action)!==8 || active.source!==queueSource ||
+             active.target!==queueTarget)
+            throw new Error('原生活动槽被其他任务占用');
+          seen=true;idle=0;
+        }else{
+          idle++;
+          if(idle>=3 && await nativeProbeWaitFile(dst+'/queue.txt',q)){
+            queueFinished=true;break;
+          }
+        }
+      }
+      if(!queueFinished)throw new Error('排队复制未能验证完成');
+      if((await nativeProbeQueue()).length)
+        throw new Error('排队任务完成后还有其他待执行任务');
+      report.uncertain=false;
+      report.queueObservations.push({phase:'after-start',count:0,observedActive:seen,
+        durationMs:Math.round(performance.now()-queueStartedAt)});
+      report.steps.push({name:'native-queued-job-execution',status:'passed',
+        observedActive:seen});
+      report.conclusion={
+        batchCopy:'verified',skip:'verified',overwrite:'verified',
+        move:'verified',nativeQueue:'verified',queueAutoAdvance:'not_tested',
+        runningTaskEnqueue:'not_tested',globalCancel:'not_tested',
+        f5Recovery:'not_tested',nativeCompletionHistory:'not_provided_by_read'
+      };
+      status('测试完成，开始核验并清理专属临时目录…');
+    }catch(error){
+      report.error=String(error?.message||error);
+      report.steps.push({name:'probe-aborted',status:'failed',error:report.error});
+      status('测试中止：'+report.error);
+    }finally{
+      if(workspaceCreated){
+        try{
+          if(report.uncertain)throw new Error('存在提交结果不确定的原生操作');
+          await nativeProbeIdle();
+          await nativeProbeShapeSafe(workspace,report);
+          await run('cleanup-owned-workspace',{},
+            {action:1,source:workspace,target:''},
+            async()=> !(await nativeProbeEntries(NATIVE_PROBE_ROOT))
+              .some(e=>e.name===workspace.split('/').pop()));
+          report.cleanup='completed';
+        }catch(error){
+          report.cleanup='skipped_or_failed';
+          report.cleanupReason=String(error?.message||error);
+        }
+      }else report.cleanup='nothing_created_or_unconfirmed';
+      report.endedAt=new Date().toISOString();
+      report.result=report.error?'failed':report.cleanup==='completed'?'passed':'needs_manual_check';
+      status('测试结束：'+report.result+'；自动下载 JSON 报告'+
+        (report.cleanup==='completed'?'；临时目录已清理':'；请检查报告中的临时目录状态'));
+      try{nativeProbeDownload(report);}
+      catch(error){status('自动下载失败：'+String(error?.message||error));}
+      diagnosticLog('INFO','native_probe.completed',{result:report.result,
+        cleanup:report.cleanup,stepCount:report.steps.length,uncertain:report.uncertain});
+      nativeProbeRunning=false;
+    }
+  }
+  function showNativeProbeDialog() {
+    if(document.querySelector('.ufs-native-probe-overlay')||nativeProbeRunning)return;
+    const overlay=element('div','ufs-diagnostic-overlay ufs-native-probe-overlay');
+    const panel=element('section','ufs-diagnostic-panel');
+    panel.setAttribute('role','dialog');
+    panel.setAttribute('aria-modal','true');
+    panel.setAttribute('aria-label','Unraid 原生能力测试');
+    const header=element('div','ufs-diagnostic-head');
+    header.append(element('strong','','原生能力测试 · v'+DIAGNOSTIC_VERSION));
+    const close=element('button','','×');close.type='button';
+    header.append(close);
+    const hint=element('p','',
+      '只在 '+NATIVE_PROBE_ROOT+' 下生成 __ufs_probe_ 开头的临时目录；不触碰现有 MP4。测试需独占原生文件任务，进行中不要在其他浏览器标签执行文件操作。测试结束自动下载 JSON；无法确认安全时保留现场而不强制删除。');
+    const start=element('button','ufs-diagnostic-primary','开始安全测试');
+    start.type='button';
+    const stateText=element('div','ufs-diagnostic-status','尚未开始；运行期间请不要刷新或关闭页面。');
+    const dismiss=()=>{if(!nativeProbeRunning)overlay.remove();};
+    close.addEventListener('click',dismiss);
+    overlay.addEventListener('click',event=>{if(event.target===overlay)dismiss();});
+    overlay.addEventListener('keydown',event=>{
+      if(event.key==='Escape' && !nativeProbeRunning){event.preventDefault();dismiss();}
+    });
+    start.addEventListener('click',()=>{
+      if(!window.confirm('确认现在没有其他 Unraid 文件任务或用户在操作文件？\n\n脚本将在 '+NATIVE_PROBE_ROOT+
+        ' 下创建并清理自己的临时测试文件，不读取或修改现有视频。\n\n原生接口不提供原子独占锁，不能完全排除其他标签页的并发竞争。'))return;
+      start.disabled=true;
+      close.disabled=true;
+      void nativeProbeExecute(message=>{stateText.textContent=message;})
+        .finally(()=>{close.disabled=false;start.disabled=true;});
+    });
+    panel.append(header,hint,start,stateText);
+    overlay.append(panel);
+    document.body.append(overlay);
+    start.focus();
+  }
+
   function showDiagnosticCenter() {
     if(document.querySelector('.ufs-diagnostic-overlay')) return;
     const overlay=element('div','ufs-diagnostic-overlay');
@@ -2240,9 +2594,11 @@
     const mark=element('button','','标记问题');
     const refresh=element('button','','刷新日志');
     const download=element('button','ufs-diagnostic-primary','导出 JSON');
+    const nativeProbe=element('button','','原生能力测试');
     const clear=element('button','','清空日志');
-    for(const button of [debug,mark,refresh,download,clear]) button.type='button';
-    controls.append(debug,mark,refresh,download,clear);
+    for(const button of [debug,mark,refresh,download,nativeProbe,clear]) button.type='button';
+    controls.append(debug,mark,refresh,download,nativeProbe,clear);
+    nativeProbe.addEventListener('click',()=>{dismiss();showNativeProbeDialog();});
     const status=element('div','ufs-diagnostic-status','正在读取诊断记录…');
     const preview=element('pre','ufs-diagnostic-events','');
     const reload=async()=>{
