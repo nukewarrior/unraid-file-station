@@ -120,3 +120,45 @@ test('多标签报告只识别明确的跨标签同时请求',()=>{
   assert.equal(report.possibleCrossTabOverlaps.length,1);
   assert.deepEqual(report.events.map(x=>x.at).join(','),'1000,1200,2000');
 });
+
+
+test('遗留队列安全恢复只能针对原生认证的两项测试任务',()=>{
+  const code=slice('  async function nativeDetachedCompleteOwnedQueue(',
+    '  function nativeDetachedShowPanel(');
+  assert.match(code,/nativeLifecycleJobsOwned\(run,initial\)/);
+  assert.match(code,/initialIds\.length!==2/);
+  assert.match(code,/nativeProbeWaitFile\(run\.workspace\+'\/owner\.txt'/);
+  assert.match(code,/nativeLifecycleFilePath\(run,'source'/);
+  assert.match(code,/nativeLifecycleJobsOwned\(run,nowJobs\)/);
+  assert.match(code,/readNativeActive\(\)/);
+  assert.match(code,/manualAdvances>=2/);
+  assert.match(code,/recoveryAttempted/);
+  assert.match(code,/nativeLifecycleFinalize\(run,'passed'/);
+  assert.doesNotMatch(code,/action\s*:\s*['"]99['"]/);
+  assert.doesNotMatch(code,/mode\s*:\s*['"]undo['"]/);
+  assert.doesNotMatch(code,/mode\s*:\s*['"]file['"]/);
+  assert.match(code,/run\.conclusion\.recoveryByExplicitAction=/);
+  assert.match(code,/originalUnattendedFinding/);
+});
+
+test('遗留队列任务签名拒绝外部任务、重复项和错误顺序',()=>{
+  const path=(part,name)=>workspace+'/'+part+'/'+name;
+  const run={workspace,tasks:['ufs-lifecycle-one-1','ufs-lifecycle-two-2']};
+  const job1={id:1,source:path('source','queue1.txt'),target:workspace+'/queue1/',
+    task:run.tasks[0]};
+  const job2={id:2,source:path('source','queue2.txt'),target:workspace+'/queue2/',
+    task:run.tasks[1]};
+  const src=slice('  function nativeLifecycleJobsOwned(', '  function nativeLifecycleActiveOwned(');
+  const ctx={
+    nativeLifecycleFilePath:(r,part,name)=>path(part,name),
+    nativeProbeOwnQueuedJob:(j,src,dst,task)=>j.source===src&&j.target===dst&&
+      j.task===task && Number.isSafeInteger(j.id)
+  };
+  vm.runInNewContext(src+'\nglobalThis.check=nativeLifecycleJobsOwned;',ctx);
+  assert.equal(ctx.check(run,[job1,job2]).join(','),'0,1');
+  assert.equal(ctx.check(run,[job2]).join(','),'1');
+  assert.throws(()=>ctx.check(run,[job1,{...job2,source:'/mnt/user/outside'}]),
+    /其他任务/);
+  assert.throws(()=>ctx.check(run,[job1,job1]),/其他任务/);
+  assert.throws(()=>ctx.check(run,[{...job1,task:'external'}]),/其他任务/);
+});
