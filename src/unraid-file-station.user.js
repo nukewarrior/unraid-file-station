@@ -2242,6 +2242,10 @@
       (path===workspace || path.startsWith(workspace+'/')) &&
       safePath(path) && !path.split('/').some(part=>part==='.'||part==='..');
   }
+  function nativeProbeSourcesOwned(source,workspace) {
+    return typeof source==='string' && source.length>0 &&
+      source.split('\r').every(part=>nativeProbeOwned(part,workspace));
+  }
   async function nativeProbeQueue() {
     const raw=await postNativeControl({mode:'jobs'});
     const list=JSON.parse(raw);
@@ -2259,9 +2263,9 @@
     return jobs;
   }
   async function nativeProbeRun(report,operation,fields,expected,check,workspace) {
-    if(!nativeProbeOwned(expected.source,workspace) &&
-        !(expected.action===0 && (expected.source===NATIVE_PROBE_ROOT ||
-           nativeProbeOwned(expected.source,workspace))))
+    if(!nativeProbeSourcesOwned(expected.source,workspace) &&
+       !(expected.action===0 && expected.source===NATIVE_PROBE_ROOT &&
+         expected.target===workspace.slice(NATIVE_PROBE_ROOT.length+1)))
       throw new Error('测试源路径超出授权范围');
     if(expected.action!==0 && expected.target &&
         !nativeProbeOwned(expected.target.replace(/\/$/,''),workspace))
@@ -2326,8 +2330,10 @@
   async function nativeProbeShapeSafe(workspace,report) {
     const allowed=new Map([
       ['',new Set(['probe-owner.txt','source','target'])],
-      ['source',new Set(['batch-a.txt','batch-b.txt','move.txt','queue.txt'])],
-      ['target',new Set(['batch-a.txt','batch-b.txt','move.txt','queue.txt'])]
+      ['source',new Set(['batch-a.txt','batch-b.txt','move.txt','queue.txt','merge-folder'])],
+      ['target',new Set(['batch-a.txt','batch-b.txt','move.txt','queue.txt','merge-folder'])],
+      ['source/merge-folder',new Set(['source-only.txt','shared.txt'])],
+      ['target/merge-folder',new Set(['source-only.txt','target-only.txt','shared.txt'])]
     ]);
     for(const [relative,names] of allowed){
       const path=relative?workspace+'/'+relative:workspace;
@@ -2336,7 +2342,9 @@
       for(const entry of entries) {
         if(!names.has(entry.name) || !nativeProbeOwned(entry.path,workspace))
           throw new Error('清理前发现探针外的内容：'+entry.name);
-        if(entry.folder!==(relative==='' && (entry.name==='source'||entry.name==='target')))
+        const shouldBeFolder=(relative==='' && (entry.name==='source'||entry.name==='target')) ||
+          ((relative==='source'||relative==='target') && entry.name==='merge-folder');
+        if(entry.folder!==shouldBeFolder)
           throw new Error('清理前目录结构与测试预期不符：'+entry.name);
         if(entry.copyPathVerified===false)
           throw new Error('清理前发现未经验证的路径');
@@ -2423,6 +2431,15 @@
       await write('source/move.txt',m);
       await write('source/queue.txt',q);
       const src=workspace+'/source',dst=workspace+'/target';
+      await mkdir(src,'merge-folder');
+      await mkdir(dst,'merge-folder');
+      const srcShared='UFS_MERGE_SOURCE_'+report.ownerToken;
+      const dstShared='UFS_MERGE_TARGET_'+report.ownerToken;
+      const dstOnly='UFS_MERGE_TARGET_ONLY_'+report.ownerToken;
+      await write('source/merge-folder/source-only.txt','UFS_MERGE_SOURCE_ONLY_'+report.ownerToken);
+      await write('source/merge-folder/shared.txt',srcShared);
+      await write('target/merge-folder/target-only.txt',dstOnly);
+      await write('target/merge-folder/shared.txt',dstShared);
       const a=src+'/batch-a.txt',bb=src+'/batch-b.txt';
       await run('native-multi-file-copy',{exist:'1'},
         {action:8,source:a+'\r'+bb,target:dst+'/'},
@@ -2435,6 +2452,16 @@
       await run('native-copy-overwrite',{exist:'1'},
         {action:8,source:a,target:dst+'/'},
         async()=>await nativeProbeWaitFile(dst+'/batch-a.txt',a2));
+      await run('native-folder-merge-skip',{exist:''},
+        {action:3,source:src+'/merge-folder',target:dst+'/'},
+        async()=> (await nativeProbeWaitFile(dst+'/merge-folder/shared.txt',dstShared)) &&
+          (await nativeProbeWaitFile(dst+'/merge-folder/source-only.txt',
+            'UFS_MERGE_SOURCE_ONLY_'+report.ownerToken)) &&
+          (await nativeProbeWaitFile(dst+'/merge-folder/target-only.txt',dstOnly)));
+      await run('native-folder-merge-overwrite',{exist:'1'},
+        {action:3,source:src+'/merge-folder',target:dst+'/'},
+        async()=> (await nativeProbeWaitFile(dst+'/merge-folder/shared.txt',srcShared)) &&
+          (await nativeProbeWaitFile(dst+'/merge-folder/target-only.txt',dstOnly)));
       const movePath=src+'/move.txt';
       await run('native-same-share-move',{exist:'1'},
         {action:9,source:movePath,target:dst+'/'},
@@ -2502,7 +2529,7 @@
         observedActive:seen});
       report.conclusion={
         batchCopy:'verified',skip:'verified',overwrite:'verified',
-        move:'verified',nativeQueue:'verified',queueAutoAdvance:'not_tested',
+        move:'verified',folderMerge:'verified',nativeQueue:'verified',queueAutoAdvance:'not_tested',
         runningTaskEnqueue:'not_tested',globalCancel:'not_tested',
         f5Recovery:'not_tested',nativeCompletionHistory:'not_provided_by_read'
       };
