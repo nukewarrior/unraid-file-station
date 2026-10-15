@@ -2081,7 +2081,11 @@ test('v0.2.6.4 同页切换不刷新且保留队列，原生界面有待处理�
   assert.match(script,/window\.addEventListener\(type,guardNativeInteraction/);
   assert.match(script,/function takeOverNativeFileMonitor\(\)/);
   assert.match(script,/beforeunload/);
-  assert.doesNotMatch(script,/location\.reload\(\)/);
+  // 普通原生/UI 模式切换必须保持单页；仅显式生命周期实机探针允许 F5。
+  const modeSwitch=script.slice(script.indexOf('  function switchFileManager(mode) {'),
+    script.indexOf('  let currentMenu = null;',script.indexOf('  function switchFileManager(mode) {')));
+  assert.doesNotMatch(modeSwitch,/location\\.reload\\(\\)/);
+  assert.doesNotMatch(modeSwitch,/location\\.replace\\(/);
   assert.doesNotMatch(script,/if \(disabled\) \{\s*if \(\$\('#ufs-native-enable'\)\)/);
 });
 
