@@ -2085,7 +2085,7 @@ test('v0.2.6.4 同页切换不刷新且保留队列，原生界面有待处理�
   const modeSwitch=script.slice(script.indexOf('  function switchFileManager(mode) {'),
     script.indexOf('  let currentMenu = null;',script.indexOf('  function switchFileManager(mode) {')));
   assert.doesNotMatch(modeSwitch,/location\.reload\(\)/);
-  assert.doesNotMatch(modeSwitch,/location\\.replace\\(/);
+  assert.doesNotMatch(modeSwitch,/location\.replace\(/);
   assert.doesNotMatch(script,/if \(disabled\) \{\s*if \(\$\('#ufs-native-enable'\)\)/);
 });
 
