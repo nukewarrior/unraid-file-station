@@ -94,3 +94,75 @@ test('生命周期探针不包含全局停止或按行撤销',()=>{
   assert.match(probe,/nativeLifecycleSafeCleanup\(run\)/);
   assert.match(probe,/nativeProbeDownload\(/);
 });
+
+
+function lifecycleGuardHarness(){
+  const context={
+    NATIVE_PROBE_ROOT:root,
+    safePath:path=>typeof path==='string'&&(path==='/mnt/user'||path.startsWith('/mnt/user/'))&&
+      !path.split('/').some(x=>x==='.'||x==='..'||x.includes('\0')),
+    safeWriteName:name=>typeof name==='string'&&/^[a-zA-Z0-9_-]+$/.test(name),
+  };
+  const helpersStart=code.indexOf('  function nativeProbeOwned(');
+  const helpersEnd=code.indexOf('  let nativeProbeQueueFormat=',helpersStart);
+  const ownStart=code.indexOf('  function nativeLifecycleOwn(');
+  const ownEnd=code.indexOf('  function nativeLifecycleSnapshot(',ownStart);
+  const guardStart=code.indexOf('  function nativeProbeOperationAllowed(');
+  const guardEnd=code.indexOf('  async function nativeProbeRun(',guardStart);
+  assert.ok(helpersStart>=0 && helpersEnd>helpersStart && ownStart>0 &&
+    ownEnd>ownStart && guardStart>0 && guardEnd>guardStart);
+  vm.runInNewContext(code.slice(helpersStart,helpersEnd)+code.slice(ownStart,ownEnd)+
+    code.slice(guardStart,guardEnd)+
+    '\nglobalThis.verify=nativeProbeOperationAllowed;',context);
+  return context.verify;
+}
+
+test('生命周期专属路径的 mkdir 和删除授权不再错误调用基础探针规则',()=>{
+  const verify=lifecycleGuardHarness();
+  const run={kind:'unraid-native-lifecycle-probe',workspace};
+  assert.equal(verify(run,{action:0,source:root,target:workspace.slice(root.length+1)},
+    workspace,'lifecycle'),true);
+  for(const name of ['source','large','queue1','queue2'])
+    assert.equal(verify(run,{action:0,source:workspace,target:name},workspace,'lifecycle'),
+      true,name);
+  assert.equal(verify(run,{action:1,source:workspace,target:''},workspace,'lifecycle'),true);
+  // Previous bug: 'basic' scope is reserved for __ufs_probe_* workspaces.
+  assert.equal(verify(run,{action:0,source:workspace,target:'source'},
+    workspace,'basic'),false);
+});
+
+test('生命周期探针拒绝授权根目录与已有 MP4 写入、任意目标及伪造身份',()=>{
+  const verify=lifecycleGuardHarness();
+  const run={kind:'unraid-native-lifecycle-probe',workspace};
+  for(const expected of [
+    {action:1,source:root,target:''},
+    {action:1,source:run.workspace+'/source',target:''},
+    {action:0,source:root,target:'new-existing-folder'},
+    {action:0,source:workspace,target:'arbitrary-folder'},
+    {action:8,source:root+'/新建文件夹/4415616 (1).mp4',target:workspace+'/large/'},
+    {action:9,source:root+'/新建文件夹/4415616 (1).mp4',target:workspace+'/large/'},
+    {action:0,source:workspace+'/source',target:'queue1'}
+  ])assert.equal(verify(run,expected,workspace,'lifecycle'),false,
+    JSON.stringify(expected));
+  assert.equal(verify({kind:'wrong-kind',workspace},
+    {action:1,source:workspace,target:''},workspace,'lifecycle'),false);
+  assert.equal(verify({...run,workspace:workspace+'other'},
+    {action:1,source:workspace,target:''},workspace,'lifecycle'),false);
+  assert.equal(verify(run,{action:1,source:workspace,target:''},workspace,'unknown'),false);
+});
+
+test('生命周期快照步骤名不会被视频文件名覆盖',()=>{
+  const start=code.indexOf('  function nativeLifecycleNote(');
+  const end=code.indexOf('  function nativeLifecycleFilePath(',start);
+  assert.ok(start>0 && end>start);
+  const ctx={
+    nativeLifecycleSnapshot(){},
+    Date
+  };
+  vm.runInNewContext(code.slice(start,end)+
+    '\nglobalThis.note=nativeLifecycleNote;',ctx);
+  const run={steps:[]};
+  ctx.note(run,'selected-readonly-video',{size:331995662,name:'4415616 (2).mp4'});
+  assert.equal(run.steps[0].name,'selected-readonly-video');
+  assert.equal(run.steps[0].size,331995662);
+});
