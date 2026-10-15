@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.13.9
+// @version      0.2.14.0
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -1844,7 +1844,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.13.9';
+  const DIAGNOSTIC_VERSION='0.2.14.0';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -2682,6 +2682,7 @@
   // /mnt/user/downloads/新建文件夹 subtree. Existing videos are READ-ONLY inputs.
   // A dedicated __ufs_lifecycle_* directory owns every generated output.
   const NATIVE_LIFECYCLE_KEY=STORE+'native-lifecycle-v1';
+  const NATIVE_DETACHED_KEY=STORE+'native-detached-lifecycle-v1';
   let nativeLifecycleBusy=false;
   function nativeLifecycleOwn(path,run) {
     return typeof path==='string' &&
@@ -2692,7 +2693,33 @@
       safePath(path) && !path.split('/').some(p=>p==='.'||p==='..');
   }
   function nativeLifecycleSnapshot(run) {
-    sessionStorage.setItem(NATIVE_LIFECYCLE_KEY,JSON.stringify(run));
+    const serialized=JSON.stringify(run);
+    if(run.mode==='detached')localStorage.setItem(NATIVE_DETACHED_KEY,serialized);
+    else sessionStorage.setItem(NATIVE_LIFECYCLE_KEY,serialized);
+  }
+  function nativeDetachedRead() {
+    try{
+      const raw=localStorage.getItem(NATIVE_DETACHED_KEY);
+      if(!raw)return null;
+      const run=JSON.parse(raw);
+      if(run?.schemaVersion!==1 || run.mode!=='detached' ||
+         run.kind!=='unraid-native-lifecycle-probe' ||
+         !nativeLifecycleOwn(run.workspace,run) ||
+         !/^UFS_LIFECYCLE_[a-z0-9]+$/.test(run.ownerToken||'') ||
+         !Array.isArray(run.steps) || !Array.isArray(run.samples) ||
+         !Array.isArray(run.tasks) || run.tasks.length!==2 ||
+         !run.tasks.every(t=>/^ufs-lifecycle-[a-z0-9]+-[12]$/.test(t)) ||
+         !run.video || typeof run.video.name!=='string' ||
+         typeof run.video.path!=='string' ||
+         !run.video.path.startsWith(NATIVE_PROBE_ROOT+'/') ||
+         !Number.isSafeInteger(run.video.size) ||
+         !['preparing','awaiting-closure','complete','stopped'].includes(run.phase))
+        throw new Error('关闭页面测试的本地记录无效');
+      return run;
+    }catch(error){
+      diagnosticLog('ERROR','native_detached.invalid_snapshot',{message:error?.message});
+      return null;
+    }
   }
   function nativeLifecycleRead() {
     try {
@@ -2904,13 +2931,13 @@
     document.body.append(overlay);
     return message=>{status.textContent=message;download.disabled=!nativeLifecycleRead();};
   }
-  async function nativeLifecycleStart(notify){
+  async function nativeLifecycleStart(notify,mode='f5'){
     if(nativeLifecycleBusy)return;
     nativeLifecycleBusy=true;
     const workspace=NATIVE_PROBE_ROOT+'/__ufs_lifecycle_'+Date.now().toString(36)+'_'+
       Math.random().toString(36).slice(2,10);
     const run={
-      schemaVersion:1,kind:'unraid-native-lifecycle-probe',version:DIAGNOSTIC_VERSION,
+      schemaVersion:1,kind:'unraid-native-lifecycle-probe',version:DIAGNOSTIC_VERSION,mode,
       startedAt:new Date().toISOString(),phase:'preparing',workspace,
       scope:{authorizedRoot:NATIVE_PROBE_ROOT,videoSourceReadOnly:true},
       ownerToken:'UFS_LIFECYCLE_'+Math.random().toString(36).slice(2),
@@ -2925,7 +2952,9 @@
     try{
       if(isDemo)throw new Error('演示模式不允许运行生命周期测试');
       const old=nativeLifecycleRead();
-      if(old && old.phase!=='complete')throw new Error('上次生命周期测试尚未结束，拒绝启动新任务');
+      const detached=nativeDetachedRead();
+      if(old && old.phase!=='complete' || detached && detached.phase!=='complete')
+        throw new Error('上次生命周期测试尚未结束，拒绝启动新任务');
       await nativeProbeIdle();
       run.queueResponseFormat=nativeProbeQueueFormat;
       notify('正在授权目录下寻找大型 MP4，仅作复制源文件…');
@@ -3021,8 +3050,19 @@
         active:beforeRefreshActive,queued:beforeRefreshJobs.length,
         simultaneousActiveAndQueue:run.conclusion.f5OverlapObserved
       });
-      run.phase='before-reload';
       run.uncertain=false;
+      if(mode==='detached'){
+        if(!run.conclusion.f5OverlapObserved)
+          throw new Error('关闭页面前未能同时看到活动任务和排队任务，不生成后台运行证据');
+        run.phase='awaiting-closure';
+        run.closureReadyAt=new Date().toISOString();
+        run.conclusion.unattendedAdvance='pending_user_close_all_webgui_tabs';
+        nativeLifecycleSnapshot(run);
+        notify('已确认大视频仍在复制且队列有 2 项。现在请立即关闭所有 Unraid WebGUI 标签页（包括当前页面），至少等待 30 秒，再打开同一 NAS 页面，进入“关闭页面后队列测试”读取结果。无需保持当前页面打开；千万不要手动启动队列。');
+        nativeLifecycleBusy=false;
+        return;
+      }
+      run.phase='before-reload';
       run.reloadRequestedAt=new Date().toISOString();
       nativeLifecycleSnapshot(run);
       notify('运行中入队成功。现在自动刷新本页面，随后恢复观测…');
@@ -3142,8 +3182,136 @@
       await nativeLifecycleFinalize(run,'failed',error,notify);
     }
   }
+
+  // No-op observer for the offline interval: the browser is not running.
+  // The first post-reopen snapshot is evidence, not an authoritative history.
+  async function nativeDetachedObserve(notify) {
+    if(nativeLifecycleBusy)return;
+    const run=nativeDetachedRead();
+    if(!run || run.phase!=='awaiting-closure')throw new Error('没有等待恢复的关闭页面测试');
+    nativeLifecycleBusy=true;
+    try{
+      notify('正在只读核对原生活动槽、队列和测试目录，请勿手动操作原生队列…');
+      const started=Date.now();
+      const [active,jobs]=await Promise.all([readNativeActive(),nativeProbeQueue()]);
+      const owner=nativeLifecycleActiveOwned(run,active);
+      const queuedIndexes=nativeLifecycleJobsOwned(run,jobs);
+      const bigSize=await nativeLifecycleFileSize(run.workspace+'/large',run.video.name);
+      const q1=await nativeLifecycleFileSize(run.workspace+'/queue1','queue1.txt');
+      const q2=await nativeLifecycleFileSize(run.workspace+'/queue2','queue2.txt');
+      const smallFilesCorrect=q1===('UFS_LIFECYCLE_QUEUE1_'+run.ownerToken).length &&
+        q2===('UFS_LIFECYCLE_QUEUE2_'+run.ownerToken).length;
+      const largeSizeMatch=bigSize===run.video.size;
+      const snapshot={
+        at:new Date().toISOString(),
+        elapsedSinceReadyMs:Date.now()-new Date(run.closureReadyAt).getTime(),
+        manualClosureConfirmed:!!run.userConfirmedClosedAllTabs,
+        evidence:'first_manual_observation_after_reopening; browser_closure_not_machine_verifiable',
+        activeOwner:owner,queuedCount:jobs.length,queuedIndexes,bigSize,q1,q2,
+        smallFilesCorrect,largeSizeMatch
+      };
+      run.samples.push(snapshot);
+      nativeLifecycleNote(run,'detached-first-reopened-observation',{
+        ...snapshot,readElapsedMs:Date.now()-started
+      });
+      if(!run.userConfirmedClosedAllTabs){
+        run.conclusion.unattendedAdvance='inconclusive_closure_not_confirmed';
+      }else if(!owner && jobs.length>0 && largeSizeMatch){
+        run.conclusion.unattendedAdvance='queue_remained_after_reported_browser_closure';
+      }else if(!owner && jobs.length===0 && smallFilesCorrect && largeSizeMatch){
+        run.conclusion.unattendedAdvance='completed_before_first_observation_cause_unknown';
+      }else{
+        run.conclusion.unattendedAdvance='inconclusive_active_or_incomplete_on_reopen';
+      }
+      run.conclusion.firstPostReopenSnapshot=snapshot;
+      // Never call mode=start: that would invalidate the closed-browser test.
+      if(!owner && !jobs.length && smallFilesCorrect && largeSizeMatch &&
+         run.userConfirmedClosedAllTabs){
+        const source=await nativeProbeEntries(run.video.path.slice(0,run.video.path.lastIndexOf('/')));
+        const original=source.find(e=>e.path===run.video.path);
+        run.conclusion.sourceUnchangedByMetadata=!!original &&
+          original.size===run.video.size && original.mtime===run.video.mtime;
+        run.conclusion.largeCopy='file_size_matches_not_hash_verified';
+        run.uncertain=false;
+        await nativeLifecycleFinalize(run,'passed','',notify);
+      }else{
+        run.uncertain=true;
+        nativeLifecycleSnapshot(run);
+        notify('观测完成：原生活动 '+(owner||'无')+
+          '，待执行 '+jobs.length+' 项。未主动推进队列，也未清理现场。请下载报告。');
+        nativeProbeDownload({...run,kind:'unraid-native-lifecycle-probe'});
+      }
+    }catch(error){
+      run.uncertain=true;
+      nativeLifecycleNote(run,'detached-observation-failed',{error:String(error?.message||error)});
+      notify('只读观测失败，原生任务未被重新提交：'+String(error?.message||error));
+      nativeProbeDownload({...run,kind:'unraid-native-lifecycle-probe'});
+    }finally{nativeLifecycleBusy=false;}
+  }
+  function nativeDetachedShowPanel(initial='') {
+    const previous=document.querySelector('.ufs-native-detached-overlay');
+    if(previous)return;
+    const overlay=element('div','ufs-diagnostic-overlay ufs-native-detached-overlay');
+    const panel=element('section','ufs-diagnostic-panel');
+    panel.setAttribute('role','dialog');
+    panel.setAttribute('aria-modal','true');
+    panel.setAttribute('aria-label','关闭所有页面后的原生队列测试');
+    const header=element('div','ufs-diagnostic-head');
+    header.append(element('strong','','关闭页面后队列测试 · v'+DIAGNOSTIC_VERSION));
+    const close=element('button','','×');
+    close.type='button';
+    close.addEventListener('click',()=>{if(!nativeLifecycleBusy)overlay.remove();});
+    header.append(close);
+    const hint=element('p','',
+      '此测试先复制授权目录内的现有 MP4，并在运行时追加 2 个唯一小文件任务。准备就绪后，请关闭全部 Unraid WebGUI 页面，等待至少 30 秒，再重新打开任意一个 Unraid Shares/Browse 页面进行只读观测。浏览器无法自动证明其他设备或标签页均已关闭，结果会标注为用户确认。');
+    const status=element('div','ufs-diagnostic-status',initial||'尚未开始');
+    const controls=element('div','ufs-diagnostic-controls');
+    const start=element('button','ufs-diagnostic-primary','准备关闭页面测试');
+    const observe=element('button','','关闭页面后读取结果');
+    const download=element('button','','导出阶段报告');
+    for(const btn of [start,observe,download])btn.type='button';
+    const run=nativeDetachedRead();
+    start.disabled=nativeLifecycleBusy || !!run && run.phase!=='complete';
+    observe.disabled=!run || run.phase!=='awaiting-closure';
+    download.disabled=!run;
+    controls.append(start,observe,download);
+    start.addEventListener('click',()=>{
+      if(!window.confirm('确认目前没有其他文件操作和原生队列任务？测试将创建独立临时目录并复制一份授权目录的大视频。开始后需亲自关闭所有 Unraid WebGUI 标签页，之后重新打开并读取结果。\n\n请勿在本轮测试期间使用其他设备操作文件。'))return;
+      start.disabled=true;
+      void nativeLifecycleStart(msg=>{status.textContent=msg;
+        const current=nativeDetachedRead();
+        if(current){download.disabled=false;observe.disabled=current.phase!=='awaiting-closure';}
+      },'detached').catch(error=>{status.textContent=String(error?.message||error);});
+    });
+    observe.addEventListener('click',()=>{
+      if(!window.confirm('你是否已经在看到“准备就绪”后关闭了所有 Unraid WebGUI 标签页，且等待至少 30 秒才重新打开此页面？\n\n这项确认只会被记录为用户声明，并不会被当成服务器独立调度的直接证明。'))return;
+      const current=nativeDetachedRead();
+      if(!current || current.phase!=='awaiting-closure')return;
+      if(Date.now()-new Date(current.closureReadyAt).getTime()<30000){
+        status.textContent='距离测试准备就绪还不足 30 秒。请关闭页面，等待足够时间后重新打开。';
+        return;
+      }
+      current.userConfirmedClosedAllTabs=true;
+      current.confirmedAt=new Date().toISOString();
+      nativeLifecycleSnapshot(current);
+      observe.disabled=true;
+      void nativeDetachedObserve(msg=>{status.textContent=msg;download.disabled=false;})
+        .finally(()=>{observe.disabled=false;});
+    });
+    download.addEventListener('click',()=>{
+      const current=nativeDetachedRead();
+      if(current)nativeProbeDownload({...current,kind:'unraid-native-lifecycle-probe'});
+    });
+    panel.append(header,hint,controls,status);
+    overlay.append(panel);
+    document.body.append(overlay);
+  }
+
   function nativeLifecycleOnMount(){
     if(isDemo)return;
+    const detached=nativeDetachedRead();
+    if(detached && detached.phase==='awaiting-closure')
+      nativeDetachedShowPanel('检测到跨页面关闭测试记录。若你已经关闭所有 WebGUI 页面并等待至少 30 秒，请点击“关闭页面后读取结果”。程序不会自动推进队列。');
     const run=nativeLifecycleRead();
     if(!run)return;
     if(run.phase==='before-reload'){
@@ -3180,9 +3348,11 @@
     const download=element('button','ufs-diagnostic-primary','导出 JSON');
     const nativeProbe=element('button','','原生能力测试');
     const lifecycleProbe=element('button','','任务生命周期测试');
+    const detachedProbe=element('button','','关闭页面后队列测试');
     const clear=element('button','','清空日志');
-    for(const button of [debug,mark,refresh,download,nativeProbe,lifecycleProbe,clear]) button.type='button';
-    controls.append(debug,mark,refresh,download,nativeProbe,lifecycleProbe,clear);
+    for(const button of [debug,mark,refresh,download,nativeProbe,lifecycleProbe,detachedProbe,clear]) button.type='button';
+    controls.append(debug,mark,refresh,download,nativeProbe,lifecycleProbe,detachedProbe,clear);
+    detachedProbe.addEventListener('click',()=>{dismiss();nativeDetachedShowPanel();});
     lifecycleProbe.addEventListener('click',()=>{dismiss();nativeLifecycleShowPanel();});
     nativeProbe.addEventListener('click',()=>{dismiss();showNativeProbeDialog();});
     const status=element('div','ufs-diagnostic-status','正在读取诊断记录…');
