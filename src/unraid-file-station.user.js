@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.15.2
+// @version      0.2.16.0
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -1861,7 +1861,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.15.2';
+  const DIAGNOSTIC_VERSION='0.2.16.0';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -3095,6 +3095,8 @@
         const verified=await nativeAcceptanceSafeCleanup(imported);
         imported.originalCleanup=imported.cleanup;
         imported.originalResult=imported.result;
+        imported.originalCleanupReason=imported.cleanupReason||null;
+        delete imported.cleanupReason;
         imported.cleanup='completed';
         imported.cleanupVerification=verified;
         imported.result='passed';
