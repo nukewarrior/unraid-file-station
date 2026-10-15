@@ -2230,7 +2230,7 @@
     const url=URL.createObjectURL(blob);
     const a=document.createElement('a');
     a.href=url;
-    a.download='unraid-file-station-native-probe-'+new Date().toISOString()
+    a.download=(report.kind==='unraid-native-lifecycle-probe'?'unraid-file-station-lifecycle-probe-':'unraid-file-station-native-probe-')+new Date().toISOString()
       .replace(/[-:]/g,'').replace('T','-').slice(0,15)+'.json';
     document.body.append(a);
     a.click();
