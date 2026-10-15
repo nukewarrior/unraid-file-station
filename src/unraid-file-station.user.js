@@ -2063,6 +2063,11 @@
   // observed failures from hypotheses. Source events remain available below.
   function diagnosticTriage(events,snapshot,lease=null) {
     const catalogue={
+      'queue.native_wait':{
+        issue:'NATIVE_QUEUE_BACKLOG',severity:'warning',
+        meaning:'File Station 检测到 Unraid 原生活动任务、待执行队列或原生队列读取失败，保留本地待执行项并暂停调度',
+        checks:'检查 Control.php mode=read 和 mode=jobs 的原生任务状态；不要重新提交可能已运行的任务，待确认空闲后从任务中心手动继续'
+      },
       'queue.lease_denied':{
         issue:'QUEUE_LEASE_DENIED',severity:'warning',
         meaning:'队列租约申请被拒绝；不证明用户打开了多个 File Station 标签页',
@@ -2142,7 +2147,7 @@
     // Root/blocker events outrank downstream UI symptoms of the same failure.
     const rootPriority={
       QUEUE_SNAPSHOT_CHANGED:95,QUEUE_LEASE_LOST:95,QUEUE_PERSISTENCE_FAILURE:95,
-      QUEUE_RESTORE_FAILURE:95,QUEUE_LEASE_DENIED:90,
+      QUEUE_RESTORE_FAILURE:95,QUEUE_LEASE_DENIED:90,NATIVE_QUEUE_BACKLOG:88,
       JAVASCRIPT_ERROR:85,UNHANDLED_REJECTION:85,
       MOVE_TARGET_INVALID:70,MOVE_SUBMISSION_REJECTED:40
     };
@@ -2162,6 +2167,7 @@
     }
     const significant=new Set([
       ...Object.keys(catalogue),
+      'queue.native_dispatch_blocked','queue.native_dispatch_idle',
       'queue.lease_acquired','queue.lease_released','queue.lease_release_failed',
       'queue.enqueued','queue.finished','drag.move_target',
       'dialog.move_open','dialog.move_closed','dialog.move_submit',
