@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.14.1
+// @version      0.2.14.2
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -1844,7 +1844,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.14.1';
+  const DIAGNOSTIC_VERSION='0.2.14.2';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -3445,6 +3445,7 @@
   const NATIVE_MULTITAB_KEY=STORE+'native-multitab-session-v1';
   const NATIVE_MULTITAB_EVENT_PREFIX=STORE+'native-multitab-events:';
   const NATIVE_MULTITAB_OPTIN=STORE+'native-multitab-optin';
+  const NATIVE_MULTITAB_LIVE_PREFIX=STORE+'native-multitab-live:';
   let nativeMultitabStop=null;
   const nativeMultitabRuntimeId='runtime_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,10);
   function nativeMultitabSession(){
@@ -3454,6 +3455,25 @@
         Number.isFinite(state.startedAt) && Number.isFinite(state.expiresAt) &&
         state.expiresAt>Date.now()?state:null;
     }catch(_){return null;}
+  }
+  function nativeMultitabLiveKey(sessionId){
+    return NATIVE_MULTITAB_LIVE_PREFIX+sessionId+':'+nativeMultitabRuntimeId;
+  }
+  function nativeMultitabHeartbeat(session){
+    const key=nativeMultitabLiveKey(session.id);
+    const update=()=>{
+      if(Date.now()>=session.expiresAt)return;
+      try{localStorage.setItem(key,JSON.stringify({
+        runtimeId:nativeMultitabRuntimeId,tabId:diagnosticTabId,
+        lastSeenAt:Date.now()
+      }));}catch(_){}
+    };
+    update();
+    const id=setInterval(update,2000);
+    return ()=>{
+      clearInterval(id);
+      try{localStorage.removeItem(key);}catch(_){}
+    };
   }
   function nativeMultitabEventKey(sessionId,tabId){
     return NATIVE_MULTITAB_EVENT_PREFIX+sessionId+':'+tabId;
@@ -3510,6 +3530,12 @@
       nativeMultitabRecord(session.id,{type:'observer-stopped'});
       nativeMultitabStop=null;
     };
+    const stopHeartbeat=nativeMultitabHeartbeat(session);
+    const stopObserver=nativeMultitabStop;
+    nativeMultitabStop=()=>{
+      stopHeartbeat();
+      stopObserver();
+    };
     sessionStorage.setItem(NATIVE_MULTITAB_OPTIN,session.id);
     nativeMultitabRecord(session.id,{type:'observer-joined',route:location.pathname});
     return true;
@@ -3529,7 +3555,21 @@
       }catch(_){}
     }
     events.sort((a,b)=>a.at-b.at);
-    const tabs=Array.from(new Set(events.map(e=>e.runtimeId||e.tabId)));
+    const historicalInstances=Array.from(new Set(events.map(e=>e.runtimeId||e.tabId)));
+    const live=[];
+    const now=Date.now();
+    for(let i=0;i<localStorage.length;i++){
+      const key=localStorage.key(i);
+      if(!key?.startsWith(NATIVE_MULTITAB_LIVE_PREFIX+session.id+':'))continue;
+      try{
+        const item=JSON.parse(localStorage.getItem(key)||'null');
+        if(item && typeof item.runtimeId==='string' &&
+           Number.isFinite(item.lastSeenAt) && item.lastSeenAt<=now &&
+           now-item.lastSeenAt<=7000)live.push(item);
+      }catch(_){}
+    }
+    const activeRuntimes=Array.from(new Set(live.map(item=>item.runtimeId)));
+    const reusedTabIds=live.length>new Set(live.map(item=>item.tabId)).size;
     const requests=events.filter(e=>e.type==='native-start-request');
     const possibleOverlaps=[];
     let burst=[];
@@ -3546,7 +3586,10 @@
     }
     if(burst.length)finishBurst();
     return {schemaVersion:1,kind:'unraid-native-multitab-observation',
-      version:DIAGNOSTIC_VERSION,session,tabsObserved:tabs.length,
+      version:DIAGNOSTIC_VERSION,session,tabsObserved:activeRuntimes.length,
+      activeRuntimeCount:activeRuntimes.length,
+      historicalRuntimeCount:historicalInstances.length,
+      activeTabIdCollision:reusedTabIds,
       requestCount:requests.length,possibleCrossTabOverlaps:possibleOverlaps,
       caveat:'仅被动记录明确开启监听的页面运行实例中的XHR mode=start；刷新同一标签页会产生新实例，克隆标签页可能继承同一sessionStorage ID。不能观测未开启监听的页面或其他设备，也不能单靠时间重叠证明数据被覆盖。',
       events};
@@ -3580,8 +3623,10 @@
     const reload=()=>{
       const report=nativeMultitabReadReport();
       status.textContent=(nativeMultitabStop?'本标签页监听已开启':'本标签页未监听')+
-        ' · 已记录标签页 '+(report?.tabsObserved||0)+
-        ' 个运行实例 · mode=start 请求 '+(report?.requestCount||0)+
+        ' · 当前监听 '+(report?.activeRuntimeCount||0)+
+        ' 个页面 · 历史运行实例 '+(report?.historicalRuntimeCount||0)+
+        ' 个'+(report?.activeTabIdCollision?' · 检测到标签标识复用':'')+
+        ' · mode=start 请求 '+(report?.requestCount||0)+
         ' 次 · 可能的跨标签重叠 '+(report?.possibleCrossTabOverlaps?.length||0)+' 次';
       join.disabled=!!nativeMultitabStop;
       stop.disabled=!nativeMultitabStop;
@@ -3610,6 +3655,10 @@
     overlay.append(panel);
     document.body.append(overlay);
     reload();
+    const refreshId=setInterval(()=>{
+      if(!overlay.isConnected){clearInterval(refreshId);return;}
+      reload();
+    },2000);
   }
   function nativeMultitabOnMount(){
     if(isDemo)return;
@@ -8972,7 +9021,7 @@
     onCleanup(()=>{
       try{
         const run=nativeDetachedRead();
-        if(run?.phase==='awaiting-closure'){
+        if(run?.phase==='awaiting-closure' && !run.observedPagehideAt){
           run.observedPagehideAt=new Date().toISOString();
           nativeLifecycleSnapshot(run);
         }
