@@ -207,7 +207,15 @@ function createAPI(options = {}) {
       }
     },
     URL, URLSearchParams, setTimeout, clearTimeout, AbortController, DOMException, console,
-    ...(options.fetch ? { fetch: options.fetch } : {}),
+    ...(options.fetch ? { fetch: async(url,opts)=>{
+      // Existing copy/move behaviour fixtures predate Unraid mode=jobs.
+      // Provide an explicit empty native queue, not a blank/unparseable
+      // response. Dedicated dispatch-boundary tests exercise non-empty
+      // queues, malformed responses and read failures separately.
+      if(new URLSearchParams(opts?.body||'').get('mode')==='jobs')
+        return {ok:true,text:async()=> '[]'};
+      return options.fetch(url,opts);
+    } } : {}),
   };
   vm.runInNewContext(script, sandbox, { filename: 'unraid-file-station.user.js' });
   return { api: sandbox.window.__UFS_TEST_API__, rows, sandbox };
@@ -2887,6 +2895,11 @@ function nativeMoveBatchHarness({folders=false,folderIndex=-1,wrongOriginType=fa
       if(path==='/mnt/user/downloads')return conflict?
         [{name:'beta.txt',path:plans[1].target,folder:false},...targetItems()]:targetItems();
       throw new Error('unexpected '+path);
+    },
+    assertNativeDispatchIdle:async()=>{
+      const active=await context.readNativeActive();
+      if(active)throw new Error('Unraid 原生活动槽被占用');
+      return {allowed:true,reason:'idle',queued:0};
     },
     readNativeActive:async()=>{
       if(!submitted)return null;
