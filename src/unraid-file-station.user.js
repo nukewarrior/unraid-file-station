@@ -2253,7 +2253,7 @@
     const url=URL.createObjectURL(blob);
     const a=document.createElement('a');
     a.href=url;
-    a.download=(report.kind==='unraid-native-multitab-observation'?'unraid-file-station-multitab-probe-':report.kind==='unraid-native-lifecycle-probe'?'unraid-file-station-lifecycle-probe-':report.kind==='unraid-v0215-acceptance'?'unraid-file-station-v0215-acceptance-':'unraid-file-station-native-probe-')+new Date().toISOString()
+    a.download=(report.kind==='unraid-native-multitab-observation'?'unraid-file-station-multitab-probe-':report.kind==='unraid-native-lifecycle-probe'?'unraid-file-station-lifecycle-probe-':report.kind==='unraid-v0215-acceptance'?'unraid-file-station-v0215-acceptance-':report.kind==='unraid-native-identity-diagnostic'?'unraid-file-station-native-identity-':'unraid-file-station-native-probe-')+new Date().toISOString()
       .replace(/[-:]/g,'').replace('T','-').slice(0,15)+'.json';
     document.body.append(a);
     a.click();
@@ -2329,6 +2329,97 @@
     const result=nativeProbeParseQueue(raw);
     nativeProbeQueueFormat=result.format;
     return result.jobs;
+  }
+
+
+  // v0.2.16: read-only native identity inspection. A matching action and
+  // exact source/target pair is evidence of a POSSIBLE relation, not an
+  // authoritative native task ID. Do not promote it to successful execution.
+  function nativeSavedTaskCandidates(active,jobs) {
+    if(!active || !Array.isArray(jobs))return [];
+    const matches=[];
+    for(const job of jobs) {
+      const record=job?.record;
+      if(!record || !Array.isArray(record.items) ||
+         typeof job.taskId!=='string')continue;
+      const batch=savedMoveBatchPlans(record);
+      if(batch){
+        const pending=record.items.every(item=>
+          ['intent-saved','unknown'].includes(item.submission) &&
+          ['submission-intent','copying','verifying','uncertain'].includes(item.status));
+        if(pending && matchesMoveBatchTask(active,batch))
+          matches.push({taskId:job.taskId,itemIndex:-1,batch:true,
+            count:batch.length,operation:'move'});
+        continue;
+      }
+      for(let i=0;i<record.items.length;i++){
+        const item=record.items[i];
+        if(!item ||
+           !['intent-saved','unknown'].includes(item.submission) ||
+           !['submission-intent','copying','verifying','uncertain'].includes(item.status))
+          continue;
+        const signature={source:item.source,folder:item.folder,
+          destinationDir:record.destination};
+        const operation=record.operation||'copy';
+        const exact=operation==='delete'?matchesDeleteTask(active,signature):
+          operation==='move'?matchesMoveTask(active,signature):
+          operation==='copy'?matchesCopyTask(active,signature):false;
+        if(exact)
+          matches.push({taskId:job.taskId,itemIndex:i,batch:false,count:1,operation});
+      }
+    }
+    return matches;
+  }
+  function nativeDescribeTaskRelation(active,queued,jobs) {
+    if(queued!==null && !Array.isArray(queued))
+      throw new Error('原生排队结果不可信');
+    const candidates=nativeSavedTaskCandidates(active,jobs);
+    const activeRelation=!active?'idle':candidates.length===1?
+      'unique-signature-candidate':candidates.length>1?'ambiguous':'unmatched';
+    return {
+      activeRelation,
+      activeAction:active?Number(active.action):null,
+      // The source/target are included for diagnosis; this report should
+      // never be published publicly without reviewing internal paths.
+      activeSource:active?.source??null,
+      activeTarget:active?.target??null,
+      candidates,
+      queuedCount:Array.isArray(queued)?queued.length:null,
+      queuedRelation:Array.isArray(queued) && queued.length?'unattributed':
+        Array.isArray(queued)?'none':'unavailable',
+      limitation:'精确动作、来源和目标路径只能构成候选关系；未获得服务端原生任务不可伪造的唯一 ID，不据此断言完成或自动执行。旧版 HTML 队列只有展示文本，不认领为本地任务。',
+      noWriteActions:true
+    };
+  }
+  async function nativeExportIdentityDiagnostic(status=()=>{}) {
+    status('正在只读查询原生活动槽和排队任务…');
+    const report={
+      schemaVersion:1,kind:'unraid-native-identity-diagnostic',
+      fileStationVersion:DIAGNOSTIC_VERSION,at:new Date().toISOString(),
+      result:'inconclusive',
+      localTaskCount:copyJobs.filter(job=>!!job.record).length
+    };
+    try {
+      const [active,queued]=await Promise.all([
+        readNativeActive(),nativeProbeQueue()
+      ]);
+      const details=nativeDescribeTaskRelation(active,queued,copyJobs);
+      Object.assign(report,details);
+      report.nativeQueueFormat=nativeProbeQueueFormat;
+      report.result='observed';
+      status('关联检查完成：原生活动任务 '+details.activeRelation+
+        '，原生排队 '+details.queuedCount+' 项。本次只读，无任务提交或接力。');
+    }catch(error){
+      report.error=String(error?.message||error);
+      report.result='read_failed';
+      status('关联检查失败：'+report.error+'（未改变文件或任务状态）');
+    }
+    nativeProbeDownload(report);
+    diagnosticLog('INFO','queue.native_identity_observed',{
+      result:report.result,activeRelation:report.activeRelation||'unknown',
+      queued:report.queuedCount??null,candidateCount:report.candidates?.length||0
+    });
+    return report;
   }
 
   // v0.2.15: this is the first shared read-only native execution boundary.
@@ -4188,13 +4279,15 @@
     const refresh=element('button','','刷新日志');
     const download=element('button','ufs-diagnostic-primary','导出 JSON');
     const nativeProbe=element('button','','原生能力测试');
+    const identityProbe=element('button','','原生任务关联检查');
     const autoAccept=element('button','','v0.2.15 一键自动验收');
     const lifecycleProbe=element('button','','任务生命周期测试');
     const detachedProbe=element('button','','关闭页面后队列测试');
     const multiTabProbe=element('button','','多标签页接力观测');
     const clear=element('button','','清空日志');
-    for(const button of [debug,mark,refresh,download,nativeProbe,autoAccept,lifecycleProbe,detachedProbe,multiTabProbe,clear]) button.type='button';
-    controls.append(debug,mark,refresh,download,nativeProbe,autoAccept,lifecycleProbe,detachedProbe,multiTabProbe,clear);
+    for(const button of [debug,mark,refresh,download,nativeProbe,identityProbe,autoAccept,lifecycleProbe,detachedProbe,multiTabProbe,clear]) button.type='button';
+    controls.append(debug,mark,refresh,download,nativeProbe,identityProbe,autoAccept,lifecycleProbe,detachedProbe,multiTabProbe,clear);
+    identityProbe.addEventListener('click',()=>void nativeExportIdentityDiagnostic(message=>{status.textContent=message;}));
     autoAccept.addEventListener('click',()=>{dismiss();showNativeAcceptanceDialog();});
     multiTabProbe.addEventListener('click',()=>{dismiss();nativeMultitabShowPanel();});
     detachedProbe.addEventListener('click',()=>{dismiss();nativeDetachedShowPanel();});
