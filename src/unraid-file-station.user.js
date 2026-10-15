@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.15.1
+// @version      0.2.15.2
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -1861,7 +1861,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.15.1';
+  const DIAGNOSTIC_VERSION='0.2.15.2';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -2706,6 +2706,91 @@
     return nativeProbeOwned(path,workspace) &&
       /^__ufs_probe_v215_[a-z0-9_]+$/.test(workspace.slice(NATIVE_PROBE_ROOT.length+1));
   }
+
+  function nativeAcceptanceValidateReport(report,{imported=false}={}) {
+    const workspace=report?.scope?.workspace, owner=report?.ownerToken;
+    const name=typeof workspace==='string'?workspace.slice(NATIVE_PROBE_ROOT.length+1):'';
+    const required=['productionSingleCopy','productionMultiFileSerialCopy',
+      'productionMove','nativeDispatchGuard','productionCopyBlockedByNativeQueue',
+      'ownedNativeQueueStart'];
+    if(report?.schemaVersion!==1 || report?.kind!=='unraid-v0215-acceptance' ||
+       report?.scope?.authorizedRoot!==NATIVE_PROBE_ROOT ||
+       !/^__ufs_probe_v215_[a-z0-9_]+$/.test(name) ||
+       workspace!==NATIVE_PROBE_ROOT+'/'+name ||
+       !nativeAcceptanceOwn(workspace,workspace) ||
+       !/^UFS_PROBE_OWNER_[a-z0-9]+_END$/.test(owner||'') ||
+       report.uncertain!==false ||
+       required.some(key=>!String(report.checks?.[key]||'').startsWith('verified')))
+      throw new Error('验收报告归属、版本、目录或完成证据不符合安全清理条件');
+    if(imported && (report.cleanup!=='skipped_or_failed' ||
+       report.result!=='needs_manual_check' || !report.endedAt))
+      throw new Error('仅支持导入本次验收未清理且执行成功的 JSON 报告');
+    return {workspace,owner};
+  }
+  async function nativeAcceptanceShapeSafe(workspace,report) {
+    nativeAcceptanceValidateReport(report);
+    // The one-click v0.2.15 workspace DOES NOT contain merge-folder.
+    // Old nativeProbeShapeSafe intentionally requires that folder, so sharing
+    // that legacy cleanup parser was a bug that blocked every successful run.
+    const shape=[
+      ['',{'probe-owner.txt':false,source:true,target:true}],
+      ['source',{'batch-a.txt':false,'batch-b.txt':false,'queue.txt':false}],
+      ['target',{'batch-a.txt':false,'batch-b.txt':false,'move.txt':false,'queue.txt':false}]
+    ];
+    const contents={
+      'probe-owner.txt':report.ownerToken,
+      'source/batch-a.txt':('UFS_AUTO_A_'+report.ownerToken+'\n').repeat(512),
+      'source/batch-b.txt':('UFS_AUTO_B_'+report.ownerToken+'\n').repeat(512),
+      'source/queue.txt':'UFS_AUTO_QUEUE_'+report.ownerToken,
+      'target/batch-a.txt':('UFS_AUTO_A_'+report.ownerToken+'\n').repeat(512),
+      'target/batch-b.txt':('UFS_AUTO_B_'+report.ownerToken+'\n').repeat(512),
+      'target/move.txt':('UFS_AUTO_MOVE_'+report.ownerToken+'\n').repeat(256),
+      'target/queue.txt':'UFS_AUTO_QUEUE_'+report.ownerToken
+    };
+    const rootEntries=await nativeProbeEntries(NATIVE_PROBE_ROOT);
+    const workspaceEntry=rootEntries.find(e=>e.path===workspace);
+    if(!workspaceEntry || !workspaceEntry.folder || workspaceEntry.copyPathVerified===false)
+      throw new Error('授权目录中无法确认本次测试工作区');
+    for(const [dir,expected] of shape) {
+      const parent=dir?workspace+'/'+dir:workspace;
+      if(!nativeAcceptanceOwn(workspace,parent))
+        throw new Error('清理前校验路径越界');
+      const entries=await nativeProbeEntries(parent);
+      if(entries.length!==Object.keys(expected).length)
+        throw new Error('清理前目录结构与一键验收预期不符：'+(dir||'root'));
+      const seen=new Set();
+      for(const entry of entries){
+        const match=Object.prototype.hasOwnProperty.call(expected,entry.name);
+        if(!match || seen.has(entry.name) ||
+           entry.path!==parent+'/'+entry.name ||
+           !nativeAcceptanceOwn(workspace,entry.path) ||
+           entry.folder!==expected[entry.name] ||
+           entry.copyPathVerified===false)
+          throw new Error('清理前发现未知或无法确认的测试内容：'+dir+'/'+entry.name);
+        seen.add(entry.name);
+      }
+    }
+    // Verify every generated file exactly, not just names, sizes or local
+    // report claims. This also proves the former move source is absent.
+    for(const [relative,expected] of Object.entries(contents)){
+      const path=workspace+'/'+relative;
+      if(!nativeAcceptanceOwn(workspace,path) ||
+         !(await nativeProbeWaitFile(path,expected)))
+        throw new Error('清理前发现合成文件内容不匹配：'+relative);
+    }
+    return {verifiedFiles:Object.keys(contents).length,verifiedDirectories:3};
+  }
+  async function nativeAcceptanceSafeCleanup(report) {
+    const {workspace}=nativeAcceptanceValidateReport(report);
+    await nativeProbeIdle();
+    const verified=await nativeAcceptanceShapeSafe(workspace,report);
+    await nativeProbeRun(report,'cleanup-owned-workspace',{},
+      {action:1,source:workspace,target:''},
+      async()=>!(await nativeProbeEntries(NATIVE_PROBE_ROOT))
+        .some(item=>item.path===workspace),workspace);
+    return verified;
+  }
+
   async function nativeAcceptanceExecute(notifyStatus) {
     if(nativeAcceptanceRunning || nativeProbeRunning || nativeLifecycleBusy)
       throw new Error('已有实机测试正在运行');
@@ -2923,13 +3008,9 @@
         try{
           if(report.uncertain)
             throw new Error('存在未确认原生提交结果，保留专属工作目录');
-          await nativeProbeIdle();
-          await nativeProbeShapeSafe(workspace,report);
-          await nativeProbeRun(report,'cleanup-owned-workspace',{},
-            {action:1,source:workspace,target:''},
-            async()=>!(await nativeProbeEntries(NATIVE_PROBE_ROOT))
-              .some(item=>item.path===workspace),workspace);
+          const verified=await nativeAcceptanceSafeCleanup(report);
           report.cleanup='completed';
+          report.cleanupVerification=verified;
         }catch(error){
           report.cleanup='skipped_or_failed';
           report.cleanupReason=String(error?.message||error);
@@ -2968,6 +3049,12 @@
       '尚未开始。测试会自动创建合成文件、复制、移动、模拟原生队列占用并核验，最后安全清理和导出 JSON。');
     const start=element('button','ufs-diagnostic-primary','开始一键验收');
     start.type='button';
+    const previous=element('button','','导入旧验收报告并安全清理');
+    previous.type='button';
+    const fileInput=element('input','');
+    fileInput.type='file';
+    fileInput.accept='.json,application/json';
+    fileInput.hidden=true;
     const dismiss=()=>{if(!nativeAcceptanceRunning)overlay.remove();};
     close.addEventListener('click',dismiss);
     head.append(close);
@@ -2979,8 +3066,54 @@
         .catch(error=>{status.textContent='验收未能开始：'+String(error?.message||error);})
         .finally(()=>{close.disabled=false;});
     });
+    previous.addEventListener('click',()=>{
+      if(nativeAcceptanceRunning || nativeProbeRunning || nativeLifecycleBusy)return;
+      fileInput.value='';
+      fileInput.click();
+    });
+    fileInput.addEventListener('change',async()=>{
+      const file=fileInput.files?.[0];
+      if(!file || nativeAcceptanceRunning || nativeProbeRunning || nativeLifecycleBusy)return;
+      let imported;
+      try {
+        if(file.size>1024*1024)throw new Error('报告超过 1 MB，请先确认文件内容');
+        imported=JSON.parse(await file.text());
+        const {workspace}=nativeAcceptanceValidateReport(imported,{imported:true});
+        if(!window.confirm('只清理以下先前验收遗留的专属目录：\n'+workspace+
+          '\n\n将再次检查原生活动槽、队列、所有权、文件夹结构和全部合成文件内容。未知内容不删除。确认继续？'))return;
+      }catch(error){
+        status.textContent='无法接受导入报告：'+String(error?.message||error);
+        return;
+      }
+      nativeAcceptanceRunning=true;
+      nativeProbeRunning=true;
+      start.disabled=true;
+      previous.disabled=true;
+      close.disabled=true;
+      try {
+        status.textContent='正在只读核验上次验收的遗留目录…';
+        const verified=await nativeAcceptanceSafeCleanup(imported);
+        imported.originalCleanup=imported.cleanup;
+        imported.originalResult=imported.result;
+        imported.cleanup='completed';
+        imported.cleanupVerification=verified;
+        imported.result='passed';
+        imported.lateCleanupAt=new Date().toISOString();
+        status.textContent='遗留测试目录已安全清理，并重新导出更新后的报告。';
+        nativeProbeDownload(imported);
+      }catch(error){
+        status.textContent='未清理：'+String(error?.message||error)+
+          '。测试现场保留；没有对未知内容执行删除。';
+      }finally{
+        nativeAcceptanceRunning=false;
+        nativeProbeRunning=false;
+        start.disabled=false;
+        previous.disabled=false;
+        close.disabled=false;
+      }
+    });
     panel.append(head,element('p','',
-      '单击后自动运行，无须手动复制或移动。异常时不会重发不确定的原生请求，也不会越权删除测试数据；如未完成清理，请导出报告供诊断。'),start,status);
+      '单击后自动运行，无须手动复制或移动。异常时不会重发不确定的原生请求，也不会越权删除测试数据；如未完成清理，可导入本次生成的 JSON 安全处理遗留测试目录。'),start,previous,fileInput,status);
     overlay.append(panel);
     document.body.append(overlay);
   }
