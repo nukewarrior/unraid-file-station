@@ -70,6 +70,7 @@ test('多标签观察器只旁路记录 mode=start，透传 XHR 而不采集 CSR
     isDemo:false,nativeMultitabStop:null,
     sessionStorage:{setItem(){}},NATIVE_MULTITAB_OPTIN:'opt',
     diagnosticTabId:'tabA',diagnosticLog(){},
+    nativeMultitabHeartbeat:()=>()=>{},
     nativeMultitabRecord:(_id,e)=>events.push(e)};
   vm.runInNewContext(slice('  function nativeMultitabInstall(', '  function nativeMultitabReadReport(')+
     '\nglobalThis.observer={install:nativeMultitabInstall,stop:()=>nativeMultitabStop?.()};',ctx);
@@ -104,18 +105,26 @@ test('多标签报告只识别明确的跨标签同时请求',()=>{
     JSON.stringify({id:'watch_alpha',startedAt:100,expiresAt:9999999999999})]]);
   for(const [name,data] of Object.entries(events))
     store.set('native-multitab-events:'+name,JSON.stringify(data));
+  store.set('native-multitab-live:watch_alpha:rA',JSON.stringify({
+    runtimeId:'rA',tabId:'tabA',lastSeenAt:Date.now()}));
+  store.set('native-multitab-live:watch_alpha:rB',JSON.stringify({
+    runtimeId:'rB',tabId:'tabB',lastSeenAt:Date.now()}));
   const storage={get length(){return store.size;},key:i=>[...store.keys()][i],
     getItem:key=>store.get(key)||null};
   const ctx={localStorage:storage,Date,
     NATIVE_MULTITAB_KEY:'native-multitab-session-v1',
     NATIVE_MULTITAB_EVENT_PREFIX:'native-multitab-events:',
-    DIAGNOSTIC_VERSION:'0.2.14.0'};
+    NATIVE_MULTITAB_LIVE_PREFIX:'native-multitab-live:',
+    DIAGNOSTIC_VERSION:'0.2.14.2'};
   const sessionSource=slice('  function nativeMultitabSession(', '  function nativeMultitabEventKey(');
   const reportSource=slice('  function nativeMultitabReadReport(', '  function nativeMultitabDownload(');
   vm.runInNewContext(sessionSource+reportSource+
     '\nglobalThis.read=nativeMultitabReadReport;',ctx);
   const report=ctx.read();
   assert.equal(report.tabsObserved,2);
+  assert.equal(report.activeRuntimeCount,2);
+  assert.equal(report.historicalRuntimeCount,2);
+  assert.equal(report.activeTabIdCollision,false);
   assert.equal(report.requestCount,3);
   assert.equal(report.possibleCrossTabOverlaps.length,1);
   assert.deepEqual(report.events.map(x=>x.at).join(','),'1000,1200,2000');
@@ -256,4 +265,43 @@ test('有陌生排队任务时，遗留队列恢复不会发出 mode=start',asyn
   assert.equal(downloaded,true);
   assert.equal(run.recoveryAttempted,undefined);
   assert.equal(run.uncertain,true);
+});
+
+test('两个实际监听页面即使经历刷新也只按存活页面统计',()=>{
+  const session={id:'watch_current',startedAt:Date.now()-10000,
+    expiresAt:Date.now()+60000};
+  const history=[
+    {runtimeId:'oldBeforeF5',tabId:'clonedId',at:Date.now()-5000,type:'observer-joined'},
+    {runtimeId:'leftTab',tabId:'clonedId',at:Date.now()-1000,type:'observer-joined'},
+    {runtimeId:'rightTab',tabId:'clonedId',at:Date.now()-900,type:'observer-joined'}
+  ];
+  const store=new Map([
+    ['multitab-session',JSON.stringify(session)],
+    ['events:watch_current:x',JSON.stringify(history)],
+    ['live:watch_current:left',JSON.stringify({runtimeId:'leftTab',
+      tabId:'clonedId',lastSeenAt:Date.now()})],
+    ['live:watch_current:right',JSON.stringify({runtimeId:'rightTab',
+      tabId:'clonedId',lastSeenAt:Date.now()})],
+    ['live:watch_current:stale',JSON.stringify({runtimeId:'oldBeforeF5',
+      tabId:'clonedId',lastSeenAt:Date.now()-80000})]
+  ]);
+  const storage={get length(){return store.size;},key:i=>[...store.keys()][i],
+    getItem:key=>store.get(key)||null};
+  const ctx={
+    localStorage:storage,Date,
+    NATIVE_MULTITAB_KEY:'multitab-session',
+    NATIVE_MULTITAB_EVENT_PREFIX:'events:',
+    NATIVE_MULTITAB_LIVE_PREFIX:'live:',
+    DIAGNOSTIC_VERSION:'0.2.14.2'
+  };
+  vm.runInNewContext(slice('  function nativeMultitabSession(',
+    '  function nativeMultitabLiveKey(')+
+    slice('  function nativeMultitabReadReport(',
+    '  function nativeMultitabDownload(')+
+    '\nglobalThis.report=nativeMultitabReadReport;',ctx);
+  const report=ctx.report();
+  assert.equal(report.tabsObserved,2,'用户正在监听的页面应计为两个');
+  assert.equal(report.historicalRuntimeCount,3,'刷新前的旧运行实例仅进历史');
+  assert.equal(report.activeTabIdCollision,true,
+    '被复制的 sessionStorage 标签身份应提示冲突，不影响存活数');
 });
