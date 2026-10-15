@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.16.0
+// @version      0.2.16.1
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -1861,7 +1861,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.16.0';
+  const DIAGNOSTIC_VERSION='0.2.16.1';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -2253,7 +2253,7 @@
     const url=URL.createObjectURL(blob);
     const a=document.createElement('a');
     a.href=url;
-    a.download=(report.kind==='unraid-native-multitab-observation'?'unraid-file-station-multitab-probe-':report.kind==='unraid-native-lifecycle-probe'?'unraid-file-station-lifecycle-probe-':report.kind==='unraid-v0215-acceptance'?'unraid-file-station-v0215-acceptance-':report.kind==='unraid-native-identity-diagnostic'?'unraid-file-station-native-identity-':'unraid-file-station-native-probe-')+new Date().toISOString()
+    a.download=(report.kind==='unraid-native-multitab-observation'?'unraid-file-station-multitab-probe-':report.kind==='unraid-native-lifecycle-probe'?'unraid-file-station-lifecycle-probe-':report.kind==='unraid-v0215-acceptance'?'unraid-file-station-v0215-acceptance-':report.kind==='unraid-native-identity-diagnostic'?'unraid-file-station-native-identity-':report.kind==='unraid-native-identity-selftest'?'unraid-file-station-native-identity-selftest-':'unraid-file-station-native-probe-')+new Date().toISOString()
       .replace(/[-:]/g,'').replace('T','-').slice(0,15)+'.json';
     document.body.append(a);
     a.click();
@@ -2391,6 +2391,91 @@
       noWriteActions:true
     };
   }
+
+  // Synthetic-only checks: no NAS calls, no queue changes, and no IndexedDB
+  // writes. They exercise the exact production identity classification.
+  function nativeIdentitySelfTest() {
+    const directory=NATIVE_PROBE_ROOT+'/__ufs_identity_selftest_virtual';
+    const target=directory+'/target';
+    const source=directory+'/source/a.txt';
+    const pending={source,folder:false,status:'copying',submission:'intent-saved'};
+    const makeJob=(id,operation='copy',items=[pending],batchMode=null)=>({
+      taskId:id,recovered:true,destination:target,
+      record:{operation,destination:target,items,
+        ...(batchMode?{batchMode}:{}),conflictPolicy:'fail'}
+    });
+    const active={action:8,source,target:target+'/'};
+    const original=makeJob('synthetic_unique');
+    const cases=[
+      {name:'exact-copy-candidate',want:'unique-signature-candidate',
+        observed:active,jobs:[original]},
+      {name:'wrong-target-not-matched',want:'unmatched',
+        observed:{...active,target:target+'-else/'},jobs:[original]},
+      {name:'wrong-action-not-matched',want:'unmatched',
+        observed:{...active,action:9},jobs:[original]},
+      {name:'duplicate-is-ambiguous',want:'ambiguous',
+        observed:active,jobs:[original,makeJob('synthetic_duplicate')]},
+      {name:'unsent-item-not-matched',want:'unmatched',
+        observed:active,jobs:[makeJob('synthetic_wait','copy',
+          [{...pending,status:'queued',submission:'not-submitted'}])]},
+      {name:'completed-item-not-matched',want:'unmatched',
+        observed:active,jobs:[makeJob('synthetic_completed','copy',
+          [{...pending,status:'success',submission:'confirmed'}])]},
+      {name:'exact-move-candidate',want:'unique-signature-candidate',
+        observed:{...active,action:9},
+        jobs:[makeJob('synthetic_move','move')]},
+    ];
+    const batchSources=['a.txt','b.txt','c.txt'].map(name=>directory+'/source/'+name);
+    const grouped=makeJob('synthetic_batch','move',batchSources.map(path=>({
+      source:path,folder:false,status:'copying',submission:'intent-saved'
+    })),'native-move-files');
+    cases.push(
+      {name:'exact-batch-move',want:'unique-signature-candidate',
+        observed:{action:9,source:batchSources.join('\r'),target:target+'/'},
+        jobs:[grouped],wantBatch:true},
+      {name:'partial-batch-not-matched',want:'unmatched',
+        observed:{action:9,source:batchSources[0],target:target+'/'},
+        jobs:[grouped]},
+      {name:'legacy-queue-remains-unattributed',want:'idle',
+        observed:null,queue:[{id:1,legacyText:'Job 001'}],
+        wantQueued:'unattributed',jobs:[]}
+    );
+    const steps=cases.map(testCase=>{
+      try {
+        const result=nativeDescribeTaskRelation(testCase.observed,
+          testCase.queue||[],testCase.jobs);
+        const passed=result.activeRelation===testCase.want &&
+          (!testCase.wantBatch || (
+            result.candidates.length===1&&result.candidates[0].batch===true)) &&
+          (!testCase.wantQueued || result.queuedRelation===testCase.wantQueued);
+        return {name:testCase.name,status:passed?'passed':'failed',
+          expected:testCase.want,actual:result.activeRelation,
+          candidateCount:result.candidates.length,
+          ...(testCase.wantQueued?{queuedRelation:result.queuedRelation}:{})};
+      }catch(error) {
+        return {name:testCase.name,status:'failed',
+          error:String(error?.message||error)};
+      }
+    });
+    return {kind:'unraid-native-identity-selftest',schemaVersion:1,
+      fileStationVersion:DIAGNOSTIC_VERSION,at:new Date().toISOString(),
+      scope:'synthetic-only',noNasRead:true,noNasWrite:true,
+      noIndexedDbWrite:true,steps,passed:steps.filter(s=>s.status==='passed').length,
+      total:steps.length,result:steps.every(s=>s.status==='passed')?'passed':'failed',
+      limitation:'仅验证身份匹配逻辑；未制造真实 NAS 任务，不等于证明服务器原生任务 ID 归属或刷新现场。'};
+  }
+  function nativeExportIdentitySelfTest(status=()=>{}) {
+    const report=nativeIdentitySelfTest();
+    status('关联自测：'+report.passed+'/'+report.total+
+      (report.result==='passed'?' 项通过':' 项有异常')+
+      '。未操作 NAS 文件、原生队列或 IndexedDB。');
+    nativeProbeDownload(report);
+    diagnosticLog(report.result==='passed'?'INFO':'WARN',
+      'queue.native_identity_selftest',{
+        result:report.result,passed:report.passed,total:report.total});
+    return report;
+  }
+
   async function nativeExportIdentityDiagnostic(status=()=>{}) {
     status('正在只读查询原生活动槽和排队任务…');
     const report={
@@ -4280,13 +4365,15 @@
     const download=element('button','ufs-diagnostic-primary','导出 JSON');
     const nativeProbe=element('button','','原生能力测试');
     const identityProbe=element('button','','原生任务关联检查');
+    const identitySelfTest=element('button','','一键关联自测（免文件操作）');
     const autoAccept=element('button','','v0.2.15 一键自动验收');
     const lifecycleProbe=element('button','','任务生命周期测试');
     const detachedProbe=element('button','','关闭页面后队列测试');
     const multiTabProbe=element('button','','多标签页接力观测');
     const clear=element('button','','清空日志');
-    for(const button of [debug,mark,refresh,download,nativeProbe,identityProbe,autoAccept,lifecycleProbe,detachedProbe,multiTabProbe,clear]) button.type='button';
-    controls.append(debug,mark,refresh,download,nativeProbe,identityProbe,autoAccept,lifecycleProbe,detachedProbe,multiTabProbe,clear);
+    for(const button of [debug,mark,refresh,download,nativeProbe,identityProbe,identitySelfTest,autoAccept,lifecycleProbe,detachedProbe,multiTabProbe,clear]) button.type='button';
+    controls.append(debug,mark,refresh,download,nativeProbe,identityProbe,identitySelfTest,autoAccept,lifecycleProbe,detachedProbe,multiTabProbe,clear);
+    identitySelfTest.addEventListener('click',()=>nativeExportIdentitySelfTest(message=>{status.textContent=message;}));
     identityProbe.addEventListener('click',()=>void nativeExportIdentityDiagnostic(message=>{status.textContent=message;}));
     autoAccept.addEventListener('click',()=>{dismiss();showNativeAcceptanceDialog();});
     multiTabProbe.addEventListener('click',()=>{dismiss();nativeMultitabShowPanel();});
@@ -4864,38 +4951,32 @@
         action:'hold-for-user-decision'});
       return;
     }
-    const matches=[];
-    for(const job of copyJobs) {
-      if(!job.recovered)continue;
-      const grouped=savedMoveBatchPlans(job.record);
-      if(grouped) {
-        // One native CR-joined task owns ALL entries. Never mistake any one
-        // source for an independently retryable task after a page reload.
-        const ambiguous=job.record.items.every(item=>
-          ['intent-saved','unknown'].includes(item.submission) &&
-          ['submission-intent','copying','verifying','uncertain'].includes(item.status));
-        if(ambiguous && matchesMoveBatchTask(active,grouped))
-          matches.push({job,index:-1,batch:true,
-            signature:{folder:false,source:grouped.map(p=>p.source).join('\r'),
-              destinationDir:job.destination}});
-        continue;
-      }
-      for(let i=0;i<job.record.items.length;i++){
-        const item=job.record.items[i];
-        if(!['intent-saved','unknown'].includes(item.submission) ||
-            !['submission-intent','copying','verifying','uncertain'].includes(item.status))continue;
-        const signature={
-          folder:item.folder,source:item.source,destinationDir:job.destination
-        };
-        if((job.record.operation==='delete'?matchesDeleteTask(active,signature):
-          job.record.operation==='move'?matchesMoveTask(active,signature):matchesCopyTask(active,signature)))matches.push({job,index:i,signature});
-      }
-    }
-    if(matches.length!==1) {
-      diagnosticLog('WARN','queue.recovery_match',{matched:matches.length,hasActive:!!active});
+    // Use the same strict read-only association as the diagnostic tool.
+    // Inspect ALL local records (not only recovered ones), so duplicate
+    // signatures cannot silently claim a foreign/ambiguous active task.
+    const candidates=nativeSavedTaskCandidates(active,copyJobs);
+    const candidate=candidates.length===1?candidates[0]:null;
+    const job=candidate?copyJobs.find(item=>
+      item.taskId===candidate.taskId && item.recovered):null;
+    if(!job) {
+      diagnosticLog('WARN','queue.recovery_match',{
+        matched:candidates.length,hasActive:true,
+        reason:candidates.length>1?'ambiguous-native-signature':
+          candidate?'not-a-recovered-task':'unmatched'});
       return;
     }
-    const {job,index,signature,batch=false}=matches[0];
+    const index=candidate.itemIndex,batch=candidate.batch;
+    const grouped=batch?savedMoveBatchPlans(job.record):null;
+    if(batch && !grouped){
+      diagnosticLog('WARN','queue.recovery_match',{
+        matched:candidates.length,hasActive:true,reason:'invalid-batch-plans'});
+      return;
+    }
+    const item=index>=0?job.record.items[index]:null;
+    const signature=batch?{
+      folder:false,source:grouped.map(p=>p.source).join('\r'),
+      destinationDir:job.destination
+    }:{folder:item.folder,source:item.source,destinationDir:job.destination};
     diagnosticLog('INFO','queue.recovery_attached',{
       taskId:job.taskId,itemIndex:index,batch,count:batch?job.record.items.length:1});
     job.recoveryMonitoring=true;
@@ -4940,8 +5021,10 @@
         catch(_) {break;}
         if(destroyed)return;
         if(current) {
-          if(!(job.record.operation==='delete'?matchesDeleteTask(current,signature):
-            job.record.operation==='move'?matchesMoveTask(current,signature):matchesCopyTask(current,signature)))break;
+          if(!(batch?matchesMoveBatchTask(current,grouped):
+            job.record.operation==='delete'?matchesDeleteTask(current,signature):
+            job.record.operation==='move'?matchesMoveTask(current,signature):
+              matchesCopyTask(current,signature)))break;
           sameTaskObserved=true;
           idle=0;
         } else if(++idle>=2) {
