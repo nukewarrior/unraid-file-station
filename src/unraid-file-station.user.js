@@ -3088,6 +3088,9 @@
       run.uncertain=false;
       await nativeLifecycleFinalize(run,'passed','',notify);
     }catch(error){
+      // After F5, a failed verification is not evidence that the native
+      // operation completed. Preserve our isolated workspace for inspection.
+      run.uncertain=true;
       nativeLifecycleNote(run,'resume-aborted',{error:String(error.message||error)});
       notify('恢复观测中止：'+String(error.message||error));
       await nativeLifecycleFinalize(run,'failed',error,notify);
