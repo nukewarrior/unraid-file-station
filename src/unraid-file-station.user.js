@@ -2716,6 +2716,8 @@
            !entry.path.split('/').some(x=>x==='.'||x==='..'))
           files.push(entry);
         if(entry.folder && depth<1 && !entry.name.startsWith('__ufs_') &&
+           entry.path===dir+'/'+entry.name && safePath(entry.path) &&
+           !/^l/.test(entry.permissions||'') &&
            entry.path.startsWith(NATIVE_PROBE_ROOT+'/'))
           await inspect(entry.path,depth+1);
       }
@@ -2726,7 +2728,9 @@
          safePath(entry.path) && !/^l/.test(entry.permissions||'') &&
          entry.size>=64*1024*1024 &&
          entry.size<=2*1024*1024*1024)files.push(entry);
-      if(entry.folder && !entry.name.startsWith('__ufs_'))
+      if(entry.folder && !entry.name.startsWith('__ufs_') &&
+         entry.path===NATIVE_PROBE_ROOT+'/'+entry.name && safePath(entry.path) &&
+         !/^l/.test(entry.permissions||''))
         await inspect(entry.path,0);
     }
     files.sort((a,b)=>b.size-a.size);
