@@ -48,7 +48,7 @@ test('关闭页面测试使用 localStorage，普通 F5 测试仍用 sessionStor
   }
 });
 test('关闭页面探针不会在重开页面时自动 mode=start 或再次提交复制',()=>{
-  const source=slice('  async function nativeDetachedObserve(', '  function nativeMultitabShowPanel(');
+  const source=slice('  async function nativeDetachedObserve(', '  async function nativeDetachedCompleteOwnedQueue(');
   assert.doesNotMatch(source,/mode\s*:\s*['"]start['"]/);
   assert.doesNotMatch(source,/mode\s*:\s*['"]file['"]/);
   assert.match(source,/nativeLifecycleJobsOwned\(run,jobs\)/);
