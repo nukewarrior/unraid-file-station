@@ -2976,6 +2976,14 @@
           activeBeforeSubmission:'large'});
       }
       run.conclusion.runningEnqueue='verified';
+      const beforeRefreshActive=nativeLifecycleActiveOwned(run,await readNativeActive());
+      const beforeRefreshJobs=await nativeProbeQueue();
+      nativeLifecycleJobsOwned(run,beforeRefreshJobs);
+      run.conclusion.f5OverlapObserved=!!beforeRefreshActive && beforeRefreshJobs.length>0;
+      nativeLifecycleNote(run,'before-f5-observation',{
+        active:beforeRefreshActive,queued:beforeRefreshJobs.length,
+        simultaneousActiveAndQueue:run.conclusion.f5OverlapObserved
+      });
       run.phase='before-reload';
       run.uncertain=false;
       run.reloadRequestedAt=new Date().toISOString();
@@ -3084,7 +3092,8 @@
       run.conclusion.sourceUnchangedByMetadata=!!videoNow &&
         videoNow.size===run.video.size && videoNow.mtime===run.video.mtime;
       run.conclusion.largeCopy='file_size_matches_not_hash_verified';
-      run.conclusion.f5Resume='verified_reconnected_and_completed';
+      run.conclusion.f5Resume=run.conclusion.f5OverlapObserved?
+        'verified_inflight_reconnected_and_completed':'verified_post_refresh_state_only';
       run.uncertain=false;
       await nativeLifecycleFinalize(run,'passed','',notify);
     }catch(error){
