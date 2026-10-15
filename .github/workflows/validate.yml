@@ -1,0 +1,51 @@
+name: 检查用户脚本
+
+on:
+  push:
+    branches: ["master", "feat/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: 校验脚本语法
+        run: node --check src/unraid-file-station.user.js
+      - name: 执行单元测试
+        run: node --test tests/*.test.mjs
+
+
+  browser-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: 安装 Playwright
+        run: |
+          npm install --no-save playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - name: 启动本地测试页面
+        run: |
+          python3 -m http.server 8765 --bind 127.0.0.1 > /tmp/ufs-http.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8765/demo/ >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/ufs-http.log
+          exit 1
+      - name: 浏览器端到端测试
+        run: node --test tests/e2e/*.spec.mjs

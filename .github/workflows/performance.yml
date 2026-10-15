@@ -1,0 +1,34 @@
+name: 大目录性能基准
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: 安装 Playwright
+        run: |
+          npm install --no-save playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - name: 启动本地测试服务
+        run: |
+          python3 -m http.server 8765 --bind 127.0.0.1 > /tmp/ufs-http.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8765/demo/ >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/ufs-http.log
+          exit 1
+      - name: 测量 100、1000、10000 文件
+        run: node tests/perf/benchmark.mjs
