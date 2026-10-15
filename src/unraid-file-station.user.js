@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.16.1
+// @version      0.2.16.2
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -1861,7 +1861,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.16.1';
+  const DIAGNOSTIC_VERSION='0.2.16.2';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -4934,6 +4934,63 @@
   // A browser refresh destroys the original job's polling/websocket listeners,
   // but not Unraid's rsync process. Re-attach observability only when one and
   // only one saved submitted item matches Control.php mode=read exactly.
+  // Read-only inspection after the native active slot has gone idle.
+  // No status/submission/IndexedDB changes; no automatic retry or confirmation.
+  async function auditRecoveredIdleTasks() {
+    const pending=copyJobs.filter(job=>job.recovered && job.status==='uncertain' &&
+      job.record?.items?.some(item=>['intent-saved','unknown'].includes(item.submission)));
+    if(!pending.length || destroyed)return;
+    let jobs;
+    try {jobs=await nativeProbeQueue();if(!Array.isArray(jobs))throw Error('队列数据无效');}
+    catch(error) {
+      diagnosticLog('WARN','queue.recovery_audit_unavailable',{reason:'queue-read-failed'});
+      return;
+    }
+    if(destroyed)return;
+    if(jobs.length) {
+      diagnosticLog('INFO','queue.recovery_audit_blocked',{reason:'native-queue-not-empty',
+        queuedCount:jobs.length});
+      return;
+    }
+    for(const job of pending) {
+      // Do not infer batch ownership from an empty queue or partial file metadata.
+      const items=job.record.items;
+      if(!['copy','move'].includes(job.record.operation) || items.length!==1 ||
+         items[0].folder || !safePath(items[0].source) || !safePath(job.destination)) {
+        job.recoveryAudit={result:'unsupported'};
+        continue;
+      }
+      const item=items[0],target=job.destination+'/'+fileName(item.source);
+      try {
+        const [sources,targets]=await Promise.all([
+          listDirectory(parentPath(item.source)),listDirectory(job.destination)
+        ]);
+        if(destroyed)return;
+        const source=sources.find(entry=>entry.path===item.source);
+        const dest=targets.find(entry=>entry.path===target);
+        const expected=Number.isFinite(item.size)?item.size:
+          (Number.isFinite(source?.size)?source.size:null);
+        const targetMatches=!!dest && !dest.folder &&
+          dest.copyPathVerified!==false && Number.isFinite(expected) &&
+          Number.isFinite(dest.size) && dest.size===expected;
+        const sourceMatches=job.record.operation==='move'?!source:
+          !!source && !source.folder && source.copyPathVerified!==false;
+        const result=targetMatches && sourceMatches?'metadata-consistent':
+          'metadata-inconclusive';
+        job.recoveryAudit={result,checkedAt:Date.now()};
+        diagnosticLog('INFO','queue.recovery_audit',{taskId:job.taskId,result,
+          operation:job.record.operation,sourcePresent:!!source,
+          targetPresent:!!dest,sizeComparable:Number.isFinite(expected) &&
+            Number.isFinite(dest?.size)});
+      } catch(error) {
+        job.recoveryAudit={result:'read-failed',checkedAt:Date.now()};
+        diagnosticLog('WARN','queue.recovery_audit',{taskId:job.taskId,
+          result:'read-failed'});
+      }
+    }
+    updateCopyTaskButton();
+  }
+
   async function monitorRecoveredNativeTask() {
     if(destroyed || !copyRecoveryLocked || !copyJobs.some(job=>job.recovered))return;
     let active;
@@ -4944,11 +5001,12 @@
     } // Network errors preserve the existing "待核实" state.
     if(destroyed)return;
     if(!active){
-      // The server's active slot does not retain historical completion receipts.
-      // Preserve the saved task; never re-POST or read back both files.
+      // The server does not expose a durable completion receipt after F5.
+      // Read-only evidence helps the user decide; it NEVER confirms success.
       diagnosticLog('INFO','queue.recovery_native_idle',{
         unresolved:copyJobs.filter(job=>job.recovered&&job.status==='uncertain').length,
-        action:'hold-for-user-decision'});
+        action:'read-only-audit-no-retry'});
+      await auditRecoveredIdleTasks();
       return;
     }
     // Use the same strict read-only association as the diagnostic tool.
@@ -5331,6 +5389,16 @@
         (job.conflictPolicy==='overwrite'?'覆盖':job.conflictPolicy==='skip'?'忽略':'拒绝冲突')));
     if(job.record.operation==='delete')
       body.append(element('div','ufs-delete-warning','永久删除不能撤销；请在 NAS 上核实结果。'));
+    if(job.status==='uncertain' && job.recoveryAudit) {
+      const audit=job.recoveryAudit.result;
+      const message=audit==='metadata-consistent'?
+        '只读检查：源/目标文件的存在状态、类型和大小符合预期，但缺少原生完成回执，不能证明内容完整或自动确认成功。':
+        audit==='metadata-inconclusive'?
+        '只读检查：源/目标文件信息不满足预期，可能尚未完成或结果未知，请勿重复执行。':
+        audit==='read-failed'?'只读检查失败：无法核验文件信息，任务保持待核实。':
+        '此任务类型暂不支持自动只读核验，任务保持待核实。';
+      body.append(element('div','ufs-batch-meta',message));
+    }
     for(let i=0;i<job.record.items.length;i++){
       const item=job.record.items[i];
       const row=element('div','ufs-batch-preview-row');
