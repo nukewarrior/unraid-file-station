@@ -2998,7 +2998,7 @@
         nativeActive:firstOwner,queueCount:initial[1].length,
         elapsedFromRefreshMs:Date.now()-new Date(run.reloadRequestedAt).getTime()});
       notify('刷新后已重新读取原生活动槽及服务器端队列，持续观察…');
-      const until=Date.now()+180000;
+      const until=Date.now()+10*60*1000;
       let nextSample=0;
       let lastProgress=null;
       const unsubscribe=observeNativeProgress(data=>{
@@ -3058,7 +3058,7 @@
           await waitNative(500);
         }
       }finally{unsubscribe();}
-      if(!allCompleted)throw new Error('3 分钟内未能确认所有队列任务完成');
+      if(!allCompleted)throw new Error('10 分钟内未能确认所有队列任务完成');
       // No manual start means the queue was advanced by an external frontend,
       // not necessarily a headless server-side scheduler.
       if(manualAdvances===0)
