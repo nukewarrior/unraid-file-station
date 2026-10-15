@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.13.6
+// @version      0.2.13.7
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -1844,7 +1844,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.13.6';
+  const DIAGNOSTIC_VERSION='0.2.13.7';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -2246,11 +2246,66 @@
     return typeof source==='string' && source.length>0 &&
       source.split('\r').every(part=>nativeProbeOwned(part,workspace));
   }
+  let nativeProbeQueueFormat='unknown';
+  function nativeProbeParseQueue(raw) {
+    const response=String(raw??'').trim();
+    if(response.startsWith('[')){
+      const jobs=JSON.parse(response);
+      if(!Array.isArray(jobs) || !jobs.every(job=>job && typeof job==='object' &&
+         !Array.isArray(job) && Number.isSafeInteger(Number(job.id)) &&
+         typeof job.source==='string' && typeof job.target==='string' &&
+         typeof job.task==='string'))
+        throw new Error('原生 mode=jobs JSON 队列结构不符合预期');
+      return {format:'json',jobs};
+    }
+    // Unraid webgui before 2026-09-28 returns an HTML fragment, not JSON:
+    // <div id="dfm_joblist"><i id="queue_1"...></i>Job [0001] - ...</div>
+    // Parse as an inert document; never put server HTML into the live page.
+    if(response.startsWith('<')){
+      const parsed=new DOMParser().parseFromString(response,'text/html');
+      const list=parsed.querySelector('#dfm_joblist');
+      if(!list)throw new Error('mode=jobs 返回未知 HTML 结构，禁止执行队列操作');
+      const jobs=[];
+      let current=null;
+      for(const node of list.childNodes){
+        if(node.nodeType===1){
+          if(node.tagName==='I' && /^queue_[1-9]\d*$/.test(node.id)){
+            if(current && !current.legacyText.trim())
+              throw new Error('mode=jobs 发现缺少内容的队列项');
+            current={id:Number(node.id.slice(6)),legacyText:''};
+            jobs.push(current);
+          }else if(node.tagName!=='BR'){
+            throw new Error('mode=jobs 包含未识别的 HTML 队列元素');
+          }
+        }else if(node.nodeType===3){
+          if(current)current.legacyText+=node.textContent;
+          else if(node.textContent.trim())
+            throw new Error('mode=jobs HTML 包含无法识别的队列内容');
+        }else if(node.nodeType!==8){
+          throw new Error('mode=jobs HTML 包含未识别的节点');
+        }
+      }
+      if(jobs.some(job=>!job.legacyText.trim()) ||
+         (jobs.length===0 && list.textContent.trim()))
+        throw new Error('mode=jobs HTML 队列项目无法可靠辨认');
+      return {format:'html-legacy',jobs};
+    }
+    throw new Error('mode=jobs 响应格式未知，禁止执行队列操作');
+  }
+  function nativeProbeOwnQueuedJob(job,source,target,task) {
+    if(!job || !Number.isSafeInteger(Number(job.id)))return false;
+    if(typeof job.legacyText==='string'){
+      // Legacy HTML only exposes a display string. Limit identity matching to
+      // our own exact synthetic task suffix and inspect count separately.
+      return job.legacyText.trim().endsWith(' - '+task+' '+source+' --> '+target);
+    }
+    return job.source===source && job.target===target && job.task===task;
+  }
   async function nativeProbeQueue() {
     const raw=await postNativeControl({mode:'jobs'});
-    const list=JSON.parse(raw);
-    if(!Array.isArray(list))throw new Error('原生 mode=jobs 响应不是数组');
-    return list;
+    const result=nativeProbeParseQueue(raw);
+    nativeProbeQueueFormat=result.format;
+    return result.jobs;
   }
   async function nativeProbeIdle(requireEmptyQueue=true) {
     if(nativeWriteBusy)throw new Error('File Station 正在执行其他原生写入');
@@ -2303,10 +2358,10 @@
           seen=true;empty=0;
         } else {
           empty++;
-          if(empty>=3 && await check())break;
+          if(empty>=3 && (seen||done) && await check())break;
         }
       }
-      if(empty<3 || !(await check()))
+      if(empty<3 || !(seen||done) || !(await check()))
         throw new Error('未能在时限内确认测试任务完成；禁止自动清理');
       const result={name:operation,status:'passed',elapsedMs:Math.round(performance.now()-started),
         observedActive:seen,observedDone:done,progressEvents:progressCount,
@@ -2410,6 +2465,7 @@
       nativeCsrfToken();
       status('正在检查原生任务状态与授权目录…');
       const jobs=await nativeProbeIdle();
+      report.environment.queueResponseFormat=nativeProbeQueueFormat;
       report.queueObservations.push({phase:'before',count:jobs.length});
       const base=await nativeProbeEntries(NATIVE_PROBE_ROOT);
       if(base.some(e=>e.name===workspace.split('/').pop()))
@@ -2483,16 +2539,16 @@
         hdlink:'',sparse:'',exist:'1',zfs:''
       });
       const queue=await nativeProbeQueue();
-      const onlyOurJob=queue.length===1 && queue[0].source===queueSource &&
-        queue[0].target===queueTarget && queue[0].task==='ufs-probe-copy';
+      const onlyOurJob=queue.length===1 &&
+        nativeProbeOwnQueuedJob(queue[0],queueSource,queueTarget,'ufs-probe-copy');
       report.queueObservations.push({phase:'after-enqueue',count:queue.length,
         ourJobPresent:onlyOurJob,elapsedMs:Math.round(performance.now()-queuedAt)});
       if(!onlyOurJob)throw new Error('队列身份不匹配，停止测试并保留现场');
       if(await readNativeActive())throw new Error('入队后发现活动任务，停止队列推进');
       const immediatelyBeforeStart=await nativeProbeQueue();
       if(immediatelyBeforeStart.length!==1 ||
-         immediatelyBeforeStart[0].source!==queueSource ||
-         immediatelyBeforeStart[0].target!==queueTarget)
+         !nativeProbeOwnQueuedJob(immediatelyBeforeStart[0],
+           queueSource,queueTarget,'ufs-probe-copy'))
         throw new Error('队列已发生变化，不执行 mode=start');
       const queueStartedAt=performance.now();
       const startReply=(await postNativeControl({mode:'start'})).trim();
