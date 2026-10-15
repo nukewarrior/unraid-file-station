@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unraid File Station
 // @namespace    https://github.com/nukewarrior/unraid-file-station
-// @version      0.2.14.0
+// @version      0.2.14.1
 // @updateURL    https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @downloadURL  https://raw.githubusercontent.com/nukewarrior/unraid-file-station/feat/file-station-v0.1/src/unraid-file-station.user.js
 // @description  DSM-inspired File Station with guarded native file operations for Unraid 7.2.2
@@ -1844,7 +1844,7 @@
   let app;
 
   // v0.2.8: local-only diagnostic timeline; it never authorizes or changes native writes.
-  const DIAGNOSTIC_VERSION='0.2.14.0';
+  const DIAGNOSTIC_VERSION='0.2.14.1';
   const DIAGNOSTIC_DATABASE='ufs-diagnostics-v1';
   const DIAGNOSTIC_MAX_EVENTS=2500;
   const DIAGNOSTIC_RETENTION=24*60*60*1000;
@@ -3253,6 +3253,116 @@
       nativeProbeDownload({...run,kind:'unraid-native-lifecycle-probe'});
     }finally{nativeLifecycleBusy=false;}
   }
+
+  async function nativeDetachedCompleteOwnedQueue(notify) {
+    if(nativeLifecycleBusy)throw new Error('当前还有文件测试操作正在执行');
+    const run=nativeDetachedRead();
+    if(!run || run.phase!=='awaiting-closure' || !run.userConfirmedClosedAllTabs ||
+       run.conclusion?.unattendedAdvance!=='queue_remained_after_reported_browser_closure' ||
+       run.recoveryAttempted)
+      throw new Error('没有符合条件的遗留测试队列，或曾尝试过恢复；拒绝重复启动');
+    nativeLifecycleBusy=true;
+    const completionContent=[
+      'UFS_LIFECYCLE_QUEUE1_'+run.ownerToken,
+      'UFS_LIFECYCLE_QUEUE2_'+run.ownerToken
+    ];
+    let requestSent=false;
+    let manualAdvances=0;
+    try{
+      notify('安全预检：核对原生队列、活动槽、专属目录和队列源文件…');
+      if(nativeWriteBusy ||
+         copyJobs.some(j=>['queued','running','verifying','uncertain','recovering'].includes(j.status)))
+        throw new Error('File Station 有其他未结束任务；请不要在该页面恢复遗留队列');
+      if(await readNativeActive())
+        throw new Error('原生活动槽不是空闲状态，拒绝启动');
+      const initial=await nativeProbeQueue();
+      const initialIds=nativeLifecycleJobsOwned(run,initial);
+      if(initialIds.length!==2 || !initialIds.includes(0) || !initialIds.includes(1))
+        throw new Error('原生队列不是本次测试的两项任务，拒绝启动或清理');
+      if(!(await nativeProbeWaitFile(run.workspace+'/owner.txt',run.ownerToken)))
+        throw new Error('测试目录所有权标记不匹配');
+      for(let i=0;i<2;i++){
+        if(!(await nativeProbeWaitFile(
+          nativeLifecycleFilePath(run,'source','queue'+(i+1)+'.txt'),completionContent[i])))
+          throw new Error('遗留队列源文件发生变化：queue'+(i+1));
+      }
+      const largeSize=await nativeLifecycleFileSize(run.workspace+'/large',run.video.name);
+      if(largeSize!==run.video.size)
+        throw new Error('原生大视频目标未达到预期大小');
+      const deadline=Date.now()+60000;
+      let idleSince=Date.now();
+      let stableCompleted=0;
+      run.uncertain=true;
+      run.recoveryAttempted=true;
+      run.recoveryStartedAt=new Date().toISOString();
+      nativeLifecycleNote(run,'owned-queue-recovery-intent',{
+        originalUnattendedFinding:run.conclusion.unattendedAdvance,
+        originalQueueCount:initial.length
+      });
+      // Identity checks just before every *single* global start. This is
+      // not an atomic lock; users must not run this in multiple WebGUI tabs.
+      while(Date.now()<deadline) {
+        const active=await readNativeActive();
+        const owner=nativeLifecycleActiveOwned(run,active);
+        const jobs=await nativeProbeQueue();
+        const ids=nativeLifecycleJobsOwned(run,jobs);
+        if(!owner && jobs.length===0){
+          const exact=await nativeProbeWaitFile(run.workspace+'/queue1/queue1.txt',
+              completionContent[0]) &&
+            await nativeProbeWaitFile(run.workspace+'/queue2/queue2.txt',
+              completionContent[1]);
+          if(exact && ++stableCompleted>=3)break;
+          if(!exact)stableCompleted=0;
+        }else stableCompleted=0;
+        if(!owner && jobs.length){
+          if(Date.now()-idleSince>=1800){
+            if(manualAdvances>=2)
+              throw new Error('已执行两次受控接力，仍发现队列等待；禁止继续 mode=start');
+            if(await readNativeActive())
+              throw new Error('发起接力前活动槽发生变化');
+            const nowJobs=await nativeProbeQueue();
+            const nowIds=nativeLifecycleJobsOwned(run,nowJobs);
+            if(nowIds.length!==ids.length ||
+               nowIds.some((id,index)=>id!==ids[index]))
+              throw new Error('接力前队列发生变化，拒绝全局 mode=start');
+            requestSent=true;
+            const reply=(await postNativeControl({mode:'start'})).trim();
+            if(!['1','2'].includes(reply))
+              throw new Error('原生队列启动返回未知状态：'+reply.slice(0,80));
+            manualAdvances++;
+            nativeLifecycleNote(run,'owned-queue-manual-advance',{
+              count:manualAdvances,reply,queuedBefore:jobs.length,
+            });
+            notify('已受控接力 '+manualAdvances+' 次，正在确认原生任务完成…');
+            idleSince=Date.now();
+          }
+        }else idleSince=Date.now();
+        await waitNative(300);
+      }
+      if(stableCompleted<3)
+        throw new Error('尚未核实两项任务全部完成，保留原生队列及测试目录');
+      if(await readNativeActive() || (await nativeProbeQueue()).length)
+        throw new Error('完成后仍发现活动任务或排队任务');
+      // Preserve original offline conclusion; browser-assisted completion
+      // MUST NOT be misreported as unattended server advancement.
+      run.conclusion.recoveryByExplicitAction={
+        type:'browser_mode_start',manualAdvances,verifiedExactSmallFiles:true,
+        recoveredAt:new Date().toISOString()
+      };
+      run.uncertain=false;
+      nativeLifecycleNote(run,'owned-queue-recovered',{
+        manualAdvances,originalUnattendedFinding:run.conclusion.unattendedAdvance});
+      await nativeLifecycleFinalize(run,'passed','',notify);
+    }catch(error){
+      run.uncertain=true;
+      nativeLifecycleNote(run,'owned-queue-recovery-incomplete',{
+        requestSent,manualAdvances,error:String(error?.message||error)});
+      notify('安全收尾未完成：'+String(error?.message||error)+
+        '。未调用全局取消，不会删除存在未知任务的目录。');
+      nativeProbeDownload({...run,kind:'unraid-native-lifecycle-probe'});
+    }finally{nativeLifecycleBusy=false;}
+  }
+
   function nativeDetachedShowPanel(initial='') {
     const previous=document.querySelector('.ufs-native-detached-overlay');
     if(previous)return;
@@ -3276,12 +3386,27 @@
     const start=element('button','ufs-diagnostic-primary','准备关闭页面测试');
     const observe=element('button','','关闭页面后读取结果');
     const download=element('button','','导出阶段报告');
-    for(const btn of [start,observe,download])btn.type='button';
+    const recover=element('button','','安全完成遗留测试队列');
+    for(const btn of [start,observe,download,recover])btn.type='button';
     const run=nativeDetachedRead();
     start.disabled=nativeLifecycleBusy || !!run && run.phase!=='complete';
     observe.disabled=!run || run.phase!=='awaiting-closure';
     download.disabled=!run;
-    controls.append(start,observe,download);
+    recover.disabled=!run || run.phase!=='awaiting-closure' ||
+      run.conclusion?.unattendedAdvance!=='queue_remained_after_reported_browser_closure' ||
+      !!run.recoveryAttempted;
+    controls.append(start,observe,download,recover);
+    recover.addEventListener('click',()=>{
+      if(!window.confirm('此操作会显式调用 Unraid 原生 mode=start，尝试执行本次测试遗留的两项小文件队列任务，然后在严格核验后清理独立测试目录。\n\n请先关闭其它 Unraid WebGUI 标签页，不要同时操作队列。该操作不能证明服务器无人值守推进。是否继续？'))return;
+      recover.disabled=true;
+      void nativeDetachedCompleteOwnedQueue(message=>{
+        status.textContent=message;download.disabled=false;
+      }).finally(()=>{
+        const current=nativeDetachedRead();
+        recover.disabled=!current || !!current.recoveryAttempted ||
+          current.phase!=='awaiting-closure';
+      });
+    });
     start.addEventListener('click',()=>{
       if(!window.confirm('确认目前没有其他文件操作和原生队列任务？测试将创建独立临时目录并复制一份授权目录的大视频。开始后需亲自关闭所有 Unraid WebGUI 标签页，之后重新打开并读取结果。\n\n请勿在本轮测试期间使用其他设备操作文件。'))return;
       start.disabled=true;
